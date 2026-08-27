@@ -80,13 +80,15 @@ Lowest precedence of the three. Do not commit it — the key is a secret.
 
 ### Install
 
-Codex resolves this marketplace from a **local path**, so clone the repo first:
+Same shape as Claude Code — the marketplace is fetched straight from GitHub, no clone:
 
 ```bash
-git clone https://github.com/mubit-ai/plugins.git
-codex plugin marketplace add /path/to/plugins
+codex plugin marketplace add mubit-ai/plugins
 codex plugin add mubit-memory@mubit
 ```
+
+Requires Codex CLI >= 0.146.0, which is where Git marketplace sources landed. Pin a ref with
+`--ref <tag>` if you want a specific release rather than `main`.
 
 ### Then run setup — this step is not optional
 
