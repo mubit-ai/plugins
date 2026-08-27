@@ -15,7 +15,7 @@ You need two values before you start:
 
 | Value | Example |
 | --- | --- |
-| endpoint | `https://eu.mubit.ai` — your Mubit instance URL |
+| endpoint | `https://api.mubit.ai` — your Mubit instance URL |
 | API key | `mbt_...` — issued in the [Mubit console](https://console.mubit.ai) |
 
 ---
@@ -48,7 +48,7 @@ everything else.
 **B. Environment variables — good for CI, containers, SSH.**
 
 ```bash
-export MUBIT_ENDPOINT='https://eu.mubit.ai'
+export MUBIT_ENDPOINT='https://api.mubit.ai'
 export MUBIT_API_KEY='mbt_...'
 ```
 
@@ -58,7 +58,7 @@ Set these in your shell profile (or CI secrets) before starting Claude Code.
 
 ```json
 {
-  "endpoint": "https://eu.mubit.ai",
+  "endpoint": "https://api.mubit.ai",
   "apiKey": "mbt_..."
 }
 ```
@@ -87,9 +87,12 @@ Requires Codex CLI >= 0.146.0, which is where Git marketplace sources landed. Pi
 ### Then run setup — this step is not optional
 
 ```bash
-node ~/.codex/plugins/cache/mubit/mubit-memory/0.12.0/scripts/setup.mjs \
-     ~/.codex/plugins/cache/mubit/mubit-memory/0.12.0
+PLUGIN=$(ls -d ~/.codex/plugins/cache/mubit/mubit-memory/*/ | tail -1)
+node "$PLUGIN/scripts/setup.mjs" "$PLUGIN"
 ```
+
+(`codex plugin add` printed that path as `Installed plugin root:` — the glob just saves you
+copying it. The version is whatever you installed, not a fixed number.)
 
 (Or just ask a Codex session to run `mubit-memory:setup`.)
 
@@ -123,17 +126,19 @@ you are done. **From scratch, enter the key yourself.** Two ways.
 instance before writing anything, and puts it exactly where the hooks read:
 
 ```bash
-node ~/.codex/plugins/cache/mubit/mubit-memory/0.12.0/scripts/login.mjs
+PLUGIN=$(ls -d ~/.codex/plugins/cache/mubit/mubit-memory/*/ | tail -1)
+node "$PLUGIN/scripts/login.mjs"
 ```
 
 Paste your key at the prompt. Non-interactively, pass it instead:
 
 ```bash
-node ~/.codex/plugins/cache/mubit/mubit-memory/0.12.0/scripts/login.mjs \
-  --key=mbt_... --endpoint=https://eu.mubit.ai
+node "$PLUGIN/scripts/login.mjs" --key=mbt_...
 ```
 
-`Connected to https://eu.mubit.ai.` means the key is valid and stored. Anything else is the
+`--endpoint=<url>` is only needed if you are not on the default `https://api.mubit.ai`.
+
+`Connected to https://api.mubit.ai.` means the key is valid and stored. Anything else is the
 key or the endpoint, not the plugin — see the table in Part 3. `--status` reports what is
 stored and which directory it came from; add `--json` for machine-readable output.
 
@@ -156,7 +161,7 @@ exists; prefer it under Codex.
 outranks the stored file:
 
 ```bash
-export MUBIT_ENDPOINT='https://eu.mubit.ai'
+export MUBIT_ENDPOINT='https://api.mubit.ai'
 export MUBIT_API_KEY='mbt_...'
 ```
 
