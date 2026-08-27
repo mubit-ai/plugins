@@ -139,8 +139,11 @@ node "$PLUGIN/scripts/login.mjs" --key=mbt_...
 `--endpoint=<url>` is only needed if you are not on the default `https://api.mubit.ai`.
 
 `Connected to https://api.mubit.ai.` means the key is valid and stored. Anything else is the
-key or the endpoint, not the plugin — see the table in Part 3. `--status` reports what is
-stored and which directory it came from; add `--json` for machine-readable output.
+key or the endpoint, not the plugin — see the table in Part 3.
+
+`--status` reports what is stored and which directory it came from; add `--json` for
+machine-readable output. It reads the file and does **not** dial, so it tells you a key
+exists, never that it works. Only `login` and `setup` actually reach the instance.
 
 **Where it writes, and why that needed its own command.** Mubit state lives under
 `~/.claude/plugins/data/` on both harnesses, deliberately — one directory is what makes a
@@ -178,8 +181,12 @@ Codex has no plugin settings UI, so configuration is three rungs, highest first:
 Either way, **start a new Codex session afterwards** — hooks and MCP servers are read at
 session start.
 
-### Two Codex-specific things
+### A few Codex-specific things
 
+- **An unapproved command has no network.** Codex runs it inside seatbelt with networking off,
+  where DNS fails first, so any plugin command you have not approved reports a connection
+  failure against an endpoint that is perfectly fine. Approve it and run it again. See
+  [`ENOTFOUND` under Codex](#enotfound-under-codex--usually-the-sandbox-not-the-endpoint).
 - **State lives under `~/.claude/plugins/data/`** — yes, `.claude`, deliberately: that shared
   data dir is what makes one memory rather than two. Which subdirectory is not a constant
   (`mubit-memory-<marketplace>`, `mubit-memory-inline`, …); `setup` resolves it and pins it as
@@ -202,12 +209,38 @@ A `ready` state plus your endpoint and a run id means you are done. Anything els
 | Result | Meaning |
 | --- | --- |
 | `auth_failed` | Key missing, wrong, or revoked. Not a network problem. |
-| `unreachable` | Wrong endpoint, or the instance is not running. |
+| `unreachable` | Wrong endpoint, the instance is not running — or, under Codex, the sandbox. See below. |
 | `warming` | Instance still starting. Wait and retry — not a failure. |
 | `not_responding` | Timeouts, usually load. Retry before concluding anything. |
 
 Stuck? `mubit-memory:doctor` runs the full diagnosis, cheapest check first. Under Codex its
 step 0 is the Codex-specific one: hooks that were never trusted.
+
+### `ENOTFOUND` under Codex — usually the sandbox, not the endpoint
+
+```
+POST /v2/control/activity: this process has no network access — Codex ran it
+inside its sandbox. Approve the command and run it again; the endpoint is
+almost certainly fine
+```
+
+Codex runs a command you have not approved inside seatbelt with the network switched off, and
+DNS is the first thing that fails in there. So a plugin command dialling a perfectly healthy
+endpoint comes back `ENOTFOUND`, and the same command run again after you approve it succeeds.
+
+**Approve the command.** Nothing needs fixing. The giveaway that memory itself is fine is in
+the session you are already in: if `SessionStart` said `Mubit memory is active` and recall
+injected anything at all, the hooks are connected and only this one sandboxed process was not.
+
+Versions before 0.12.2 reported the same failure as `no such host — the endpoint name does not
+resolve; check it for a typo`, which sends you to fix a URL that was never wrong. If you see
+that wording against an endpoint you believe in, upgrade rather than editing your config.
+
+Outside the sandbox `ENOTFOUND` does mean the name is wrong. Only `api.mubit.ai` is
+provisioned — `eu.mubit.ai` and `us.mubit.ai` do not exist, so a stored endpoint naming one can
+never answer. Re-run `login` with no `--endpoint` to reset it to the default, and check for a
+stale `export MUBIT_ENDPOINT` in `.zshrc` or `.bashrc`: Codex runs hooks through a login shell,
+so that variable outranks anything `login` stores.
 
 ### "no Mubit endpoint is configured"
 
@@ -229,8 +262,40 @@ Confirm what is actually stored, and where it was read from:
 node "$PLUGIN/scripts/login.mjs" --status
 ```
 
-If your installed plugin predates `scripts/login.mjs`, upgrade it first — `codex plugin add
-mubit-memory@mubit` — then re-run `setup` and `login`.
+If your installed plugin predates `scripts/login.mjs`, upgrade it first — see below.
+
+### Upgrading, or installing on a second machine
+
+Claude Code:
+
+```
+/plugin marketplace add mubit-ai/plugins
+/plugin install mubit-memory@mubit
+/reload-plugins
+```
+
+Then start a **new** session, for the reason in Part 1.
+
+Codex:
+
+```bash
+codex plugin marketplace upgrade      # refreshes the Git snapshot — this is what fetches new commits
+codex plugin add mubit-memory@mubit
+
+PLUGIN=$(ls -d ~/.codex/plugins/cache/mubit/mubit-memory/*/ | tail -1)
+node "$PLUGIN/scripts/setup.mjs" "$PLUGIN"
+```
+
+Both hosts cache a plugin under its version, so an upgrade that did not change the version can
+keep the old files. If a fix you expect is missing, check the version actually on disk:
+`ls ~/.codex/plugins/cache/mubit/mubit-memory/`.
+
+**Re-run `setup` after every upgrade.** Editing a hook registration changes its content hash,
+which returns it to untrusted — and under `codex exec` an untrusted hook is skipped silently,
+exit 0, no warning. An upgrade that skips this step leaves a plugin that installs perfectly and
+captures nothing.
+
+You only need `login` again if the key or endpoint is wrong; an upgrade does not disturb them.
 
 ---
 
