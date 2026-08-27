@@ -120,13 +120,20 @@ If you also run the Claude Code plugin, it already wrote a key into the shared d
 you are done. **From scratch, enter the key yourself.** Two ways.
 
 **A. Store it once, verified — recommended.** This checks the key against your instance
-before writing it, then persists it for every future session:
+before writing it, then persists it for every future session.
+
+Edit these three lines:
 
 ```bash
-PLUGIN=~/.codex/plugins/cache/mubit/mubit-memory/0.12.0
-MUBIT_CC_DATA_DIR=~/.claude/plugins/data/mubit-memory-mubit \
-MUBIT_AUTH_KEY='mbt_...' \
-  node "$PLUGIN/bin/auth.mjs" --paste --endpoint https://eu.mubit.ai
+export MUBIT_AUTH_KEY='mbt_...'
+export MUBIT_ENDPOINT='https://eu.mubit.ai'
+export MUBIT_CC_DATA_DIR="$HOME/.claude/plugins/data/mubit-memory-mubit"
+```
+
+Then paste this as-is:
+
+```bash
+node "$HOME/.codex/plugins/cache/mubit/mubit-memory/0.12.0/bin/auth.mjs" --paste
 ```
 
 `Connected to https://eu.mubit.ai.` means the key is valid and stored. Anything else is the
