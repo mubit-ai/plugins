@@ -36,15 +36,9 @@ Then **start a new Claude Code session.**
 session begins the plugin has never actually run — no run id, nothing on the status line.
 It looks broken and it is fine.
 
-### Connect it
+### Connect it — enter your API key directly
 
-Easiest route — opens the console in a browser, signs you in, stores a key for this machine:
-
-```
-/mubit-memory:auth
-```
-
-Or set the endpoint and key yourself, one of three ways:
+Set the endpoint and key yourself, one of three ways.
 
 **A. Plugin settings — recommended.** `/plugin` → **Mubit Memory** → **configure**, then fill
 in `endpoint` and `apiKey`. The key field is marked sensitive, so it goes into your OS keychain
@@ -71,8 +65,8 @@ Set these in your shell profile (or CI secrets) before starting Claude Code.
 
 Lowest precedence of the three. Do not commit it — the key is a secret.
 
-**Precedence, highest first:** plugin settings → `MUBIT_*` env vars → what
-`mubit-memory:auth` stored → `.mubit-cc.json` → defaults.
+**Precedence, highest first:** plugin settings → `MUBIT_*` env vars → a stored
+`credentials.json` → `.mubit-cc.json` → defaults.
 
 ---
 
@@ -114,15 +108,39 @@ untrusted hook is skipped *silently* — no prompt, no warning, exit 0. `setup` 
 trust and asks first; otherwise run `/hooks` in the TUI and approve the Mubit entries. Trust
 must be re-granted after an upgrade, because editing a registration changes its content hash.
 
-### Connect it
+### Connect it — enter your API key directly
 
-Codex has no plugin settings UI, so configuration is three rungs, highest first:
+A fresh install has no credentials. `setup` says so, and it is not an error:
 
-1. `MUBIT_*` environment variables
-2. `<data-dir>/credentials.json` — what `mubit-memory:auth` writes
-3. `<project>/.mubit-cc.json`
+```
+no credentials.json here yet.
+```
 
-The straightforward route:
+If you also run the Claude Code plugin, it already wrote a key into the shared data dir and
+you are done. **From scratch, enter the key yourself.** Two ways.
+
+**A. Store it once, verified — recommended.** This checks the key against your instance
+before writing it, then persists it for every future session:
+
+```bash
+PLUGIN=~/.codex/plugins/cache/mubit/mubit-memory/0.12.0
+MUBIT_CC_DATA_DIR=~/.claude/plugins/data/mubit-memory-mubit \
+MUBIT_AUTH_KEY='mbt_...' \
+  node "$PLUGIN/bin/auth.mjs" --paste --endpoint https://eu.mubit.ai
+```
+
+`Connected to https://eu.mubit.ai.` means the key is valid and stored. Anything else is the
+key or the endpoint, not the plugin — see the table in Part 3. `--status` reports what is
+currently stored; `--logout` removes it.
+
+**`MUBIT_CC_DATA_DIR` is not optional here.** On its own `auth.mjs` writes to
+`~/.claude/plugins/data/mubit-memory`, while `setup` pins the hooks to a suffixed directory
+(`mubit-memory-mubit`, `mubit-memory-inline`, …). Get it wrong and the key lands somewhere
+nothing reads — silently, with no error. Use the exact path `setup` printed on its first line
+as `data directory:`, or check with `ls ~/.claude/plugins/data/`.
+
+**B. Environment variables — nothing stored on disk.** Good for CI and containers, and it
+outranks the stored file:
 
 ```bash
 export MUBIT_ENDPOINT='https://eu.mubit.ai'
@@ -130,8 +148,17 @@ export MUBIT_API_KEY='mbt_...'
 ```
 
 Codex runs hook commands through a **login shell**, so anything exported in `.zshrc` or
-`.bashrc` reaches the plugin. Convenient, and occasionally surprising: a stale `MUBIT_ENDPOINT`
-left over from a local-server session outranks the key you signed in with.
+`.bashrc` reaches the plugin. Convenient, and occasionally surprising: a stale
+`MUBIT_ENDPOINT` left over from a local-server session outranks the key you signed in with.
+
+Codex has no plugin settings UI, so configuration is three rungs, highest first:
+
+1. `MUBIT_*` environment variables
+2. `<data-dir>/credentials.json` — what option A writes
+3. `<project>/.mubit-cc.json`
+
+Either way, **start a new Codex session afterwards** — hooks and MCP servers are read at
+session start.
 
 ### Two Codex-specific things
 
