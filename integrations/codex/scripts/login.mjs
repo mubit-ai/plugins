@@ -63,7 +63,7 @@ if (argv.includes('--status')) {
   emit(
     { ok: cur.hasKey, state: cur.hasKey ? 'configured' : 'unconfigured', endpoint: cur.endpoint },
     cur.hasKey
-      ? `Signed in to ${cur.endpoint || DEFAULT_ENDPOINT}.\n  credentials: ${dataDir} (${source})`
+      ? `A key is stored for ${cur.endpoint || DEFAULT_ENDPOINT} \u2014 read from disk, not dialed.\n  credentials: ${dataDir} (${source})`
       : `No Mubit credentials in ${dataDir} (${source}).`,
   );
   process.exit(cur.hasKey ? 0 : 1);

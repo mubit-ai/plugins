@@ -1947,10 +1947,39 @@ function firstOf(...vals) {
 function withMs(res, started) {
   return { ...res, ms: Date.now() - started };
 }
+function NETWORK_HINT(err) {
+  const HINTS = {
+    ENOTFOUND: "no such host \u2014 the endpoint name does not resolve; check it for a typo",
+    EAI_AGAIN: "the DNS lookup failed \u2014 check the network, or the endpoint for a typo",
+    ECONNREFUSED: "nothing is listening there \u2014 check the port, and that the instance is running",
+    EHOSTUNREACH: "the host is unreachable from this network",
+    ENETUNREACH: "the network is unreachable",
+    ENETDOWN: "the network is down",
+    ECONNRESET: "the connection was reset in flight",
+    ETIMEDOUT: "the connection timed out",
+    UND_ERR_CONNECT_TIMEOUT: "the connection timed out",
+    UND_ERR_HEADERS_TIMEOUT: "the instance accepted the connection but sent no headers in time",
+    CERT_HAS_EXPIRED: "the instance's TLS certificate has expired",
+    DEPTH_ZERO_SELF_SIGNED_CERT: "the instance's TLS certificate is self-signed and not trusted",
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: "the instance's TLS certificate could not be verified"
+  };
+  let cur = err;
+  for (let i = 0; i < 8 && cur && typeof cur === "object"; i++) {
+    const code = typeof cur.code === "string" ? cur.code.toUpperCase() : "";
+    if (HINTS[code]) return `${HINTS[code]} (${code})`;
+    cur = cur.cause;
+  }
+  return "";
+}
 function messageOf(err) {
   try {
     if (!err) return "unknown error";
     if (typeof err === "string") return err;
+    // A transport failure surfaces as a bare `TypeError: fetch failed`, whose only actionable
+    // part is a code one or two `cause` levels down. Printing just the wrapper told the user
+    // their request failed and nothing whatsoever about why, or what to change.
+    const hint = NETWORK_HINT(err);
+    if (hint) return hint;
     const parts = [];
     if (err.name) parts.push(String(err.name));
     if (err.message) parts.push(String(err.message));

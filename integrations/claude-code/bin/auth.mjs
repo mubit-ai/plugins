@@ -168,7 +168,7 @@ async function verifyCredentials(opts) {
     return {
       ok: false,
       state: "unreachable",
-      detail: `Nothing answered at ${endpoint}. Check the endpoint, and that the instance is running.`
+      detail: `Could not reach ${endpoint}: ${health.cause}.`
     };
   }
   if (health.status >= 500) {
@@ -185,7 +185,7 @@ async function verifyCredentials(opts) {
     body: "{}"
   });
   if (probe.transportError) {
-    return { ok: false, state: "unreachable", detail: `Lost the connection to ${endpoint} while checking the key.` };
+    return { ok: false, state: "unreachable", detail: `Lost the connection to ${endpoint} while checking the key: ${probe.cause}.` };
   }
   if (probe.status === 401 || probe.status === 403) {
     return { ok: false, state: "auth_failed", detail: "The instance rejected that key. Issue a new one in the console." };
@@ -198,17 +198,51 @@ async function verifyCredentials(opts) {
   }
   return { ok: true, state: "ready", detail: `Connected to ${endpoint}.` };
 }
+/**
+ * @param {typeof fetch} fetchImpl
+ * @param {string} url
+ * @param {{ method?: string, headers?: Record<string, string>, body?: string, timeoutMs?: number }} [opts]
+ */
 async function dial(fetchImpl, url, { method = "GET", headers = {}, body, timeoutMs } = {}) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetchImpl(url, { method, headers, body, signal: ac.signal });
     return { status: res.status, transportError: false };
-  } catch {
-    return { status: 0, transportError: true };
+  } catch (err) {
+    return { status: 0, transportError: true, cause: transportCause(err) };
   } finally {
     clearTimeout(timer);
   }
+}
+/**
+ * The actionable half of a transport failure, which lives in the `cause` chain rather than in
+ * the `TypeError: fetch failed` wrapper. A name that does not resolve and an instance that is
+ * switched off are different problems with different fixes, and used to print identically.
+ * @param {unknown} err
+ * @returns {string}
+ */
+function transportCause(err) {
+  const HINTS = {
+    ENOTFOUND: "that hostname does not resolve \u2014 check the endpoint for a typo (ENOTFOUND)",
+    EAI_AGAIN: "the DNS lookup failed \u2014 check the network, or the endpoint for a typo (EAI_AGAIN)",
+    ECONNREFUSED: "nothing is listening on that port (ECONNREFUSED)",
+    EHOSTUNREACH: "the host is unreachable from this network (EHOSTUNREACH)",
+    ENETUNREACH: "the network is unreachable (ENETUNREACH)",
+    ECONNRESET: "the connection was reset in flight (ECONNRESET)",
+    CERT_HAS_EXPIRED: "its TLS certificate has expired (CERT_HAS_EXPIRED)",
+    DEPTH_ZERO_SELF_SIGNED_CERT: "its TLS certificate is self-signed and not trusted (DEPTH_ZERO_SELF_SIGNED_CERT)",
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: "its TLS certificate could not be verified (UNABLE_TO_VERIFY_LEAF_SIGNATURE)"
+  };
+  let cur = err;
+  for (let i = 0; i < 8 && cur && typeof cur === "object"; i++) {
+    const code = typeof cur["code"] === "string" ? cur["code"].toUpperCase() : "";
+    if (HINTS[code]) return HINTS[code];
+    const name = typeof cur["name"] === "string" ? cur["name"] : "";
+    if (name === "AbortError" || name === "TimeoutError") return "it did not answer in time";
+    cur = cur["cause"];
+  }
+  return "nothing answered \u2014 check the endpoint, and that the instance is running";
 }
 async function authenticateWithKey(opts) {
   const endpoint = normalizeEndpoint(opts?.endpoint);
@@ -288,13 +322,17 @@ async function runBrowserAuth(opts = {}) {
   });
   await new Promise((res, rej) => {
     server.once("error", rej);
-    server.listen(0, "127.0.0.1", res);
+    server.listen(0, "127.0.0.1", () => res(void 0));
   });
   server.unref();
-  const port = (
-    /** @type {any} */
-    server.address().port
-  );
+  // `address()` is `AddressInfo | string | null`, and only the first carries a port. The old
+  // cast silently produced `port=undefined` in the sign-in URL for the other two, which fails
+  // in the browser with nothing pointing back here.
+  const addr = server.address();
+  if (addr === null || typeof addr === "string") {
+    throw new Error("the local callback server did not bind a TCP port");
+  }
+  const port = addr.port;
   const timer = setTimeout(
     () => fail(new Error("timed out waiting for browser authorization")),
     timeoutMs
@@ -333,9 +371,12 @@ function buildAuthUrl({ consoleUrl, port, state, challenge, repo, host, region }
 function endpointFor(payload = {}) {
   const explicit = typeof payload.mubitEndpoint === "string" ? payload.mubitEndpoint.trim() : "";
   if (explicit) return normalizeEndpoint(explicit);
-  const region = typeof payload.region === "string" ? payload.region.trim().toLowerCase() : "";
-  const KNOWN = { eu: "https://eu.mubit.ai", us: "https://us.mubit.ai" };
-  return KNOWN[region] ?? DEFAULT_ENDPOINT;
+  // No region map. eu.mubit.ai and us.mubit.ai are NXDOMAIN, so turning `payload.region` into
+  // one of them stored an endpoint that could never answer, and every later command then
+  // failed with `TypeError: fetch failed (ENOTFOUND)` far from the sign-in that caused it.
+  // A region is a routing hint for the console, not a hostname this side may invent: trust an
+  // endpoint only when the console names one outright.
+  return DEFAULT_ENDPOINT;
 }
 function repoIdentity(cwd = process.cwd()) {
   try {
@@ -377,7 +418,7 @@ async function main(argv = process.argv.slice(2), env = process.env, deps = {}) 
       ok: cur.hasKey,
       state: cur.hasKey ? "configured" : "unconfigured",
       endpoint: cur.endpoint,
-      detail: cur.hasKey ? `Signed in to ${cur.endpoint || DEFAULT_ENDPOINT}.` : "No Mubit credentials stored. Run /mubit-memory:auth."
+      detail: cur.hasKey ? `A key is stored for ${cur.endpoint || DEFAULT_ENDPOINT}. This reads the stored file and does not dial it \u2014 run /mubit-memory:setup to confirm the instance answers.` : "No Mubit credentials stored. Run /mubit-memory:auth."
     });
     return cur.hasKey ? 0 : 1;
   }
