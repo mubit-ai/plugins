@@ -48577,6 +48577,15 @@ var NETWORK_HINTS = {
   DEPTH_ZERO_SELF_SIGNED_CERT: "its TLS certificate is self-signed and not trusted (DEPTH_ZERO_SELF_SIGNED_CERT)",
   UNABLE_TO_VERIFY_LEAF_SIGNATURE: "its TLS certificate could not be verified (UNABLE_TO_VERIFY_LEAF_SIGNATURE)"
 };
+function SANDBOX_BLOCKED() {
+  // Codex runs an unapproved command inside seatbelt with the network switched off, and DNS is
+  // what fails first there \u2014 so a perfectly healthy endpoint reports ENOTFOUND. Reading that
+  // as a bad endpoint sends the reader off to fix a URL that was never wrong; the fix is to
+  // approve the command. No network error carries information about the endpoint in here.
+  const env = typeof process === "object" && process ? process.env || {} : {};
+  if (!env.CODEX_SANDBOX && !env.CODEX_SANDBOX_NETWORK_DISABLED) return "";
+  return "this process has no network access \u2014 Codex ran it inside its sandbox. Approve the command and run it again; the endpoint is almost certainly fine";
+}
 /**
  * Walk the `cause` chain for the code that says which transport failure this was.
  * @param {unknown} err
@@ -48586,7 +48595,7 @@ function networkDetail(err) {
   let cur = err;
   for (let i = 0; i < 8 && cur && typeof cur === "object"; i++) {
     const code = typeof cur.code === "string" ? cur.code.toUpperCase() : "";
-    if (NETWORK_HINTS[code]) return NETWORK_HINTS[code];
+    if (NETWORK_HINTS[code]) return SANDBOX_BLOCKED() || NETWORK_HINTS[code];
     cur = cur.cause;
   }
   return "";

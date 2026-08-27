@@ -215,6 +215,15 @@ async function dial(fetchImpl, url, { method = "GET", headers = {}, body, timeou
     clearTimeout(timer);
   }
 }
+function SANDBOX_BLOCKED() {
+  // Codex runs an unapproved command inside seatbelt with the network switched off, and DNS is
+  // what fails first there \u2014 so a perfectly healthy endpoint reports ENOTFOUND. Reading that
+  // as a bad endpoint sends the reader off to fix a URL that was never wrong; the fix is to
+  // approve the command. No network error carries information about the endpoint in here.
+  const env = typeof process === "object" && process ? process.env || {} : {};
+  if (!env.CODEX_SANDBOX && !env.CODEX_SANDBOX_NETWORK_DISABLED) return "";
+  return "this process has no network access \u2014 Codex ran it inside its sandbox. Approve the command and run it again; the endpoint is almost certainly fine";
+}
 /**
  * The actionable half of a transport failure, which lives in the `cause` chain rather than in
  * the `TypeError: fetch failed` wrapper. A name that does not resolve and an instance that is
@@ -237,7 +246,7 @@ function transportCause(err) {
   let cur = err;
   for (let i = 0; i < 8 && cur && typeof cur === "object"; i++) {
     const code = typeof cur["code"] === "string" ? cur["code"].toUpperCase() : "";
-    if (HINTS[code]) return HINTS[code];
+    if (HINTS[code]) return SANDBOX_BLOCKED() || HINTS[code];
     const name = typeof cur["name"] === "string" ? cur["name"] : "";
     if (name === "AbortError" || name === "TimeoutError") return "it did not answer in time";
     cur = cur["cause"];
