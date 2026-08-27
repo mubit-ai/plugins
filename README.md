@@ -122,12 +122,13 @@ you are done. **From scratch, enter the key yourself.** Two ways.
 **A. Store it once, verified — recommended.** This checks the key against your instance
 before writing it, then persists it for every future session.
 
-Edit these three lines:
+Edit these three lines — the third is the path `setup` printed as `data directory:`, copied
+verbatim:
 
 ```bash
 export MUBIT_AUTH_KEY='mbt_...'
 export MUBIT_ENDPOINT='https://eu.mubit.ai'
-export MUBIT_CC_DATA_DIR="$HOME/.claude/plugins/data/mubit-memory-mubit"
+export MUBIT_CC_DATA_DIR='/Users/you/.claude/plugins/data/mubit-memory-mubit'
 ```
 
 Then paste this as-is:
@@ -140,11 +141,18 @@ node "$HOME/.codex/plugins/cache/mubit/mubit-memory/0.12.0/bin/auth.mjs" --paste
 key or the endpoint, not the plugin — see the table in Part 3. `--status` reports what is
 currently stored; `--logout` removes it.
 
-**`MUBIT_CC_DATA_DIR` is not optional here.** On its own `auth.mjs` writes to
-`~/.claude/plugins/data/mubit-memory`, while `setup` pins the hooks to a suffixed directory
-(`mubit-memory-mubit`, `mubit-memory-inline`, …). Get it wrong and the key lands somewhere
-nothing reads — silently, with no error. Use the exact path `setup` printed on its first line
-as `data directory:`, or check with `ls ~/.claude/plugins/data/`.
+**Why a `.claude` path in a Codex install?** Because that is where Mubit state lives on both
+harnesses, deliberately — one directory is what makes a Codex session and a Claude Code
+session in the same project one memory rather than two. A Codex-only user ends up with a
+`~/.claude/` directory they never asked for.
+
+**And why set it by hand?** `setup` resolved the directory and pinned it into the hook
+registrations, so the hooks never guess. `bin/auth.mjs` run from your shell has no such pin —
+on its own it writes to the bare `~/.claude/plugins/data/mubit-memory`, which is not
+necessarily the one `setup` chose. The suffix varies by install
+(`mubit-memory-<marketplace>`, `mubit-memory-inline`, …), so do not assume the one above:
+take the path from your own `setup` output, or `ls ~/.claude/plugins/data/`. Get it wrong and
+the key lands where nothing reads it — silently, with no error.
 
 **B. Environment variables — nothing stored on disk.** Good for CI and containers, and it
 outranks the stored file:
