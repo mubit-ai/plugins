@@ -18,7 +18,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createInterface } from 'node:readline';
 
 import { claudeCodeDataDir } from '../lib/boot.mjs';
 import { authenticateWithKey, currentCredentials, normalizeEndpoint, DEFAULT_ENDPOINT } from '../bin/auth.mjs';
@@ -70,17 +69,57 @@ if (argv.includes('--status')) {
   process.exit(cur.hasKey ? 0 : 1);
 }
 
+/**
+ * Read a key from the terminal without echoing it. Node's readline echoes what is typed and
+ * offers no supported way to suppress it — `_writeToOutput` is private and absent from the
+ * promises interface on current Node — so take raw mode and read the bytes, the way `sudo`
+ * does. A key in the scrollback is a key in the scrollback.
+ * @param {string} prompt
+ * @returns {Promise<string>}
+ */
+function readSecret(prompt) {
+  return new Promise((resolve) => {
+    const input = process.stdin;
+    process.stderr.write(prompt);
+    input.setRawMode(true);
+    input.resume();
+    input.setEncoding('utf8');
+    let buf = '';
+    const finish = (value, signal) => {
+      input.setRawMode(false);
+      input.pause();
+      input.removeListener('data', onData);
+      input.removeListener('end', onEnd);
+      process.stderr.write('\n');
+      if (signal) {
+        // Ctrl+C means cancelled, and must look cancelled: 130 is what a shell reports.
+        process.exit(130);
+      }
+      resolve(value);
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n' || ch === '\u0004') return finish(buf);
+        if (ch === '\u0003') return finish('', true);
+        if (ch === '\u007f' || ch === '\b') { buf = buf.slice(0, -1); continue; }
+        if (ch < ' ') continue;
+        buf += ch;
+      }
+    };
+    // stdin closing while we wait would otherwise hang here for ever, waiting on a keystroke
+    // that cannot arrive. An empty answer is handled upstream; a hang is not handled anywhere.
+    const onEnd = () => finish(buf);
+    input.on('data', onData);
+    input.once('end', onEnd);
+  });
+}
+
 /** @returns {Promise<string>} */
 async function readKey() {
   const given = flag('key') || process.env.MUBIT_AUTH_KEY || process.env.MUBIT_API_KEY || '';
   if (given) return given.trim();
-  if (!process.stdin.isTTY) return '';
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    return (await rl.question('Mubit API key (mbt_…): ')).trim();
-  } finally {
-    rl.close();
-  }
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') return '';
+  return (await readSecret('Mubit API key (mbt_\u2026): ')).trim();
 }
 
 const apiKey = await readKey();
