@@ -209,6 +209,29 @@ A `ready` state plus your endpoint and a run id means you are done. Anything els
 Stuck? `mubit-memory:doctor` runs the full diagnosis, cheapest check first. Under Codex its
 step 0 is the Codex-specific one: hooks that were never trusted.
 
+### "no Mubit endpoint is configured"
+
+```
+POST /v2/control/activity: no Mubit endpoint is configured; nothing was dialed
+```
+
+The install worked and the key was never stored. Nothing reads an endpoint out of thin air:
+a plugin command finds it in `credentials.json` inside the pinned data directory, or in
+`MUBIT_*` env vars, and finds nothing otherwise. Go back to **Connect it** and run `login`.
+
+Under Codex this can surface as `(no output)`: these commands write failures to **stderr** and
+leave stdout empty, so a tool call that only surfaces stdout shows an empty result rather than
+the reason. Re-run with `2>&1` to see it.
+
+Confirm what is actually stored, and where it was read from:
+
+```bash
+node "$PLUGIN/scripts/login.mjs" --status
+```
+
+If your installed plugin predates `scripts/login.mjs`, upgrade it first — `codex plugin add
+mubit-memory@mubit` — then re-run `setup` and `login`.
+
 ---
 
 ## Part 4 — Daily use
