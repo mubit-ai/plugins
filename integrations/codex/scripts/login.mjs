@@ -34,6 +34,10 @@ const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), '.codex');
 /**
  * The pin `setup` wrote, which is what the hooks actually run with. Authoritative over any
  * search: a search is a guess about which install is live, this is the recorded answer.
+ *
+ * `liveDataDir()` in the claude-code integration's `lib/state.mjs` reads the same pin. This
+ * copy stays because it must also report *which* rung answered — the `source` line below is
+ * the whole reason a user can tell a recorded answer from a guess.
  * @returns {string}
  */
 function pinnedDataDir() {

@@ -35,7 +35,40 @@ function dataDir(cfg = {}, env = process.env) {
   if (typeof host2 === "string" && host2) return host2;
   if (cfg && typeof cfg.dataDir === "string" && cfg.dataDir) return cfg.dataDir;
   const home = typeof e.HOME === "string" && e.HOME ? e.HOME : safeHome2();
-  return join2(home, ".claude", "plugins", "data", "mubit-memory");
+  return liveDataDir(home, e);
+}
+function liveDataDir(home, env = {}) {
+  const root = join2(home, ".claude", "plugins", "data");
+  try {
+    const codexHome = typeof env.CODEX_HOME === "string" && env.CODEX_HOME ? env.CODEX_HOME : join2(home, ".codex");
+    const pinned = JSON.stringify(JSON.parse(readFileSync(join2(codexHome, "hooks.json"), "utf8"))).match(/MUBIT_CC_DATA_DIR=\\"([^\\"]+)\\"/);
+    if (pinned && pinned[1]) return pinned[1];
+  } catch {
+  }
+  try {
+    let best = "";
+    let bestAt = -1;
+    for (const name of readdirSync2(root)) {
+      if (!name.startsWith("mubit-memory")) continue;
+      const dir = join2(root, name);
+      let at = 0;
+      try {
+        for (const f of readdirSync2(join2(dir, "status"))) {
+          if (!f.endsWith(".json") || f === "health.json") continue;
+          at = Math.max(at, statSync2(join2(dir, "status", f)).mtimeMs);
+        }
+      } catch {
+      }
+      if (existsSync2(join2(dir, "credentials.json"))) at += 1e15;
+      if (at > bestAt) {
+        bestAt = at;
+        best = dir;
+      }
+    }
+    if (best && bestAt > 0) return best;
+  } catch {
+  }
+  return join2(root, "mubit-memory");
 }
 function safeHome2() {
   try {
@@ -1598,10 +1631,6 @@ function NETWORK_HINT(err) {
   return "";
 }
 function SANDBOX_BLOCKED() {
-  // Codex runs an unapproved command inside seatbelt with the network switched off, and DNS is
-  // what fails first there \u2014 so a perfectly healthy endpoint reports ENOTFOUND. Reading that
-  // as a bad endpoint sends the reader off to fix a URL that was never wrong; the fix is to
-  // approve the command. No network error carries information about the endpoint in here.
   const env = typeof process === "object" && process ? process.env || {} : {};
   if (!env.CODEX_SANDBOX && !env.CODEX_SANDBOX_NETWORK_DISABLED) return "";
   return "this process has no network access \u2014 Codex ran it inside its sandbox. Approve the command and run it again; the endpoint is almost certainly fine";
@@ -1610,9 +1639,6 @@ function messageOf(err) {
   try {
     if (!err) return "unknown error";
     if (typeof err === "string") return err;
-    // A transport failure surfaces as a bare `TypeError: fetch failed`, whose only actionable
-    // part is a code one or two `cause` levels down. Printing just the wrapper told the user
-    // their request failed and nothing whatsoever about why, or what to change.
     const hint = NETWORK_HINT(err);
     if (hint) return hint;
     const parts = [];
