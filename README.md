@@ -297,6 +297,27 @@ captures nothing.
 
 You only need `login` again if the key or endpoint is wrong; an upgrade does not disturb them.
 
+### Sharing one run between Codex and Claude Code
+
+A run id is what memory is scoped to, and by default it is derived from the project, not from
+the harness: `cc-<directory-name>-<hash of the git root path>`. Codex and Claude Code opened on
+the same checkout therefore already land on the same run and see each other's pins and lessons.
+
+They diverge when the *path* diverges — a different clone, or the same repo on a second machine
+where your home directory has another name. If you want one run regardless of path or harness,
+pin it by name:
+
+```bash
+export MUBIT_CC_RUN_STRATEGY=static
+export MUBIT_CC_RUN_ID=team-<project>
+```
+
+Set both in the same place for both tools (your shell profile, or the `--env` flags `setup`
+writes), and re-run setup so the hooks inherit them. `static` will not fall back silently: with
+no `MUBIT_CC_RUN_ID` it refuses rather than quietly writing into a different run.
+
+Check which run either side is on with `/mubit-memory:doctor`, or `pin.mjs list --json`.
+
 ---
 
 ## Part 4 — Daily use
