@@ -11,6 +11,10 @@ side effect.
 **Requirements:** Node >= 20, and Codex CLI >= 0.146.0 if you use that side. No build step,
 no `npm install` — the bundles ship committed.
 
+| Plugin | Version | Built for |
+| --- | --- | --- |
+| [`mubit-memory`](integrations/claude-code/) | 0.12.4 | [Claude Code](integrations/claude-code/) · [Codex CLI](integrations/codex/) |
+
 You need two values before you start:
 
 | Value | Example |
@@ -394,6 +398,59 @@ Run id, connection, what recall cost this prompt, what has been saved.
   [`integrations/claude-code/README.md`](integrations/claude-code/README.md) ·
   [`integrations/codex/README.md`](integrations/codex/README.md)
 
+## This is a generated repository — do not edit it here
+
+Contents are published from Mubit's source repository on release. Any commit made directly here
+is overwritten by the next publish.
+
+```
+source repository
+  ├── .claude-plugin/marketplace.json ──┐
+  ├── integrations/claude-code/ ────────┤ published on release
+  └── integrations/codex/ ──────────────┤
+                                        ▼
+mubit-ai/plugins (this repo)  →  fetched by Claude Code / Codex  →  a user's plugin dir
+```
+
+Claude Code fetches a GitHub marketplace with `git clone --depth 1`, using your own git
+credentials — there is no separate plugin token. If your git is configured for SSH only, run
+`gh auth setup-git` first; the clone URL is always HTTPS, even for sources written as `git@`.
+Codex fetches the same repository as a Git snapshot, which is why `codex plugin marketplace
+upgrade` is the step that actually pulls new commits.
+
+The `integrations/<host>` paths are preserved deliberately: each marketplace entry's `source`
+is a marketplace-relative path that resolves inside whichever repository served the catalog.
+Keeping the same paths means `marketplace.json` needs no rewriting when it is published here,
+so there is nothing that can drift between the two copies.
+
+What is published is the plugin's tracked files, minus development-only scripts and QA
+transcripts written against a developer's own checkout. What runs on your machine is exactly
+what you see here — both hosts execute these directories as fetched, with no build step, which
+is why `hooks/dist/`, `mcp/dist/` and `bin/` are committed artifacts rather than build output.
+
+## Verifying what you are about to run
+
+Everything here executes on your machine: the hooks run as Node processes on session events,
+and the MCP server runs as a long-lived subprocess. Two things make that auditable:
+
+- `integrations/claude-code/hooks/src/` and `lib/` are the readable source for every bundle in
+  `hooks/dist/` and `bin/`. Diff them rather than trusting the bundles — `npm run build` in
+  `integrations/claude-code` regenerates the bundles in place, so a clean `git diff` afterwards
+  is proof the committed artifacts match their source. The codex integration builds the same
+  sources; its `esbuild.config.mjs` names them.
+- `integrations/claude-code/test/` carries the full suite, including the redaction cases —
+  pattern scrub, path denylist, and byte caps applied after the scrub. Run it with `npm test`,
+  and again with `MUBIT_CC_TEST_TARGET=dist` to run it against the code that actually ships.
+
+```bash
+claude plugin validate .
+```
+
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE).
+Apache-2.0. The plugins are licensed by
+[`integrations/claude-code/LICENSE`](integrations/claude-code/LICENSE), accompanied by
+[`integrations/claude-code/THIRD_PARTY_NOTICES.md`](integrations/claude-code/THIRD_PARTY_NOTICES.md)
+attributing the third-party code bundled into the MCP server. The root [`LICENSE`](LICENSE)
+covers everything else in this repository: this README, the marketplace manifest, and the
+publishing tooling.
