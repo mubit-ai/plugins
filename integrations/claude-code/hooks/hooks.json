@@ -1,0 +1,67 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume|clear|compact|fork", "hooks": [
+        { "type": "command", "command": "node", "timeout": 5,
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/session-start.mjs"] } ] }
+    ],
+    "CwdChanged": [
+      { "hooks": [
+        { "type": "command", "command": "node", "timeout": 5,
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/cwd-changed.mjs"] } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [
+        { "type": "command", "command": "node", "timeout": 3,
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/prompt-recall.mjs"] },
+        { "type": "command", "command": "node", "timeout": 3,
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/stage-prompt.mjs"] } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "node", "timeout": 3, "if": "Bash(rm *)",
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/pre-tool.mjs"] },
+        { "type": "command", "command": "node", "timeout": 3, "if": "Bash(git push *)",
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/pre-tool.mjs"] } ] }
+    ],
+    "SubagentStart": [
+      { "hooks": [
+        { "type": "command", "command": "node", "timeout": 3,
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/subagent-start.mjs"] } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*",
+        "hooks": [ { "type": "command", "command": "node", "timeout": 3,
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/capture.mjs"] } ] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "node", "timeout": 3,
+          "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/capture.mjs", "--failure"] } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node", "timeout": 5,
+        "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/capture.mjs", "--stop"] } ] }
+    ],
+    "StopFailure": [
+      { "hooks": [ { "type": "command", "command": "node", "timeout": 3,
+        "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/capture.mjs", "--stop-failure"] } ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [ { "type": "command", "command": "node", "timeout": 3,
+        "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/capture.mjs", "--subagent"] } ] }
+    ],
+    "PreCompact": [
+      { "hooks": [ { "type": "command", "command": "node", "timeout": 10,
+        "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/checkpoint.mjs", "--pre"] } ] }
+    ],
+    "PostCompact": [
+      { "hooks": [ { "type": "command", "command": "node", "timeout": 5,
+        "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/checkpoint.mjs", "--post"] } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "node", "timeout": 8,
+        "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/dist/session-end.mjs"] } ] }
+    ]
+  }
+}
