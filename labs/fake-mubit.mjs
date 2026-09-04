@@ -3,10 +3,16 @@
 /**
  * `labs/fake-mubit.mjs` — a Mubit instance you can watch.
  *
- * The plugin only ever speaks eleven routes (see `lib/http.mjs` ROUTES). This stands all of
- * them up on 127.0.0.1, answers them the way a healthy instance would, and prints every
- * request in a shape that makes the workflow legible: which rung recall took, what the
- * capture pipeline actually put on the wire, which memories an outcome reinforced.
+ * The plugin only ever speaks twelve routes (see `lib/http.mjs` ROUTES, plus the activity
+ * feed `lib/activity.mjs` reads). This stands all of them up on 127.0.0.1, answers them the
+ * way a healthy instance would, and prints every request in a shape that makes the workflow
+ * legible: which rung recall took, what the capture pipeline actually put on the wire, which
+ * memories an outcome reinforced.
+ *
+ * Recall answers one of two evidence sets. A query about retries or backoff gets three
+ * two-sentence memories, which is what most real lessons look like and what Lab 12 needs:
+ * a repeat is degraded to a pointer only when the pointer is shorter than the line it
+ * replaces, and the one-line set every other lab uses is too short for that to ever happen.
  *
  * Zero dependencies, like everything else here.
  *
@@ -149,7 +155,7 @@ function route(key, body, url) {
     if (scenario === 'deny-direct' && body?.mode === 'direct_bypass') {
       return { status: 403, json: { error: 'permission_denied', detail: 'direct_bypass disabled by policy' } };
     }
-    return { json: queryResponse(body?.mode) };
+    return { json: queryResponse(body?.mode, body?.query) };
   }
 
   if (key === 'POST /v2/control/context') {
@@ -206,6 +212,23 @@ function route(key, body, url) {
           content: 'cargo check fails until the tonic dependency is declared in Cargo.toml.',
         }],
         lessons_stored: 1, summary: 'one lesson from this run', confidence: 0.7, degraded: false,
+      },
+    };
+  }
+
+  if (key === 'POST /v2/control/strategies') {
+    // LLM-backed clustering over the lessons a run can see. One strategy from the two
+    // global rows is enough to show the shape `bin/admin.mjs strategies` renders.
+    return {
+      json: {
+        run_id: body?.run_id ?? '',
+        strategies: [{
+          strategy_id: 'strat_lab_1',
+          description: 'Treat "queued" as accepted and poll the job id; run migrations before the server.',
+          dominant_lesson_type: 'rule', dominant_scope: 'global',
+          lesson_ids: ['les_g1', 'les_g2'], confidence: 0.66,
+        }],
+        summary: 'one strategy from two global lessons',
       },
     };
   }
@@ -328,24 +351,37 @@ function realLessons() {
   ];
 }
 
-function queryResponse(mode) {
+function queryResponse(mode, query) {
   const ev = (over) => ({
     id: 'e0', content: '', source: 'agent', score: 0.5, run_id: 'cc-lab',
     entry_type: 'fact', metadata_json: '{}', retrieval_mode: 'semantic_search',
     reference_id: 'ref_0', referenceable: true, origin_entry_type: '',
     is_stale: false, superseded_by: '', explain_info: '', knowledge_confidence: 0.5, ...over,
   });
-  return {
-    final_answer: '', confidence: 0.6, mode: mode ?? 'direct_bypass', degraded: false,
-    consulted_runs: [], routing_summary: String(mode ?? 'direct_bypass'), signals: {}, citations: [],
-    evidence: [
+  // Lab 12's set: long enough that a pointer (the id plus a first clause of at most 64
+  // characters) is shorter than the entry, so a repeat actually degrades.
+  const retry = /retry|retries|backoff/i.test(String(query ?? ''));
+  const evidence = retry
+    ? [
+      ev({ id: 'e11', reference_id: 'ref_retry_rule', entry_type: 'rule', score: 0.93,
+        content: 'Never retry an ingest batch that answered "queued": the job is accepted, and re-sending it only creates a duplicate the idempotency key then has to absorb. Poll the job id instead, with a backoff that starts at 500 ms and doubles to a 10 s ceiling.' }),
+      ev({ id: 'e12', reference_id: 'ref_retry_lesson', entry_type: 'lesson', score: 0.86,
+        content: 'A batch that stayed queued for four minutes was waiting on the indexer, not lost — three clients retried it in parallel and the dedupe path took the whole cost. Waiting on the job id was the fix; the retries were the bug.' }),
+      ev({ id: 'e13', reference_id: 'ref_retry_fact', entry_type: 'fact', score: 0.58,
+        content: 'GET /v2/control/ingest/jobs/<id> answers done:true once indexing has completed, and status "completed" is the only terminal success state; "queued" and "indexing" both mean keep polling.' }),
+    ]
+    : [
       ev({ id: 'e1', reference_id: 'ref_rule_1', entry_type: 'rule', score: 0.91,
         content: 'Ingest returns when queued, not when stored; poll the job id.' }),
       ev({ id: 'e2', reference_id: 'ref_lesson_1', entry_type: 'lesson', score: 0.84,
         content: 'A job stays queued until indexing completes — waiting is the fix, not retrying.' }),
       ev({ id: 'e3', reference_id: 'ref_fact_1', entry_type: 'fact', score: 0.55,
         content: 'IngestAccepted.status is always "queued" on success.' }),
-    ],
+    ];
+  return {
+    final_answer: '', confidence: 0.6, mode: mode ?? 'direct_bypass', degraded: false,
+    consulted_runs: [], routing_summary: String(mode ?? 'direct_bypass'), signals: {}, citations: [],
+    evidence,
   };
 }
 
@@ -394,6 +430,9 @@ function record(i, key, body, status, reply, headers) {
     detail.push(`entry_types=${JSON.stringify(body?.entry_types ?? null)}  projection=${body?.projection ?? '(compact — scope will be missing)'}  limit=${body?.limit}`);
   } else if (key === 'POST /v2/control/checkpoint') {
     detail.push(`run=${body?.run_id}  bytes=${String(body?.content ?? '').length}`);
+  } else if (key === 'POST /v2/control/strategies') {
+    detail.push(`run=${body?.run_id}  max_strategies=${body?.max_strategies ?? '-'}  lesson_types=${JSON.stringify(body?.lesson_types ?? null)}`);
+    if (status === 200) detail.push(`replied strategies=${reply.json.strategies.length}`);
   }
 
   detail.push(`auth=${auth ? `${auth.slice(0, 18)}…` : '\x1b[31m(no Authorization header)\x1b[0m'}`);

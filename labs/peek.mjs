@@ -25,7 +25,7 @@ const DATA = process.env.MUBIT_CC_DATA_DIR
   || process.env.CLAUDE_PLUGIN_DATA
   || join(LAB_ROOT, '.work', 'data');
 
-const SECTIONS = ['tree', 'sessions', 'marker', 'spool', 'turns', 'jobs', 'rejected', 'breaker', 'policy', 'health', 'log'];
+const SECTIONS = ['tree', 'sessions', 'marker', 'spool', 'turns', 'seen', 'jobs', 'rejected', 'breaker', 'policy', 'health', 'log'];
 
 const want = process.argv.slice(2).filter((a) => !a.startsWith('-'));
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -51,6 +51,7 @@ function render(section) {
     case 'marker': return markers();
     case 'spool': return spool();
     case 'turns': return turns();
+    case 'seen': return seen();
     case 'jobs': return jobs();
     case 'rejected': return rejected();
     case 'breaker': return jsonDir('breaker', 'breaker/  — the circuit breaker, one file per endpoint');
@@ -141,6 +142,21 @@ function turns() {
       if (t.ended_at) say(`    ended_at        ${stamp(t.ended_at)}`);
       say(`    outcome_pending ${t.outcome_pending === true}   outcome_sent_at ${t.outcome_sent_at ? stamp(t.outcome_sent_at) : '-'}`);
     }
+  }
+}
+
+function seen() {
+  head('runs/<run_id>/seen/<session_id>.json  — what one conversation has already been shown in full (6 h TTL from the last sighting)');
+  for (const runId of runIds()) {
+    const dir = join(DATA, 'runs', runId, 'seen');
+    for (const [name, s] of jsonFiles(dir)) {
+      const refs = Object.entries(s.refs ?? {});
+      say(`  ${runId}/${name}   ${refs.length} ref(s)   updated ${stamp(s.updated_at)}`);
+      for (const [ref, r] of refs) say(`    ${ref.padEnd(18)} ×${r?.count ?? '?'}   first ${stamp(r?.first)}   last ${stamp(r?.last)}`);
+    }
+    // The run-keyed file releases up to 0.12.x wrote. Nothing reads it any more; the prune
+    // sweep lets it expire on its own schedule.
+    if (readJson(join(DATA, 'runs', runId, 'seen.json'))) say(`  ${runId}/seen.json   (legacy, keyed by run alone — ignored, expires on its own)`);
   }
 }
 

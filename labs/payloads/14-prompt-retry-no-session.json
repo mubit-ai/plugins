@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "UserPromptSubmit",
+  "prompt_id": "p_lab_0014",
+  "prompt": "how should the client retry when the ingest job stays queued — backoff, or keep polling the job id?",
+  "transcript_path": "labs/payloads/transcript.jsonl",
+  "cwd": "labs/.work/demo-app",
+  "permission_mode": "default",
+  "is_continuation": false
+}

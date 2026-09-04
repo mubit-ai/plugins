@@ -60,12 +60,39 @@ hook() {
 # peek [section] — what the hooks left on disk. `peek --help` lists the sections.
 peek() { node "$LAB_ROOT/peek.mjs" "$@"; }
 
-# mcp <tool> ['<args json>'] [--routes] — call one MCP tool and show the routes it dialled.
+# mcp <tool> ['<args json>'] [--routes] [--session <id>] — call one MCP tool as one conversation
+# (or as none), and show the routes it dialled.
 mcp() {
   local tool="$1"; shift
   local args="{}"
   case "${1:-}" in --*|'') ;; *) args="$1"; shift ;; esac
   node "$LAB_ROOT/mcp-drive.mjs" --tool "$tool" --args "$args" "$@"
+}
+
+# admin <command> [args] — bin/admin.mjs against the lab store, the way the skills run it.
+# The flag is not decoration: a Bash tool call inside Claude Code does not inherit
+# CLAUDE_PLUGIN_DATA, and without it the script searches ~/.claude/plugins/data/ for a store
+# and can pick one the hooks are not writing to (Lab 12e).
+admin() { node "$CLAUDE_PLUGIN_ROOT/bin/admin.mjs" "$@" --data-dir "$CLAUDE_PLUGIN_DATA"; }
+
+# wire <command...> — run any command and print the routes it dialled: the request-log diff
+# `mcp --routes` does, for anything that can dial.
+wire() {
+  local log="$LAB_ROOT/.work/requests.ndjson"
+  local before=0
+  [ -f "$log" ] && before=$(wc -l < "$log" | tr -d ' ')
+  "$@"
+  local code=$?
+  echo ""
+  node -e '
+    const fs = require("node:fs");
+    const [log, before] = process.argv.slice(1);
+    let rows = [];
+    try { rows = fs.readFileSync(log, "utf8").split("\n").filter(Boolean).slice(Number(before)); } catch {}
+    console.log(rows.length ? "routes dialled by that call:" : "routes dialled by that call: (none — no request left the process)");
+    for (const l of rows) { try { const d = JSON.parse(l); console.log(`  ${d.key} → ${d.status}`); } catch {} }
+  ' "$log" "$before"
+  return $code
 }
 
 # runid ['<payload json>'] — the run id these settings derive, without running a hook.
@@ -76,4 +103,4 @@ echo "  endpoint     $MUBIT_ENDPOINT"
 echo "  project      $CLAUDE_PROJECT_DIR"
 echo "  data dir     $MUBIT_CC_DATA_DIR"
 echo "  run id       ${LAB_RUN_ID:-(underived)}"
-echo "  helpers      hook <name> <payload.json> [args]   peek [section]   runid   mcp <tool>"
+echo "  helpers      hook <name> <payload.json> [args]   peek [section]   runid   mcp <tool>   admin <command>   wire <command…>"

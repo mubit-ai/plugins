@@ -4,7 +4,7 @@ A hands-on walkthrough of one thread through the `mubit-memory` plugin: a sessio
 prompt arrives, memory is recalled, tools run, the turn ends, work is sent, the session ends
 and a lesson is extracted. You drive every step by hand and watch both sides of the wire.
 
-Nothing here talks to a real Mubit instance. `labs/fake-mubit.mjs` stands up all eleven routes
+Nothing here talks to a real Mubit instance. `labs/fake-mubit.mjs` stands up all twelve routes
 the plugin knows how to call and prints every request, so "what actually leaves the machine"
 is something you read, not something you take on faith.
 
@@ -22,17 +22,18 @@ Two surfaces, one memory.
 ```
                          ┌─────────────────────────── Claude Code ───────────────────────────┐
                          │                                                                   │
-  involuntary  ─────────►│  hook events → 9 node processes, stdin JSON in, stdout JSON out    │
-  (you never ask)        │  SessionStart · UserPromptSubmit ×2 · PostToolUse ×2 · Failure     │
-                         │  Stop · SubagentStop · PreCompact · PostCompact · SessionEnd       │
+  involuntary  ─────────►│  hook events → 15 node processes, stdin JSON in, stdout JSON out  │
+  (you never ask)        │  SessionStart · CwdChanged · UserPromptSubmit ×2 · PreToolUse ×2  │
+                         │  SubagentStart · PostToolUse · Failure ×2 · Stop · SubagentStop   │
+                         │  PreCompact · PostCompact · SessionEnd                            │
                          │                                                                   │
-  deliberate   ─────────►│  MCP server → 10 tools the model calls on purpose                  │
-  (the model asks)       │  mubit_recall · mubit_learned · mubit_outcome · mubit_reflect · …  │
+  deliberate   ─────────►│  MCP server → 7 tools the model calls on purpose                  │
+  (the model asks)       │  mubit_recall · mubit_learned · mubit_outcome · mubit_diagnose · …│
                          └───────────────────────────────────────────────────────────────────┘
                                        │                                    │
                                        ▼                                    ▼
                         ${CLAUDE_PLUGIN_DATA}  (all local state)      HTTPS → your Mubit
-                        spool/ turns/ status/ breaker/ policy/        11 REST routes
+                        spool/ turns/ status/ breaker/ policy/        12 REST routes
 ```
 
 Five facts that explain most of the design:
@@ -82,13 +83,15 @@ source labs/env.sh
 ```
 
 That exports exactly what Claude Code exports for a real install (`CLAUDE_PLUGIN_ROOT`,
-`CLAUDE_PLUGIN_DATA`, `CLAUDE_PROJECT_DIR`) plus the plugin's own settings, and defines four
+`CLAUDE_PLUGIN_DATA`, `CLAUDE_PROJECT_DIR`) plus the plugin's own settings, and defines six
 helpers:
 
 | Helper | What it does |
 | --- | --- |
 | `hook <name> <payload.json> [args]` | runs `hooks/src/<name>.mjs` the way Claude Code does |
-| `mcp <tool> ['<args>'] [--routes]` | calls one MCP tool; `--routes` shows where it went |
+| `mcp <tool> ['<args>'] [--routes] [--session <id>]` | calls one MCP tool as one conversation, or as none; `--routes` shows where it went |
+| `admin <command> [args]` | runs `bin/admin.mjs` against the lab store, the way the skills do |
+| `wire <command…>` | runs any command and prints the routes it dialled |
 | `peek [section]` | prints the plugin's local state — `peek --help` lists sections |
 | `runid ['<payload json>']` | derives the run id without running a hook |
 
@@ -294,6 +297,10 @@ Three memories became two — and note *which* two. The long `## Lessons` line d
 the shorter `## Facts` line after it still did. An item that does not fit is skipped and
 counted, never treated as a stop signal.
 
+One thing you did *not* see: from the second prompt of a conversation on, a memory it has
+already been shown is normally repeated as a pointer rather than in full. These three are one
+short sentence each, and a pointer longer than its entry is never used — Lab 12 is where it shows.
+
 **Read:** `hooks/src/prompt-recall.mjs` (the ladder), `lib/assemble.mjs` (the rendering).
 
 ---
@@ -494,11 +501,15 @@ The probe speaks real stdio MCP: spawn, `initialize`, `notifications/initialized
 `tools/list`, `tools/call` — exactly what Claude Code does.
 
 ```
-server    mubit-memory 0.12.5
-tools     13
-  · mubit_archive
-  · mubit_checkpoint
-  …
+server    mubit-memory 0.13.0
+tools     7
+  · mubit_dereference
+  · mubit_diagnose
+  · mubit_learned
+  · mubit_memory_health
+  · mubit_outcome
+  · mubit_recall
+  · mubit_status
 mubit_status →
 { "status": "connected", "endpoint": "http://127.0.0.1:8787",
   "default_session": "cc-demo-app-1ede9c0e" }
@@ -521,11 +532,21 @@ pre-prompt recall never reads — which is exactly what happens under
 `runStrategy: per-conversation`, because an MCP server starts once per session and is never
 handed a `session_id`. It falls back to `per-directory` and says so on stderr.
 
-Note the tool count: **13**, not the 21 an older bundle served. The committed
-`mcp/dist/server.js` used to come from a published `@mubit-ai/mcp` that predated the allowlist
-patch, so `MUBIT_MCP_TOOLS` was inert and the probe printed every tool the server had. It is
-now built from the in-repo package. The lesson outlived the bug: a shipped artefact can
-disagree with its own README, and probing is the only way you find out.
+Note the tool count: **7**, not the 21 the upstream server has. Since 0.13.0 a blank `mcpTools`
+means this curated set — the tools a model reaches for mid-task — and never "all": every tool
+name costs schema tokens in every session whether or not it is ever called. The catalogue and
+admin verbs (`mubit_lessons`, `mubit_reflect`, `mubit_checkpoint`, …) did not disappear; they
+moved to `bin/admin.mjs`, which is what `/mubit-memory:remember` and its siblings run, and
+Lab 11 drives them there. A list you supply is used verbatim, not unioned with the default:
+
+```bash
+MUBIT_MCP_TOOLS=mubit_lessons,mubit_status node labs/mcp-drive.mjs --list    # exactly those two
+```
+
+An older committed `mcp/dist/server.js` came from a published package that predated the
+allowlist patch, so `MUBIT_MCP_TOOLS` was inert and the probe printed every tool the server
+had. The lesson outlived the bug: a shipped artefact can disagree with its own README, and
+probing is the only way you find out.
 
 **Read:** `mcp/src/launch.mjs`, `.mcp.json`, `scripts/mcp-probe.mjs`.
 
@@ -659,7 +680,18 @@ item: the `DATABASE_PASSWORD=` line in `labs/payloads/transcript.jsonl` never re
 ## Lab 10 — The tests are the real spec
 
 ```bash
-cd integrations/claude-code && npm test        # ~32 s, ~1560 assertions, no network, no Docker
+cd integrations/claude-code && npm test        # ~40 s, ~1650 tests, no network, no Docker
+```
+
+The labs have a suite of their own, which is what keeps this walkthrough honest: it drives
+the same hooks, payloads, CLI and MCP driver you just ran by hand and asserts the outcomes
+each lab documents — so when the plugin moves, the walkthrough breaks loudly here instead of
+silently on you. `labs/test/hooks.test.mjs` is Labs 1–6 and 9, `labs/test/failure-drills.test.mjs`
+is Lab 8, `labs/test/mcp-routes.test.mjs` is Labs 7 and 11, `labs/test/seen-set.test.mjs` is
+Lab 12, and `labs/test/readme-drift.test.mjs` checks that everything this file names still exists.
+
+```bash
+node --test labs/test/*.test.mjs      # from the repo root; needs nothing but Node
 ```
 
 `test/helpers/harness.mjs` is worth reading before any of the test files: `fakeMubit()` is a
@@ -685,8 +717,16 @@ the guarantee.
 ```bash
 node labs/fake-mubit.mjs        # terminal A
 source labs/env.sh              # terminal B, from the repo root
-mcp mubit_lessons '{}' --routes
+wire admin lessons
 ```
+
+Since 0.13.0 the catalogue is not an MCP tool by default (Lab 7): `mubit_lessons` and the other
+admin verbs moved to `bin/admin.mjs`, which is what `/mubit-memory:remember` and its siblings
+run. `admin` is that script pointed at the lab store, and `wire` diffs
+`labs/.work/requests.ndjson` across whatever it wraps — so the question above can be asked of
+a shell command as easily as of a tool call. The script has no session to derive a run from,
+so it acts on the run the hooks last wrote a status marker for (Lab 2's), exactly as it does
+under a skill; `--run <id>` names another.
 
 `mcp` is `labs/mcp-drive.mjs`. It differs from `scripts/mcp-probe.mjs` in exactly two ways,
 both of which matter here.
@@ -697,7 +737,7 @@ This driver sets `MUBIT_CC_DATA_DIR` and stops, and lets the launcher's own `loa
 resolve the stored credential the way it does in a real session. Nothing reads the key,
 nothing prints it. That is what makes Drill E safe.
 
-**It shows the routes.** `--routes` diffs `labs/.work/requests.ndjson` across the call.
+**It shows the routes.** `--routes` is the same diff, for a tool call.
 
 ### 11a — The catalogue does not read the lessons route
 
@@ -706,7 +746,7 @@ routes dialled by that call:
   POST /v2/control/activity → 200
 ```
 
-Not `/v2/control/lessons` — the route whose name matches the tool. The reason is paging order.
+Not `/v2/control/lessons` — the route whose name matches the verb. The reason is paging order.
 The lessons route pages *before* it filters, so `{scope:'global', limit:5}` asks for five rows
 and then keeps whichever of those five happen to be global: on an account with any history,
 reliably none. The activity feed collects and sorts *before* it pages, so a small limit costs
@@ -732,11 +772,13 @@ catalogue that shows you someone else's is not confined. Ask for a scope explici
 boundary moves on purpose:
 
 ```bash
-mcp mubit_lessons '{"scope":"global"}' --routes    # 2 rows, both from the other run
+wire admin lessons --scope global    # 2 rows, both from the other run
 ```
 
-Note what rides beside the rows: a `mubit_lessons_guard` object saying what was shown and what
-matched. A catalogue that cannot say what it excluded is not one you can act on.
+Note what rides above the rows: `showing:` names the boundary that was applied and `matched:`
+counts what was inside it. A catalogue that cannot say what it excluded is not one you can act
+on. The tool form of the same read — `MUBIT_MCP_TOOLS=mubit_lessons mcp mubit_lessons '{}'` —
+prints the same two lines above its rows, because both go through one renderer (Lab 12).
 
 **The trap worth knowing.** Rows carry a run id in two spellings — bare on `run_id`, and
 namespaced inside the metadata's `source_run_id`. "Is this mine?" has to be the union of both.
@@ -748,7 +790,7 @@ account rather than a bug.
 ```bash
 pkill -f labs/fake-mubit.mjs
 node labs/fake-mubit.mjs --scenario truncate    # pages at 2, corpus padded past a census
-mcp mubit_lessons '{}'
+MUBIT_MCP_TOOLS=mubit_lessons mcp mubit_lessons '{}'
 ```
 
 ```json
@@ -763,6 +805,20 @@ mcp mubit_lessons '{}'
 admission of partiality is the number a reader acts on, and it would be wrong. Notice also
 that `shown` is legitimately `0` here — a partial listing can honestly show nothing, which is
 precisely why it must not also print a total that implies it found nothing.
+
+Now the same read through the shell command:
+
+```bash
+admin lessons
+# run_id: cc-demo-app-…
+# showing: this run, plus every lesson stored at a scope that reaches past the run that wrote it
+# No lessons matched.
+```
+
+That is a claim where the tool made an admission. `admin lessons --json` still carries
+`partial: true` and the note; the rendered form drops both on its empty branch. It is a 0.13.0
+defect, and the suite records it as a `todo` rather than pinning it — the direction of trust
+runs the other way here: the discipline is right and the script is not.
 
 The same discipline is visible at session start:
 
@@ -809,7 +865,7 @@ wrote rather than only whether the call returned.
 ### 11e — The same commands against a real instance
 
 ```bash
-node labs/mcp-drive.mjs --live \
+MUBIT_MCP_TOOLS=mubit_lessons node labs/mcp-drive.mjs --live \
   --data-dir ~/.claude/plugins/data/mubit-memory-mubit \
   --tool mubit_lessons --args '{}'
 ```
@@ -828,13 +884,192 @@ fixture and `HOME` with a temp directory, which is correct for tests and fatal f
 drive: the calls go out with the wrong key and come back as a generic failure. That is the gap
 this driver fills, and the reason it is a lab tool rather than a test helper.
 
+## Lab 12 — Repeats: what this conversation has already been shown
+
+Recall injection is the plugin's largest recurring cost — up to 1500 tokens on **every**
+prompt, against 356 tokens once for the whole MCP tool surface — and a lesson that stays
+relevant for twenty prompts used to be rendered twenty times. So the plugin keeps a
+**seen-set**: the reference ids one conversation has already been handed in full. A repeat is
+degraded to a pointer — the id plus its first clause, about 20 tokens against 200 — and
+`mubit_dereference` expands it on demand.
+
+The unit of that promise is the conversation. "You were shown this earlier" is only true of
+the transcript the entry was injected into, so the set is keyed by the host session id as
+well as the run: `runs/<run_id>/seen/<session_id>.json`. It was keyed by the run alone until
+0.13.0, and the run is the wrong unit: under `per-directory` a run id is the path, so every
+session opened in a directory shared one set for six hours — session B was handed pointers for
+what session A had seen, A's compaction wiped B's record, and a shell command that rendered
+the catalogue marked the set too, with no way of knowing whether its stdout ever reached a
+model.
+
+Start clean, so the set is empty:
+
+```bash
+node labs/setup.mjs --reset && node labs/setup.mjs
+# restart the fake instance in terminal A, then:
+hook session-start 01-session-start.json
+```
+
+### 12a — A second prompt in the same conversation
+
+The two payloads carry the same session id and the same question; only `prompt_id` differs.
+
+```bash
+hook prompt-recall 11-prompt-retry.json
+hook prompt-recall 12-prompt-retry-again.json
+peek seen
+```
+
+The first block renders three two-sentence memories in full, 176 tokens. The second:
+
+```
+<mubit-memory run="cc-demo-app-…" sources="3" tokens="85">
+Recalled from memory of earlier work — it may be incomplete or out of date, …
+A line marked "(seen earlier)" was injected in full earlier in this conversation and is repeated here only as a reference; ask mubit_dereference for its text.
+
+## Active rules
+- (seen earlier) ref_retry_rule — Never retry an ingest batch that answered "queued": the job is a…
+
+## Lessons
+- (seen earlier) ref_retry_lesson — A batch that stayed queued for four minutes was waiting on the i…
+
+## Facts
+- (seen earlier) ref_retry_fact — GET /v2/control/ingest/jobs/<id> answers done:true once indexing…
+</mubit-memory>
+```
+
+```
+runs/<run_id>/seen/<session_id>.json  — what one conversation has already been shown in full (6 h TTL from the last sighting)
+  cc-demo-app-…/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.json   4 ref(s)   updated 12:54:14.754
+    ref_rule_1         ×1   …        ← the resume block's one source (Lab 3)
+    ref_retry_rule     ×2   …
+    ref_retry_lesson   ×2   …
+    ref_retry_fact     ×2   …
+```
+
+Three things to notice.
+
+- **A pointer is cheaper to read, not cheaper to credit.** `peek turns` shows `p_lab_0012`
+  recalled the same three ids, so `Stop` reinforces them exactly as it would a full line.
+- **Why Lab 3 never did this.** Its three memories are one short sentence each, and a pointer
+  longer than the entry it replaces is never used — `- (seen earlier) ref_rule_1 — …` would cost
+  more than the line it stands in for. Real lessons run to a sentence or two, which is why this
+  lab has an evidence set of its own.
+- **The file is a roll-up, not a source of truth.** Every id in it is already in a turn file.
+  Losing it costs one expensive turn and cannot cost correctness — which is what makes every
+  failure below cheap. An entry expires 6 h after its last sighting, and the sweep in
+  `lib/state.mjs` prunes the directory.
+
+### 12b — Another conversation in the same directory
+
+```bash
+hook prompt-recall 13-prompt-retry-session-b.json
+peek seen
+```
+
+Session B — same run, same directory, same minute — gets all three in full and a file of its
+own; A's file is byte-for-byte what it was (compare `updated`). Before 0.13.0 B would have been
+handed A's pointers, with nothing in its own transcript to dereference them against.
+
+### 12c — No session at all
+
+```bash
+hook prompt-recall 14-prompt-retry-no-session.json
+peek seen          # still two files
+```
+
+A payload with no usable session id — absent, blank, or a placeholder like `default` — renders
+in full and marks nothing. That is the fail-safe direction: a caller that cannot say which
+conversation it is in cannot claim anything was shown to it, and the worst outcome of every
+failure in this module is "render it in full again".
+
+### 12d — The MCP tools are one conversation too
+
+The launcher reads the host session id from `CLAUDE_CODE_SESSION_ID`, which Claude Code exports
+to the MCP servers it starts, and keys the same file by it. `mcp --session` sets it; without
+the flag the driver *removes* it, because a lab shell running inside a Claude Code session
+would otherwise inherit the host's own id.
+
+```bash
+mcp mubit_recall '{"query":"retry when the ingest job stays queued"}' --session 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d
+mcp mubit_recall '{"query":"retry when the ingest job stays queued"}'
+```
+
+```
+Memories (3, 3 seen earlier):
+- (seen earlier) ref_retry_rule — Never retry an ingest batch that answered "queued": the job is a…
+- (seen earlier) ref_retry_lesson — A batch that stayed queued for four minutes was waiting on the i…
+- (seen earlier) ref_retry_fact — GET /v2/control/ingest/jobs/<id> answers done:true once indexing…
+Raw result: …/runs/cc-demo-app-…/spill/…-evidence-0.json
+A line marked "(seen earlier)" was shown in full earlier in this conversation; mubit_dereference returns its text.
+```
+
+Session A's tool call points at what the *hooks* showed A: one set, two surfaces, one pointer
+convention — the model meets one rendering whichever way it asked. The anonymous call renders
+in full and writes nothing (`peek seen` again). Codex hands its MCP server no session id at
+all, so on that host every tool result renders in full and marks nothing; the hooks there carry
+`session_id` and behave as above.
+
+### 12e — The shell is not a conversation
+
+```bash
+wire admin lessons
+peek seen          # unchanged
+```
+
+`bin/admin.mjs` — what `/mubit-memory:remember`, `:reflect`, `:strategies`, `:checkpoint` and
+`:forget` run — never reads or writes the set: it has no session, and a shell has no way of
+knowing whether its stdout reached a model. Every lesson prints in full, always. In 0.12.x it
+marked the set, and one verification run from a plain terminal is what turned the next
+conversation's whole catalogue into fragments.
+
+The `--data-dir` the `admin` helper appends is the other half of that fix. A Bash tool call
+inside Claude Code does not inherit `CLAUDE_PLUGIN_DATA`, so without the flag the script
+searches `~/.claude/plugins/data/` for a store and can pick one the hooks are not writing to —
+a session started with `--plugin-dir` writes to `mubit-memory-inline`, an installed one to
+`mubit-memory-mubit`. With it the run is picked from the store you named:
+
+```bash
+env -u MUBIT_CC_DATA_DIR -u CLAUDE_PLUGIN_DATA \
+  node "$CLAUDE_PLUGIN_ROOT/bin/admin.mjs" lessons --data-dir "$CLAUDE_PLUGIN_DATA"
+# run_id: cc-demo-app-…   ← this run, from a shell whose environment names no store
+```
+
+### 12f — Compaction clears one conversation's file
+
+```bash
+hook checkpoint 10-precompact.json --post
+peek seen          # A's file is gone; B's remains
+```
+
+After a compaction the model has seen none of it, so A starts over — and only A. Before
+0.13.0 this wiped the run's single file, which was B's record too.
+
+### 12g — Opting out
+
+```bash
+MUBIT_CC_RECALL_REPEAT_MODE=full hook prompt-recall 13-prompt-retry-session-b.json
+MUBIT_CC_RECALL_REPEAT_MODE=full mcp mubit_recall '{"query":"retry when the ingest job stays queued"}' \
+  --session 7a0b3c2d-9e8f-4a1b-8c2d-3e4f5a6b7c8d
+```
+
+`recallRepeatMode: full` re-sends every entry in full, every time, on both surfaces — what
+releases before 0.10 did on the hook path, and what MCP results did regardless of the setting
+until 0.13.0.
+
+**Read:** `lib/seen.mjs` (the header explains why the run was the wrong key),
+`mcp/src/results.mjs` (the results guard), `hooks/src/prompt-recall.mjs` (`readSeen` before the
+block is assembled, `markSeen` after).
+
+**Pinned by:** `labs/test/seen-set.test.mjs`.
+
 ---
 
 ## File map
 
 | Path | What lives there |
 | --- | --- |
-| `hooks/hooks.json` | the nine registrations, matchers and timeouts — start here |
+| `hooks/hooks.json` | the fifteen registrations, matchers and timeouts — start here |
 | `hooks/src/session-start.mjs` | health, register, global lessons, the steer block |
 | `hooks/src/prompt-recall.mjs` | the recall ladder, the policy cache |
 | `hooks/src/stage-prompt.mjs` | stages the prompt, triggers the drain. Zero network |
@@ -851,13 +1086,17 @@ this driver fills, and the reason it is a lab tool rather than a test helper.
 | `lib/assemble.mjs` | client-side section rendering (rung 1's payoff) |
 | `lib/breaker.mjs` | connection states, failure classification, cooldown |
 | `mcp/src/launch.mjs` | env ordering + run-id agreement before importing the server |
+| `mcp/src/results.mjs` | the results guard: one line per item, a repeat as a pointer, keyed by the host session |
+| `lib/seen.mjs` | what one conversation has been shown — `runs/<run>/seen/<session_id>.json` |
+| `bin/admin.mjs` | the catalogue and admin verbs the skills run — always in full, never in the seen-set |
 | `bin/statusline.mjs` | reads two JSON files, renders one line, never dials |
-| `skills/*/SKILL.md` | the seven slash commands |
+| `skills/*/SKILL.md` | the thirteen slash commands; the admin ones run `bin/admin.mjs` |
 | `test/helpers/harness.mjs` | fake Mubit, hook runner, fixtures |
 | `labs/fake-mubit.mjs` | the instance you can watch; `--scenario` picks how it misbehaves |
-| `labs/mcp-drive.mjs` | call one MCP tool, show the routes it dialled, never touch the key |
+| `labs/mcp-drive.mjs` | call one MCP tool as one conversation or none, show the routes it dialled, never touch the key |
 | `labs/peek.mjs` | what the hooks left on disk |
 | `labs/runid.mjs` | the run id these settings derive, without running a hook |
+| `labs/test/*.test.mjs` | the labs as a suite — Lab 10 |
 
 ---
 

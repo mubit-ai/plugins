@@ -23,14 +23,22 @@
  *
  *   node labs/mcp-drive.mjs --list
  *   node labs/mcp-drive.mjs --tool mubit_status --args '{}'
- *   node labs/mcp-drive.mjs --tool mubit_lessons --args '{}' --routes
- *   node labs/mcp-drive.mjs --tool mubit_lessons --args '{"scope":"global"}' --routes
+ *   node labs/mcp-drive.mjs --tool mubit_recall --args '{"query":"…"}' --routes
+ *   node labs/mcp-drive.mjs --tool mubit_recall --args '{"query":"…"}' --session <host session id>
+ *   MUBIT_MCP_TOOLS=mubit_lessons node labs/mcp-drive.mjs --tool mubit_lessons --args '{"scope":"global"}'
  *   node labs/mcp-drive.mjs --live --data-dir ~/.claude/plugins/data/mubit-memory-mubit \
- *     --tool mubit_lessons --args '{}'
+ *     --tool mubit_recall --args '{"query":"…"}'
  *
  * `--live` drops the lab's endpoint and key so the stored credential decides both. Everything
  * else is identical, which is the point: the same command shape against a fake instance you
  * can read and a real one you cannot.
+ *
+ * **It is one conversation, or none.** The launcher reads the host session id from
+ * `CLAUDE_CODE_SESSION_ID`, which Claude Code exports to the MCP servers it starts, and keys
+ * the seen-set (Lab 12) by it. `--session` sets it for the call. Without the flag the
+ * variable is *removed* rather than left alone: a lab shell that is itself running inside a
+ * Claude Code session inherits the host's id, and every call would then silently belong to
+ * that conversation.
  *
  * Zero dependencies, like everything else here.
  */
@@ -93,6 +101,8 @@ async function drive(opt) {
 
   const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, MUBIT_DEFAULT_SESSION_ID: '' };
   if (opt.dataDir) env.MUBIT_CC_DATA_DIR = expand(opt.dataDir);
+  if (opt.session) env.CLAUDE_CODE_SESSION_ID = opt.session;
+  else delete env.CLAUDE_CODE_SESSION_ID;
   if (opt.live) {
     // Let the stored credential decide both. Deleting is the whole trick: an empty string is
     // still a value, and `loadConfig` would take it.
@@ -193,7 +203,7 @@ function logLines(since) {
 }
 
 function parseArgs(argv) {
-  const opt = { tool: '', args: {}, list: false, routes: false, live: false, dataDir: '', help: false };
+  const opt = { tool: '', args: {}, list: false, routes: false, live: false, dataDir: '', session: '', help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') opt.help = true;
@@ -202,6 +212,7 @@ function parseArgs(argv) {
     else if (a === '--live') opt.live = true;
     else if (a === '--tool') opt.tool = argv[++i] ?? '';
     else if (a === '--data-dir') opt.dataDir = argv[++i] ?? '';
+    else if (a === '--session') opt.session = argv[++i] ?? '';
     else if (a === '--args') {
       const raw = argv[++i] ?? '{}';
       try { opt.args = JSON.parse(raw); } catch { throw new Error(`--args is not JSON: ${raw}`); }
@@ -215,9 +226,10 @@ function line(s) { process.stdout.write(`${s}\n`); }
 
 function usage(code = 0) {
   line('node labs/mcp-drive.mjs --list');
-  line('node labs/mcp-drive.mjs --tool <name> --args \'<json>\' [--routes] [--live] [--data-dir <path>]');
+  line('node labs/mcp-drive.mjs --tool <name> --args \'<json>\' [--routes] [--session <id>] [--live] [--data-dir <path>]');
   line('');
-  line('  --routes    diff the fake instance request log across the call');
-  line('  --live      drop the lab endpoint and key; let the stored credential decide');
+  line('  --routes         diff the fake instance request log across the call');
+  line('  --session <id>   call as this host conversation (CLAUDE_CODE_SESSION_ID); absent means none');
+  line('  --live           drop the lab endpoint and key; let the stored credential decide');
   process.exitCode = code;
 }
