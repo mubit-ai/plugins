@@ -35,7 +35,7 @@ test('8a: by default a 403 goes dark and is cached - the descent costs an LLM ca
     assert.deepEqual(
       fake.since(m1).filter((q) => q.key.endsWith('query')).map((q) => [q.body.mode, q.status]),
       [['direct_bypass', 403]],
-      'no automatic descent: rung 2 is one LLM call per prompt, so it requires MUBIT_CC_RECALL_FALLBACK');
+      'no automatic descent: rung 2 is not free per prompt, so it requires MUBIT_CC_RECALL_FALLBACK');
 
     const m2 = fake.mark();
     runHook(st, 'prompt-recall', '02-prompt.json');

@@ -137,11 +137,11 @@ test('lab 11c: a truncated feed yields partial:true and no total to act on (tool
   }
 });
 
-// Observed on 0.13.0: the CLI's empty branch prints "No lessons matched." and drops the
-// partial admission the tool form keeps (`--json` still carries `partial: true`). Zero is a
-// claim; this is a listing that ran out. Recorded as a todo rather than pinned, because the
-// direction of trust runs the other way here: the discipline is right and the script is not.
-test('lab 11c: the CLI says partial too when a truncated listing comes back empty', { todo: 'admin lessons drops `partial` on the empty branch in 0.13.0' }, async () => {
+// The CLI keeps the same rule. 0.13.0 printed "No lessons matched." here, which reads as a
+// count of zero; what happened is that the listing ran out before it reached anything. The
+// empty branch now carries the partial admission and the reason, and neither branch prints a
+// total beside it.
+test('lab 11c: the CLI says partial too when a truncated listing comes back empty', async () => {
   const truncSt = labState();
   truncSt.env.LAB_RUN_ID = deriveLabRunId(truncSt.env);
   const truncFake = await startFake(truncSt, { scenario: 'truncate' });
@@ -149,7 +149,17 @@ test('lab 11c: the CLI says partial too when a truncated listing comes back empt
     runHook(truncSt, 'session-start', '01-session-start.json');
     const r = runAdmin(truncSt, ['lessons']);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /partial/i, `the rendered form must admit the cut:\n${r.stdout}`);
+    assert.match(r.stdout, /partial: true/, `the rendered form must admit the cut:\n${r.stdout}`);
+    assert.match(r.stdout, /No total is available/, r.stdout);
+    assert.ok(!/No lessons matched\./.test(r.stdout),
+      `an empty partial listing is not an absence of lessons:\n${r.stdout}`);
+    assert.ok(!/^matched:/m.test(r.stdout), r.stdout);
+
+    const j = runAdmin(truncSt, ['lessons', '--json']);
+    assert.equal(j.code, 0, j.stderr);
+    const payload = JSON.parse(j.stdout);
+    assert.equal(payload.partial, true);
+    assert.ok(!('matched' in payload), 'no total in the JSON form either');
   } finally {
     await truncFake.stop();
     truncSt.cleanup();

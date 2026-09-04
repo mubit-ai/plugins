@@ -812,13 +812,16 @@ Now the same read through the shell command:
 admin lessons
 # run_id: cc-demo-app-…
 # showing: this run, plus every lesson stored at a scope that reaches past the run that wrote it
-# No lessons matched.
+# partial: true
+# note: This catalogue is partial: the listing was cut short (max_pages), so these are some of
+#       the lessons that matched and not all of them. No total is available; --scope narrows
+#       the request.
 ```
 
-That is a claim where the tool made an admission. `admin lessons --json` still carries
-`partial: true` and the note; the rendered form drops both on its empty branch. It is a 0.13.0
-defect, and the suite records it as a `todo` rather than pinning it — the direction of trust
-runs the other way here: the discipline is right and the script is not.
+Two surfaces, one rule. 0.13.0 printed `No lessons matched.` here — a claim where the tool made
+an admission, because the empty branch was written for a healthy feed that found nothing and
+never asked whether the feed was whole. `--json` carries the same keys, and `matched` is absent
+from both forms whenever `partial` is present.
 
 The same discipline is visible at session start:
 
