@@ -3,11 +3,11 @@
 /**
  * `labs/fake-mubit.mjs` — a Mubit instance you can watch.
  *
- * The plugin only ever speaks twelve routes (see `lib/http.mjs` ROUTES, plus the activity
- * feed `lib/activity.mjs` reads). This stands all of them up on 127.0.0.1, answers them the
+ * The plugin only ever speaks seventeen routes (see `lib/http.mjs` ROUTES, the activity
+ * feed `lib/activity.mjs` reads, and the three variables routes `lib/variables.mjs` dials). This stands all of them up on 127.0.0.1, answers them the
  * way a healthy instance would, and prints every request in a shape that makes the workflow
  * legible: which rung recall took, what the capture pipeline actually put on the wire, which
- * memories an outcome reinforced.
+ * memories an outcome reinforced, which handoff a verdict answered.
  *
  * Recall answers one of two evidence sets. A query about retries or backoff gets three
  * two-sentence memories, which is what most real lessons look like and what Lab 12 needs:
@@ -51,6 +51,19 @@ if (!SCENARIOS.has(scenario)) {
 
 /** Batches already accepted, keyed by idempotency_key — this is what makes a retry a no-op. */
 const seenBatches = new Map();
+/**
+ * The handoff lane's rows: handoffs and feedback created through their routes, plus every
+ * ingested item whose intent was `handoff` — which is how a subagent's note arrives. The
+ * activity feed serves these for `entry_types` naming `handoff` or `feedback`, the way the
+ * real instance does, and it is the only reader: there is no list route, and nothing here
+ * ever flips a handoff's `active` flag (Lab 15).
+ * @type {Array<Record<string, any>>}
+ */
+const handoffRows = [];
+let handoffSeq = 0;
+let feedbackSeq = 0;
+/** Run variables, keyed `<run_id>\0<name>` — what `bin/pin.mjs` writes and the drain refreshes (Lab 15). */
+const variables = new Map();
 /**
  * Which run counts as "yours" when the feed serves a run-scoped lesson.
  *
@@ -184,7 +197,78 @@ function route(key, body, url) {
     }
     const jobId = `job_lab_${++jobSeq}`;
     if (idem) seenBatches.set(idem, jobId);
+    // A handoff that came through ingest is an entry like one that came through the route.
+    for (const it of Array.isArray(body?.items) ? body.items : []) {
+      if (String(it?.intent) !== 'handoff') continue;
+      handoffRows.push({
+        id: String(it.item_id), created_at: new Date().toISOString(), entry_type: 'handoff',
+        run_id: String(body?.run_id ?? ''), content: String(it.text ?? ''), source: 'agent',
+        metadata_json: typeof it.metadata_json === 'string' ? it.metadata_json : JSON.stringify(it.metadata_json ?? {}),
+      });
+    }
     return { json: { accepted: true, job_id: jobId, status: 'queued', deduplicated: false } };
+  }
+
+  // The variables routes `lib/variables.mjs` dials: one variable per pin, under `cc.pin.`.
+  if (key === 'POST /v2/control/variables/set') {
+    if (!String(body?.name ?? '').trim()) return { status: 400, json: { error: 'name is required' } };
+    variables.set(`${body?.run_id}\0${body.name}`, { name: String(body.name), value_json: String(body?.value_json ?? 'null') });
+    return { json: { success: true } };
+  }
+  if (key === 'POST /v2/control/variables/delete') {
+    variables.delete(`${body?.run_id}\0${body?.name}`);
+    return { json: { success: true } };
+  }
+  if (key === 'POST /v2/control/variables/list') {
+    const prefix = `${body?.run_id}\0`;
+    const rows = [...variables.entries()].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
+    return { json: { variables: rows } };
+  }
+
+  if (key === 'POST /v2/control/handoff') {
+    // The real handler's three refusals, verbatim in spirit: a note needs a recipient, a body,
+    // and one of four actions. An empty action is a 400, not a default — the default lives
+    // on the client.
+    if (!String(body?.to_agent_id ?? '').trim()) return { status: 400, json: { error: 'to_agent_id is required' } };
+    if (!String(body?.content ?? '').trim()) return { status: 400, json: { error: 'content is required' } };
+    const action = String(body?.requested_action ?? '').trim().toLowerCase();
+    if (!['review', 'continue', 'approve', 'execute'].includes(action)) {
+      return { status: 400, json: { error: 'requested_action must be one of: review, continue, approve, execute' } };
+    }
+    const id = `hnd_lab_${++handoffSeq}`;
+    const from = String(body?.from_agent_id ?? '').trim();
+    handoffRows.push({
+      id, created_at: new Date().toISOString(), entry_type: 'handoff', run_id: String(body?.run_id ?? ''),
+      content: String(body.content), source: from || 'handoff',
+      metadata_json: JSON.stringify({
+        ...parse(String(body?.metadata_json ?? '')) ?? {},
+        entry_type: 'handoff', task_id: String(body?.task_id ?? '').trim() || `task_${id}`,
+        from_agent_id: from, to_agent_id: String(body.to_agent_id).trim(), requested_action: action,
+        created_at: new Date().toISOString(), active: true,
+      }),
+    });
+    return { json: { success: true, handoff_id: id } };
+  }
+
+  if (key === 'POST /v2/control/feedback') {
+    if (!String(body?.handoff_id ?? '').trim()) return { status: 400, json: { error: 'handoff_id is required' } };
+    const verdict = String(body?.verdict ?? '').trim().toLowerCase();
+    if (!['approve', 'request_changes', 'block', 'acknowledge'].includes(verdict)) {
+      return { status: 400, json: { error: 'verdict must be one of: approve, request_changes, block, acknowledge' } };
+    }
+    const id = `fb_lab_${++feedbackSeq}`;
+    const from = String(body?.from_agent_id ?? '').trim();
+    const handoffId = String(body.handoff_id).trim();
+    handoffRows.push({
+      id, created_at: new Date().toISOString(), entry_type: 'feedback', run_id: String(body?.run_id ?? ''),
+      content: String(body?.comments ?? '').trim() || `Feedback: ${verdict} (${handoffId})`,
+      source: from || 'feedback',
+      metadata_json: JSON.stringify({
+        entry_type: 'feedback', handoff_id: handoffId, verdict, created_at: new Date().toISOString(),
+        ...(from ? { from_agent_id: from } : {}),
+      }),
+    });
+    return { json: { success: true, feedback_id: id } };
   }
 
   if (key.startsWith('GET /v2/control/ingest/jobs/')) {
@@ -257,7 +341,10 @@ function route(key, body, url) {
  * @param {any} body
  */
 function activityResponse(body) {
-  const corpus = lessonCorpus();
+  // Handoffs and feedback are run-scoped on the real instance, and the handoff CLI always
+  // names its run; the lessons stay account-wide because Lab 11 is about exactly that.
+  const run = String(body?.run_id ?? '');
+  const corpus = lessonCorpus().concat(run ? handoffRows.filter((r) => r.run_id === run) : handoffRows);
   const wanted = Array.isArray(body?.entry_types) ? body.entry_types.map(String) : [];
   const full = String(body?.projection ?? '') === 'full';
   const asc = String(body?.sort ?? 'desc') === 'asc';
@@ -415,6 +502,15 @@ function record(i, key, body, status, reply, headers) {
       detail.push(`  · ${String(it.item_id).padEnd(34)} ${String(it.intent).padEnd(12)} ${String(it.importance).padEnd(7)} "${trim(it.text, 64)}"`);
     }
     if (status === 200) detail.push(`replied job_id=${reply.json.job_id} status=${reply.json.status} deduplicated=${reply.json.deduplicated}`);
+  } else if (key.startsWith('POST /v2/control/variables/')) {
+    detail.push(`run=${body?.run_id}  name=${body?.name ?? '-'}${status === 200 && key.endsWith('/list') ? `  → ${reply.json.variables.length} variable(s)` : ''}`);
+  } else if (key === 'POST /v2/control/handoff') {
+    detail.push(`run=${body?.run_id}  ${body?.from_agent_id || '?'} -> ${body?.to_agent_id}  action=${body?.requested_action}`);
+    detail.push(`content="${trim(body?.content, 70)}"`);
+    if (status === 200) detail.push(`replied handoff_id=${reply.json.handoff_id}   ← what feedback names`);
+  } else if (key === 'POST /v2/control/feedback') {
+    detail.push(`run=${body?.run_id}  handoff_id=${body?.handoff_id}  verdict=${body?.verdict}  from=${body?.from_agent_id || '?'}`);
+    if (status === 200) detail.push(`replied feedback_id=${reply.json.feedback_id}`);
   } else if (key === 'POST /v2/control/outcome') {
     detail.push(`outcome=${body?.outcome}  signal=${body?.signal}  reference_id=${body?.reference_id}`);
     detail.push(`entry_ids=[${(body?.entry_ids ?? []).join(', ')}]   ← the memories this turn reinforced`);

@@ -1,0 +1,16 @@
+{
+  "hook_event_name": "PostToolUseFailure",
+  "session_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "prompt_id": "p_lab_0001",
+  "cwd": "labs/.work/demo-app",
+  "permission_mode": "default",
+  "tool_name": "Edit",
+  "tool_use_id": "toolu_lab_0018",
+  "tool_input": {
+    "file_path": "src/queue.js",
+    "old_string": "status: 'accepted'",
+    "new_string": "status: 'queued'"
+  },
+  "error": "String to replace not found in file.\nString: status: 'accepted'",
+  "execution_time_ms": 3
+}

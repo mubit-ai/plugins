@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "SubagentStop",
+  "session_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "transcript_path": "labs/payloads/transcript.jsonl",
+  "cwd": "labs/.work/demo-app",
+  "prompt_id": "p_lab_0001",
+  "agent_id": "lab-sub-0001",
+  "agent_type": "Explore",
+  "permission_mode": "default",
+  "agent_transcript_path": "labs/payloads/agent-transcript.jsonl",
+  "last_assistant_message": "Found three call sites of enqueue(): src/server.js:12, src/worker.js:40 and test/queue.test.js:8. None of them polls the job id afterwards.",
+  "stop_hook_active": false,
+  "turn_number": 1
+}

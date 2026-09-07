@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "prompt_id": "p_lab_0001",
+  "cwd": "labs/.work/demo-app",
+  "permission_mode": "default",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_lab_0015",
+  "tool_input": {
+    "file_path": "src/notes.md",
+    "content": "# Notes\n\nIngest answers \"queued\" when accepted.\n"
+  },
+  "tool_response": {
+    "type": "create",
+    "filePath": "src/notes.md",
+    "content": "# Notes\n\nIngest answers \"queued\" when accepted.\n",
+    "structuredPatch": []
+  },
+  "execution_time_ms": 5
+}

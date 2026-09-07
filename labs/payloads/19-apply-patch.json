@@ -1,0 +1,14 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "prompt_id": "p_lab_0001",
+  "cwd": "labs/.work/demo-app",
+  "permission_mode": "default",
+  "tool_name": "apply_patch",
+  "tool_use_id": "toolu_lab_0019",
+  "tool_input": {
+    "command": "*** Begin Patch\n*** Update File: src/queue.js\n@@\n-  return { id: job.id, status: 'queued' };\n+  return { id: job.id, status: 'queued', accepted_at: Date.now() };\n*** Add File: docs/NOTES.md\n+# Notes\n+Poll the job id.\n*** Delete File: docs/OLD.md\n*** End Patch"
+  },
+  "tool_response": "Success. Updated the following files:\nM src/queue.js\nA docs/NOTES.md\nD docs/OLD.md\n",
+  "execution_time_ms": 12
+}

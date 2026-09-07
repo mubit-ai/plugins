@@ -31,6 +31,11 @@ export MUBIT_DEFAULT_SESSION_ID=""
 export HOOKS="$CLAUDE_PLUGIN_ROOT/hooks/src"
 export PAYLOADS="$LAB_ROOT/payloads"
 
+# Where `bin/import.mjs` reads (Lab 13). `node labs/import-fixtures.mjs` lays synthetic
+# transcripts out here in both hosts' layouts; the real ~/.claude and ~/.codex are never read.
+export MUBIT_CC_TRANSCRIPT_ROOT="$LAB_ROOT/.work/transcripts/claude"
+export MUBIT_CC_CODEX_SESSIONS_ROOT="$LAB_ROOT/.work/codex/sessions"
+
 # The run id these settings derive. The fake instance reads it to decide which of its lessons
 # belong to "your" run: the activity feed is asked for the whole account and filtered by the
 # client, so that request names no run at all. The id is a hash of the project path, so it

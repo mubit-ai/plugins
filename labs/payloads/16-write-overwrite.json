@@ -1,0 +1,31 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "prompt_id": "p_lab_0001",
+  "cwd": "labs/.work/demo-app",
+  "permission_mode": "default",
+  "tool_name": "Write",
+  "tool_use_id": "toolu_lab_0016",
+  "tool_input": {
+    "file_path": "src/notes.md",
+    "content": "# Notes\n\nIngest answers \"queued\" when accepted; poll the job id.\n"
+  },
+  "tool_response": {
+    "type": "update",
+    "filePath": "src/notes.md",
+    "content": "# Notes\n\nIngest answers \"queued\" when accepted; poll the job id.\n",
+    "structuredPatch": [
+      {
+        "oldStart": 3,
+        "oldLines": 1,
+        "newStart": 3,
+        "newLines": 1,
+        "lines": [
+          "-Ingest answers \"queued\" when accepted.",
+          "+Ingest answers \"queued\" when accepted; poll the job id."
+        ]
+      }
+    ]
+  },
+  "execution_time_ms": 6
+}

@@ -1068,6 +1068,278 @@ block is assembled, `markSeen` after).
 
 ---
 
+## Lab 13 — Import: the history that was already on disk
+
+A fresh install knows nothing that happened before it, and a hook that timed out lost that
+turn. The transcripts are still on disk — Claude Code's under `~/.claude/projects`, Codex's
+under `~/.codex/sessions` — and `bin/import.mjs` reads them. The lab never touches either real
+directory: `env.sh` points both roots at `labs/.work`, and a small script lays synthetic
+transcripts out there in both hosts' layouts.
+
+```bash
+node labs/import-fixtures.mjs
+node "$CLAUDE_PLUGIN_ROOT/bin/import.mjs" --project labs/.work/demo-app --source all
+```
+
+That is a **dry run** — the default, because this is the one command in the plugin that writes
+to somebody else's server in volume. It prints where it read from, the scope, and one line per
+source:
+
+```
+claude-code  labs/.work/transcripts/claude
+codex        labs/.work/codex/sessions
+scope:       …/labs/.work/demo-app
+would send 14 item(s) from 5 transcript(s) across 1 run(s) in 0s
+  claude-code  5 item(s) from 2 transcript(s) · denied 1 · skipped 4
+  codex        9 item(s) from 3 transcript(s) · denied 0 · skipped 9
+runs: cc-demo-app-1ede9c0e
+lines 30 · batches 2 · skipped 13 · denied 1 · oversize 0 · failed 0
+1 tool call(s) were dropped by the path denylist — a denied subject is dropped whole, never scrubbed.
+nothing was sent. Add --send to ingest.
+```
+
+Terminal A stays silent. Read the numbers before anything else: `denied 1` is the `.env` read
+inside the Claude Code session, whose **path is on one transcript line and body on another**.
+The importer joins a call to its result before it decides anything, because a reader walking
+lines independently would get the secret with no denylist in front of it. `skipped` counts the
+lines that produced nothing — the offload marker the host leaves where a large result was moved
+to its own file, Codex's `user_message`/`agent_message` events (copies of the messages), and
+the script Codex writes to drive its own commands.
+
+Now send it:
+
+```bash
+node "$CLAUDE_PLUGIN_ROOT/bin/import.mjs" --project labs/.work/demo-app --source all --send
+peek tree
+```
+
+Terminal A shows the batches, and four things about them are the lab:
+
+1. **Every batch names `run_id=cc-demo-app-…`** — the run these very hooks use. The run id is
+   resolved per record from the `cwd` inside it, not from the directory name, because that
+   name is lossy and `cwd` moves mid-file. The session's last records ran in `src/`; same
+   repository, same run.
+2. **The ids are the ones live capture would have written.** `cc-toolu_lab_i001` is the
+   transcript's own `tool_use.id`; `cc-exec-lab-0001` is the Codex item's own `id`, the same
+   field the live hook keys on. `metadata_json.imported: true` is the only mark of provenance.
+3. **A Codex thread is read in whichever shape it was written.** `cc-call_lab_1` came from a
+   0.146 rollout: a `function_call` joined to its output by `call_id`, exit code read out of
+   the output text, `outcome: failure`. `cc-fc-lab-0001` came from a 0.153 one: a `FileChange`
+   item with `files: [{kind: "delete"}]` and no patch body at all. `cc-exec-lab-sub-1` came from
+   a subagent thread and is filed under its parent's `session_id`, in the parent's run.
+4. **Nothing Codex said in the user's voice is a prompt.** From 0.149 the first `user` record of
+   a thread is `<recommended_plugins>` and `<environment_context>`; the prompt is the record
+   after. That filter is `INJECTED_USER_RE` in `lib/codex-rollout.mjs`, and live subagent
+   capture reads through the same one.
+
+Run it again:
+
+```bash
+node "$CLAUDE_PLUGIN_ROOT/bin/import.mjs" --project labs/.work/demo-app --source all --send
+peek tree     # import/<hash>.json, one cursor per transcript, unchanged
+```
+
+`sent 0 item(s) from 0 transcript(s)`. Each transcript keeps a byte-offset cursor under
+`import/`, so a second run opens nothing. That is a claim about **this client's bookkeeping**
+— the fake's `deduplicated=` flag on a re-sent batch is the server's separate claim, and the
+skill is written not to make it.
+
+**Break it:**
+
+```bash
+node labs/setup.mjs --reset && node labs/setup.mjs && node labs/import-fixtures.mjs
+# restart terminal A:  node labs/fake-mubit.mjs --scenario fail-ingest
+node "$CLAUDE_PLUGIN_ROOT/bin/import.mjs" --project labs/.work/demo-app --source all --send
+peek tree breaker
+```
+
+`failed 1`, exit 1, and `this answer is incomplete: stopped after an ingest failure; the cursor
+was not advanced`. No cursor was written, so the next run resumes from the start of that file;
+and there is no breaker file, because an import that could vote on the breaker would open it
+over a background job and take recall down with it.
+
+**Read:** `lib/import.mjs` (the four measured properties of the corpus, and which side of the
+idempotency claim is ours), `lib/codex-import.mjs` (the two shapes and the version that
+separates them), `lib/transcript.mjs` (the resumable reader), `bin/import.src.mjs`.
+
+**Pinned by:** `labs/test/import.test.mjs`.
+
+---
+
+## Lab 14 — File changes: what a call did to which file
+
+Until this lane existed a path survived capture only as a substring of the prose — `Edit(file_path=…)` —
+and "what changed in auth?" had no answer. Now every capture that changed a file carries a
+structured record, and the run keeps an index of what is in play.
+
+```bash
+hook capture 15-write-create.json
+hook capture 16-write-overwrite.json
+hook capture 17-multiedit.json
+hook capture 18-edit-failure.json --failure
+hook capture 19-apply-patch.json
+hook capture 19-apply-patch-env.json
+peek spool
+cat labs/.work/data/runs/$LAB_RUN_ID/files.json
+```
+
+Terminal A stays silent through all six. In the spool, each item's `metadata_json.files`:
+
+```
+cc-toolu_lab_0015   files=[{"path":"src/notes.md","kind":"add"}]
+cc-toolu_lab_0016   files=[{"path":"src/notes.md","kind":"update"}]
+cc-toolu_lab_0017   files=[{"path":"src/server.js","kind":"update"}]
+cc-toolu_lab_0018   (no files key)
+cc-toolu_lab_0019   files=[{"path":"src/queue.js","kind":"update"},{"path":"docs/NOTES.md","kind":"add"},{"path":"docs/OLD.md","kind":"delete"}]
+```
+
+and the index, most recently touched first:
+
+```json
+{ "version": 1, "files": [
+  { "path": "src/queue.js",  "kinds": ["update"],        "occurrences": 1 },
+  { "path": "docs/NOTES.md", "kinds": ["add"],           "occurrences": 1 },
+  { "path": "docs/OLD.md",   "kinds": ["delete"],        "occurrences": 1 },
+  { "path": "src/server.js", "kinds": ["update"],        "occurrences": 1 },
+  { "path": "src/notes.md",  "kinds": ["add","update"],  "occurrences": 2 } ] }
+```
+
+Five things to notice:
+
+1. **The two `Write`s have the same input** — `file_path` and `content` — and different kinds.
+   The host says which on the *result*: `tool_response.type` is `create` or `update`, and that
+   is the only place it says so. Without a result a `Write` reads as `add`.
+2. **`MultiEdit` is one change.** Two edits to one file are deduped on `kind:path`; an add and
+   an update of the same path in one patch are two, because they say different things.
+3. **The failed edit carries nothing.** Crediting its subject would put a file on the retrieval
+   axis on the strength of a change that never happened.
+4. **`delete` only ever comes from a patch.** Claude Code removes files with `rm` in a shell,
+   which carries no path key; Codex's `apply_patch` states it outright, and the marker is what
+   is read — whatever the tool is called, since Codex renames its shell tool to `Bash` in hook
+   payloads.
+5. **The sixth payload never reached the spool.** Its patch touched `.env`, and the denylist now
+   asks the extractor where a patch's paths are — a hole that used to let a patch through where
+   a `Read` of the same file was dropped. No index row, no secret on disk.
+
+Close the turn and watch the record reach the wire:
+
+```bash
+hook capture 07-stop.json --stop
+sleep 1
+```
+
+Every item that changed a file carries `files` in its `metadata_json` on the ingest body, and
+the `.env` patch is not in the batch.
+
+**Read:** `lib/filechange.mjs` (the oracle table is `test/file-change.test.mjs`),
+`hooks/src/capture.mjs` (`fileChanges` and `recordFileChanges`, and the response passed
+through).
+
+**Pinned by:** `labs/test/file-change.test.mjs`.
+
+---
+
+## Lab 15 — Handoff: a subagent's result is a note to its parent
+
+A handoff is a note from one agent to another inside a run; feedback is the answer. The server
+has had both routes for as long as the plugin has existed, and this lane is what finally uses
+them — starting with the case that needs no typing: every subagent's result.
+
+Start clean, then stage a turn and pin a constraint as the parent:
+
+```bash
+node labs/setup.mjs --reset && node labs/setup.mjs
+# restart terminal A, then:
+hook session-start 01-session-start.json
+hook prompt-recall 02-prompt.json
+hook stage-prompt 02-prompt.json
+node "$CLAUDE_PLUGIN_ROOT/bin/pin.mjs" add "don't touch the vendored server" --data-dir "$MUBIT_CC_DATA_DIR" --run "$LAB_RUN_ID"
+```
+
+### 15a — The subagent is told
+
+```bash
+hook subagent-start 20-subagent-start.json
+```
+
+The block opens `<mubit-memory run="cc-demo-app-…" agent="claude-code-sub-…" … pins="1">`, and the
+pin is the first thing in it, above the recalled sections, under its own budget (96 tokens,
+the same 16% share of a smaller window that the parent's 240 is of 1500). Before this a
+fan-out of ten was ten agents told nothing.
+
+### 15b — The result is a handoff, and nothing is dialled
+
+```bash
+hook capture 21-subagent-stop.json --subagent
+peek spool
+```
+
+Terminal A is silent. One item, under the **parent's** run:
+
+```
+cc-sub-lab-sub-0001-p_lab_0001   handoff   medium
+  from_agent_id  claude-code-sub-…     to_agent_id  claude-code
+  requested_action review   task_id p_lab_0001   active true
+  text  Q: Find every call site of enqueue() … A: Found three call sites …
+```
+
+`Q:` is the subagent's own task, read from the head of `agent-transcript.jsonl`, not the
+parent's prompt every sibling shares. `to_agent_id` is the parent *role*, never a session and
+never a sub-run id: a sub-run id is a local key and does not leave the machine. The metadata
+mirrors what `POST /v2/control/handoff` stamps on a note created through the route, so the two
+read alike downstream.
+
+### 15c — The parent's drain ships it; the CLI lists it open
+
+```bash
+hook capture 07-stop.json --stop
+sleep 1
+node "$CLAUDE_PLUGIN_ROOT/bin/handoff.mjs" list --open --data-dir "$MUBIT_CC_DATA_DIR" --run "$LAB_RUN_ID"
+```
+
+```
+1 open handoff(s) in cc-demo-app-…:
+cc-sub-lab-sub-0001-p_lab_0001  claude-code-sub-… -> claude-code  review  open
+    Q: Find every call site of enqueue() in this repo … A: Found three call sites …
+```
+
+Terminal A shows one `POST /v2/control/activity` with `entry_types=[handoff, feedback]`. That
+is the whole read side: **there is no list route, and the instance never flips a handoff's
+`active` flag** — `submit_feedback` writes a separate `feedback` entry and leaves the handoff as
+it was. So the CLI reads both types for the run and joins them here; *open* means "no feedback
+names this id". A reader filtering on `active` would find everything ever written still open.
+
+### 15d — A verdict closes it
+
+```bash
+node "$CLAUDE_PLUGIN_ROOT/bin/handoff.mjs" feedback cc-sub-lab-sub-0001-p_lab_0001 --verdict approve \
+  --comments "all three call sites confirmed" --data-dir "$MUBIT_CC_DATA_DIR" --run "$LAB_RUN_ID"
+node "$CLAUDE_PLUGIN_ROOT/bin/handoff.mjs" list --data-dir "$MUBIT_CC_DATA_DIR" --run "$LAB_RUN_ID"
+```
+
+`POST /v2/control/feedback` with `handoff_id`, `verdict=approve`, `from=claude-code`; the
+listing now says `closed (approve)`, and `--open` no longer shows it.
+
+### 15e — A note typed by hand
+
+```bash
+node "$CLAUDE_PLUGIN_ROOT/bin/handoff.mjs" send --to codex --action review \
+  "the queue change is ready for a second pair of eyes" --data-dir "$MUBIT_CC_DATA_DIR" --run "$LAB_RUN_ID"
+```
+
+`POST /v2/control/handoff` — `claude-code -> codex  action=review` — and the id comes back:
+`hnd_lab_1`, which is what feedback names. A Codex session in the same directory shares the
+run (Lab 1), so `handoff list --open` there shows it. The default action is `continue`,
+applied on this side: the server answers an empty one with a 400, not a default.
+
+**Read:** `lib/handoff.mjs` (why open is computed here), `bin/handoff.src.mjs`,
+`hooks/src/capture.mjs` (`buildTurnItem`, the `--subagent` branch), `lib/classify.mjs`
+(the `SubagentStop` row), `lib/recall.mjs` (`handoffs` in the resume briefing).
+
+**Pinned by:** `labs/test/handoff.test.mjs`.
+
+---
+
 ## File map
 
 | Path | What lives there |
@@ -1091,14 +1363,22 @@ block is assembled, `markSeen` after).
 | `mcp/src/launch.mjs` | env ordering + run-id agreement before importing the server |
 | `mcp/src/results.mjs` | the results guard: one line per item, a repeat as a pointer, keyed by the host session |
 | `lib/seen.mjs` | what one conversation has been shown — `runs/<run>/seen/<session_id>.json` |
+| `lib/filechange.mjs` | the file-change lane: `{path, kind}` per call, `runs/<run>/files.json` per run |
+| `lib/import.mjs` | the backfill: cursors, the item builders, the ingest loop, the Claude Code source |
+| `lib/codex-import.mjs` | the Codex source: two rollout shapes, the reviewer threads it skips |
+| `lib/transcript.mjs` | the resumable forward reader, and the one renderer three callers share |
+| `lib/handoff.mjs` | send, list, feedback — and the client-side join that decides what is open |
+| `bin/import.mjs` | `/mubit-memory:import`: a dry run by default, `--send` is the verb |
+| `bin/handoff.mjs` | `/mubit-memory:handoff`: `send`, `list --open`, `feedback --verdict` |
 | `bin/admin.mjs` | the catalogue and admin verbs the skills run — always in full, never in the seen-set |
 | `bin/statusline.mjs` | reads two JSON files, renders one line, never dials |
-| `skills/*/SKILL.md` | the thirteen slash commands; the admin ones run `bin/admin.mjs` |
+| `skills/*/SKILL.md` | the fifteen slash commands; the admin ones run `bin/admin.mjs` |
 | `test/helpers/harness.mjs` | fake Mubit, hook runner, fixtures |
 | `labs/fake-mubit.mjs` | the instance you can watch; `--scenario` picks how it misbehaves |
 | `labs/mcp-drive.mjs` | call one MCP tool as one conversation or none, show the routes it dialled, never touch the key |
 | `labs/peek.mjs` | what the hooks left on disk |
 | `labs/runid.mjs` | the run id these settings derive, without running a hook |
+| `labs/import-fixtures.mjs` | Lab 13's synthetic transcripts, laid out the way both hosts lay theirs |
 | `labs/test/*.test.mjs` | the labs as a suite — Lab 10 |
 
 ---

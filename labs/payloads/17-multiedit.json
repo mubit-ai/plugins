@@ -1,0 +1,38 @@
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "prompt_id": "p_lab_0001",
+  "cwd": "labs/.work/demo-app",
+  "permission_mode": "default",
+  "tool_name": "MultiEdit",
+  "tool_use_id": "toolu_lab_0017",
+  "tool_input": {
+    "file_path": "src/server.js",
+    "edits": [
+      {
+        "old_string": "export const PORT = 3000;",
+        "new_string": "export const PORT = Number(process.env.PORT ?? 3000);"
+      },
+      {
+        "old_string": "import { createServer } from 'node:http';",
+        "new_string": "import { createServer } from 'node:http';\nimport { enqueue } from './queue.js';"
+      }
+    ]
+  },
+  "tool_response": {
+    "filePath": "src/server.js",
+    "edits": [
+      {
+        "old_string": "export const PORT = 3000;",
+        "new_string": "export const PORT = Number(process.env.PORT ?? 3000);",
+        "replace_all": false
+      },
+      {
+        "old_string": "import { createServer } from 'node:http';",
+        "new_string": "import { createServer } from 'node:http';\nimport { enqueue } from './queue.js';",
+        "replace_all": false
+      }
+    ]
+  },
+  "execution_time_ms": 9
+}
