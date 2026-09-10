@@ -282,7 +282,7 @@ Both hosts execute these directories as fetched, with no build step, which is wh
   [Codex CLI](integrations/codex/README.md). Install, all 25 options, and troubleshooting.
 - **Reference** — [docs.mubit.ai](https://docs.mubit.ai/integrations/claude-code).
 - **Keys and instances** — the [Mubit console](https://console.mubit.ai).
-- **Bugs** — [open an issue](https://github.com/mubit-ai/claude-plugins/issues). What to put in
+- **Bugs** — [open an issue](https://github.com/mubit-ai/plugins/issues). What to put in
   one is in [CONTRIBUTING.md](CONTRIBUTING.md). Attach `logs/mubit-cc.log` from the plugin's
   data directory; it is scrubbed on the way out.
 - **Vulnerabilities** — report them privately, never in an issue. See

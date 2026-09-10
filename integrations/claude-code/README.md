@@ -648,5 +648,5 @@ safe to attach to an issue.
 ## Links
 
 - Documentation: <https://docs.mubit.ai/integrations/claude-code>
-- Source: <https://github.com/mubit-ai/claude-plugins>
+- Source: <https://github.com/mubit-ai/plugins>
 - License: Apache-2.0 — [`LICENSE`](LICENSE); third-party code bundled into the MCP server is attributed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)

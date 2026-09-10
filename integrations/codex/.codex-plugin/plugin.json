@@ -7,7 +7,7 @@
     "url": "https://mubit.ai"
   },
   "homepage": "https://docs.mubit.ai/integrations/codex",
-  "repository": "https://github.com/mubit-ai/claude-plugins",
+  "repository": "https://github.com/mubit-ai/plugins",
   "license": "Apache-2.0",
   "keywords": [
     "memory",

@@ -6,7 +6,7 @@ carried forward.
 
 ## Reporting a bug
 
-[Open an issue](https://github.com/mubit-ai/claude-plugins/issues) and include:
+[Open an issue](https://github.com/mubit-ai/plugins/issues) and include:
 
 - **Which host and version.** Claude Code or the Codex CLI, and the plugin version actually on
   disk — `ls ~/.claude/plugins/cache/mubit/mubit-memory/` or
