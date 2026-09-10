@@ -5,7 +5,7 @@
   "description": "Persistent, typed, self-improving memory for Claude Code, backed by Mubit. Captures work involuntarily, recalls relevant lessons before every prompt, and attributes outcomes so memory improves with use. Shares one memory with the Codex CLI plugin when both run in the same directory.",
   "author": { "name": "Mubit AI", "url": "https://mubit.ai" },
   "homepage": "https://docs.mubit.ai/integrations/claude-code",
-  "repository": "https://github.com/mubit-ai/claude-plugins",
+  "repository": "https://github.com/mubit-ai/plugins",
   "license": "Apache-2.0",
   "keywords": ["memory", "mubit", "long-term-memory", "lessons", "recall", "rag"],
   "userConfig": {

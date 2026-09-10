@@ -2,7 +2,7 @@
 #
 # pre-push — the only check in this repository that runs BEFORE anything is public.
 #
-# `mubit-ai/claude-plugins` is a public repository, so `git push` is publication: by the time a
+# `mubit-ai/plugins` is a public repository, so `git push` is publication: by the time a
 # workflow starts, GitHub is already serving the commit, and a later force-push does not
 # un-publish a blob that anyone can still fetch by SHA. CI here is a detector. This is the gate.
 #
