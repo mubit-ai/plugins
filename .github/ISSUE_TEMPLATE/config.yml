@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question, idea or feedback
+    url: https://github.com/mubit-ai/plugins/discussions
+    about: Not sure it is a bug? Start a discussion instead.
+  - name: Security vulnerability
+    url: https://github.com/mubit-ai/plugins/security/advisories/new
+    about: Report vulnerabilities privately, never in a public issue.

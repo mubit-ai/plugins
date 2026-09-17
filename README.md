@@ -74,6 +74,8 @@ it — no tool call, no extra model call, and 180 tokens of context.
 You need two values, both from the [Mubit console](https://console.mubit.ai): an **endpoint**
 like `https://api.mubit.ai`, and an **API key** that starts with `mbt_`.
 
+Signing up is free and self-serve, and the plugin itself is open source under Apache-2.0.
+
 Requirements: **Node 20 or newer**. There is no build step and no `npm install` — the bundles
 ship committed.
 
