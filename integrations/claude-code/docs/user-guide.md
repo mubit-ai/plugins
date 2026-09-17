@@ -46,7 +46,7 @@ A marketplace source can also be a local directory. This is the loop you want wh
 changing the plugin itself; substitute your own checkout path throughout.
 
 ```bash
-claude plugin marketplace add ~/src/claude-plugins
+claude plugin marketplace add ~/src/plugins
 claude plugin marketplace list
 ```
 
@@ -59,7 +59,7 @@ Configured marketplaces:
     Source: GitHub (anthropics/claude-plugins-official)
 
   ❯ mubit
-    Source: Directory (~/src/claude-plugins)
+    Source: Directory (~/src/plugins)
 ```
 
 Then install — either from `/plugin` → **Browse plugins** → **Mubit Memory** → Install, or from
@@ -99,7 +99,7 @@ claude plugin marketplace remove mubit
 Zero side effects, session-only. Good for a first look, and the fastest loop while developing:
 
 ```bash
-claude --plugin-dir ~/src/claude-plugins/integrations/claude-code
+claude --plugin-dir ~/src/plugins/integrations/claude-code
 ```
 
 > Session-only plugins get their own data directory —
@@ -109,7 +109,7 @@ claude --plugin-dir ~/src/claude-plugins/integrations/claude-code
 ### Confirm the install is sound
 
 ```bash
-claude plugin validate ~/src/claude-plugins/integrations/claude-code
+claude plugin validate ~/src/plugins/integrations/claude-code
 ```
 
 **Expect** `✔ Validation passed`. This is the host's own schema check, and it is the only thing
