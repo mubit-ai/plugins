@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in Mubit Memory is broken or behaves differently from the docs.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please do not report a suspected vulnerability here.
+        See [SECURITY.md](https://github.com/mubit-ai/plugins/blob/main/SECURITY.md) instead.
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options:
+        - Claude Code
+        - Codex CLI
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: host-version
+    attributes:
+      label: Host version
+      description: Output of `claude --version` or `codex --version`.
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version on disk
+      description: >
+        Read the directory instead of trusting what you typed, because a cache can serve older files.
+        `ls ~/.claude/plugins/cache/mubit/mubit-memory/` or `ls ~/.codex/plugins/cache/mubit/mubit-memory/`.
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: Output of `node --version`. Node 20 or newer is required.
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: What doctor says
+      description: Run `/mubit-memory:doctor` in Claude Code, or `mubit-memory:doctor` in Codex, and paste the result.
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: >
+        Attach or paste `logs/mubit-cc.log` from the plugin's data directory. Every line is scrubbed by the
+        same redaction rules that run before anything leaves your machine, so it is safe to share.
+        Set `MUBIT_CC_LOG_LEVEL=debug` and reproduce once more for extra detail.
+      render: text

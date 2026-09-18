@@ -625,7 +625,7 @@ function sarif(findings) {
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
     version: '2.1.0',
     runs: [{
-      tool: { driver: { name: 'leakcheck', informationUri: 'https://github.com/mubit-ai/claude-plugins', rules } },
+      tool: { driver: { name: 'leakcheck', informationUri: 'https://github.com/mubit-ai/plugins', rules } },
       results: findings.map((f) => ({
         ruleId: f.rule,
         level: f.severity === 'block' ? 'error' : 'warning',

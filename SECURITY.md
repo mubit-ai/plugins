@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report it privately, through GitHub's
-[private vulnerability reporting](https://github.com/mubit-ai/claude-plugins/security/advisories/new).
+[private vulnerability reporting](https://github.com/mubit-ai/plugins/security/advisories/new).
 It is enabled on this repository, the report is visible only to the maintainers, and it stays
 private until an advisory is published.
 

@@ -12,7 +12,7 @@
       "author": { "name": "Mubit AI", "url": "https://mubit.ai" },
       "source": "./integrations/claude-code",
       "homepage": "https://docs.mubit.ai/integrations/claude-code",
-      "repository": "https://github.com/mubit-ai/claude-plugins",
+      "repository": "https://github.com/mubit-ai/plugins",
       "license": "Apache-2.0",
       "keywords": ["memory", "mubit", "long-term-memory", "lessons", "recall"],
       "contextCost": { "value": 3125, "cached": 0 }
