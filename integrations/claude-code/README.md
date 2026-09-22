@@ -647,6 +647,7 @@ safe to attach to an issue.
 
 ## Links
 
-- Documentation: <https://docs.mubit.ai/integrations/claude-code>
+- User guide, from nothing installed to memory that survives a session: [`docs/user-guide.md`](docs/user-guide.md)
+- Mubit documentation: <https://docs.mubit.ai>
 - Source: <https://github.com/mubit-ai/plugins>
 - License: Apache-2.0 — [`LICENSE`](LICENSE); third-party code bundled into the MCP server is attributed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
