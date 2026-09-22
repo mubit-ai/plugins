@@ -50,7 +50,7 @@ codex plugin add mubit-memory@mubit
 ```
 
 `--ref <tag>` pins a release rather than tracking `main`. To work against a local checkout,
-pass its path instead: `codex plugin marketplace add ~/src/claude-plugins`.
+pass its path instead: `codex plugin marketplace add ~/src/plugins`.
 
 The marketplace is named `mubit` by the repository's own `.agents/plugins/marketplace.json`,
 which points at `integrations/codex/`. The plugin lands under
