@@ -7,7 +7,6 @@
 </p>
 
 <p align="center">
-  <a href="https://docs.mubit.ai/integrations/claude-code">Documentation</a> ·
   <a href="https://console.mubit.ai">Console</a> ·
   <a href="integrations/claude-code/README.md">Claude&nbsp;Code guide</a> ·
   <a href="integrations/codex/README.md">Codex guide</a> ·
@@ -256,7 +255,8 @@ after any upgrade, re-run `setup.mjs`, or the hooks are silently untrusted.
 Everything here executes on your machine: the hooks run as Node processes on session events,
 and the MCP server as a long-lived subprocess. Two things make that auditable.
 
-- `integrations/claude-code/hooks/src/` and `lib/` are the readable source for every bundle in
+- `integrations/claude-code/hooks/src/` and `lib/` on the
+  [`pre-main`](https://github.com/mubit-ai/plugins/tree/pre-main) branch are the readable source for every bundle in
   `hooks/dist/` and `bin/`. Rebuild rather than trusting them: the build regenerates the
   bundles in place, so a clean `git diff` afterwards is proof the committed artifacts match
   their source.
@@ -282,7 +282,7 @@ Both hosts execute these directories as fetched, with no build step, which is wh
 
 - **Guides** — [Claude Code](integrations/claude-code/README.md) ·
   [Codex CLI](integrations/codex/README.md). Install, all 25 options, and troubleshooting.
-- **Reference** — [docs.mubit.ai](https://docs.mubit.ai/integrations/claude-code).
+- **Reference** — [docs.mubit.ai](https://docs.mubit.ai) for the Mubit API, SDKs and console.
 - **Keys and instances** — the [Mubit console](https://console.mubit.ai).
 - **Bugs** — [open an issue](https://github.com/mubit-ai/plugins/issues). What to put in
   one is in [CONTRIBUTING.md](CONTRIBUTING.md). Attach `logs/mubit-cc.log` from the plugin's
@@ -290,8 +290,8 @@ Both hosts execute these directories as fetched, with no build step, which is wh
 - **Vulnerabilities** — report them privately, never in an issue. See
   [SECURITY.md](SECURITY.md).
 
-Contents are published from Mubit's source repository on release, so a commit made directly
-here is overwritten by the next publish.
+`main` is published from the `pre-main` branch on release, so a change made only on `main` is
+overwritten by the next publish. Send pull requests to `pre-main`.
 
 ## License
 
