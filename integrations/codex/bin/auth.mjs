@@ -473,7 +473,9 @@ async function runBrowserAuth(opts = {}) {
     return payload;
   } finally {
     clearTimeout(timer);
-    await new Promise((r) => server.close(() => r(void 0)));
+    const closed = new Promise((r) => server.close(() => r(void 0)));
+    server.closeAllConnections();
+    await closed;
   }
 }
 function buildAuthUrl({ consoleUrl, port, state, challenge, repo, host, region }) {
