@@ -1,15 +1,15 @@
 <h1 align="center">Mubit Memory</h1>
 
 <p align="center">
-  Persistent memory for <strong>Claude Code</strong> and the <strong>Codex CLI</strong> — it records your
+  Persistent memory for the <strong>Codex CLI</strong> and <strong>Claude Code</strong> — it records your
   work as you do it, puts the lessons that matter in front of the model before every prompt,
   and learns which ones actually helped.
 </p>
 
 <p align="center">
   <a href="https://console.mubit.ai">Console</a> ·
-  <a href="integrations/claude-code/README.md">Claude&nbsp;Code guide</a> ·
   <a href="integrations/codex/README.md">Codex guide</a> ·
+  <a href="integrations/claude-code/README.md">Claude&nbsp;Code guide</a> ·
   <a href="#what-leaves-your-machine">Privacy</a> ·
   <a href="SECURITY.md">Security</a>
 </p>
@@ -28,27 +28,26 @@ constraint, and it repeats the same mistake in a new file. Mubit Memory closes t
 without you managing it: nothing to write down, no notes file to curate, no tool the model has
 to remember to call.
 
-```text
-● mubit: cc-acme-api-… · hosted · recall 4/380 tok · lessons 5g
+**Session one.** Your agent works out that a replayed webhook only verifies if the exact raw
+request bytes were stored. You finish, and you `/clear`.
 
-> the auth integration tests are failing again
+**Session two.** You type one line: *Add a second replay target and make sure the signature
+still verifies.* Before the model reads it, that lesson is already in front of it. 53 tokens,
+no tool call, and you wrote nothing down.
 
-  <mubit-memory run="cc-acme-api-…" sources="2" tokens="180">
+Both sessions are recorded turns on a small demo service, and the block the model received is
+in [What the model sees](#what-the-model-sees). Here is a real turn in Claude Code. The line
+under the prompt is the plugin reporting what it injected, and the rule the user states is
+saved through the plugin's MCP server without being asked to.
 
-  ### Active Rules
-  - [block] Integration tests run against a real Postgres, never a mock.
-    (why: a mocked suite went green while the production migration was broken)
-
-  ### Lessons Learned
-  - `make test-auth` needs SEED=1, or the fixture user is missing and every
-    assertion fails on a null session.
-```
-
-You typed one line. The rule and the lesson were retrieved and injected before the model read
-it — no tool call, no extra model call, and 180 tokens of context.
+<p align="center">
+  <img src="docs/assets/claude-code-standing-rule-saved.png"
+       alt="Screenshot of a Claude Code turn: the user states a standing rule, the hook line reports two memories injected, and the model saves the rule via MCP."
+       width="900">
+</p>
 
 **Contents** — [Why](#why-mubit-memory) · [Quick start](#quick-start) · [What it does](#what-it-does) ·
-[Commands](#commands) · [Privacy](#what-leaves-your-machine) · [Configuration](#configuration) ·
+[What the model sees](#what-the-model-sees) · [Dashboard](#dashboard) · [Commands](#commands) · [Privacy](#what-leaves-your-machine) · [Configuration](#configuration) ·
 [Troubleshooting](#when-something-looks-wrong) · [Auditing it](#verifying-what-you-are-about-to-run)
 
 ## Why Mubit Memory
@@ -78,22 +77,7 @@ Signing up is free and self-serve, and the plugin itself is open source under Ap
 Requirements: **Node 20 or newer**. There is no build step and no `npm install` — the bundles
 ship committed.
 
-### Claude Code
-
-```text
-/plugin marketplace add mubit-ai/plugins
-/plugin install mubit-memory@mubit
-/reload-plugins
-```
-
-Then set your credentials in `/plugin` → **Mubit Memory** → **configure**, and **start a new
-session**. `/reload-plugins` registers the hooks but does not fire `SessionStart`, so until a
-new session begins the plugin has never actually run. It looks broken; it is fine.
-
-You are done when a new session opens with `Mubit memory is active` and a run id.
-
-<details>
-<summary><strong>Codex CLI</strong> — three commands and a setup step that is not optional</summary>
+### Codex CLI
 
 Requires **Codex CLI 0.146.0 or newer**, which is where Git marketplace sources landed.
 
@@ -121,7 +105,19 @@ skipped silently under `codex exec`.
 Full walkthrough, including the sandbox and trust gotchas:
 [`integrations/codex/README.md`](integrations/codex/README.md).
 
-</details>
+### Claude Code
+
+```text
+/plugin marketplace add mubit-ai/plugins
+/plugin install mubit-memory@mubit
+/reload-plugins
+```
+
+Then set your credentials in `/plugin` → **Mubit Memory** → **configure**, and **start a new
+session**. `/reload-plugins` registers the hooks but does not fire `SessionStart`, so until a
+new session begins the plugin has never actually run. It looks broken; it is fine.
+
+You are done when a new session opens with `Mubit memory is active` and a run id.
 
 Confirm either install with `/mubit-memory:setup` (Codex: `mubit-memory:setup`). A `ready`
 state plus your endpoint and a run id means you are finished.
@@ -132,14 +128,9 @@ Three things happen on their own. None of them spends a model call of yours.
 
 ```mermaid
 flowchart LR
-  P["Your prompt"] --> R["Recall<br/>inject what is relevant"]
-  R --> M["The model"]
-  M --> T["Tool calls and replies"]
-  T --> S["Redact, then spool<br/>no network per call"]
-  S -. "background" .-> E[("Your Mubit<br/>endpoint")]
-  E -.-> R
-  M --> X["Session ends"] --> F["Reflect<br/>extract lessons that outlive the run"]
-  F -.-> E
+  C["Capture<br/>every tool call and turn, as it happens"] --> F["Reflect<br/>at session end, keep the lessons"]
+  F --> R["Recall<br/>before each prompt, inject what is relevant"]
+  R --> C
 ```
 
 - **Capture** — every tool call, failure and turn is redacted and written to a local spool, then
@@ -153,6 +144,105 @@ flowchart LR
 Runs are **per-directory** by default: one project is one memory, which is also what makes
 Claude Code and Codex in that directory share one. Change it with `runStrategy`
 (`git-branch`, `per-conversation`, `static`).
+
+## What the model sees
+
+The block is injected the same way on both hosts. In Claude Code it arrives as hook context
+and the transcript prints a one-line summary; the block itself never appears there.
+
+### What you see
+
+One line under your prompt, as in the turn at the top of this page: `mubit: 2 memories · 79
+tok · 435ms` is how many entries were injected, the token estimate, and how long retrieval
+took. It gains `· resume` on the first prompt of a session that received a briefing and
+`· N pinned` when the run has pins. When nothing was found, nothing is printed and nothing is
+injected.
+
+### What the model got
+
+The dashboard keeps every turn. This one is from the second session of the story above, in
+Codex: one lesson injected at 53 tokens, learned by Claude Code in the first session, and
+credited as **worked** because the reply used it.
+
+<p align="center">
+  <img src="docs/assets/dashboard-turn-injected-and-outcome.png"
+       alt="Screenshot of the dashboard's turn view: the prompt, one injected lesson at 53 tokens, and the outcome marked as worked."
+       width="820">
+</p>
+
+### Anatomy of the injected block
+
+Every optional part is present here. A real block carries only the sections that have an
+entry, in this order.
+
+```text
+<mubit-memory run="<run id>" sources="<entries rendered>" tokens="<estimate>" pins="<count>">
+## Pinned for this run
+- <a constraint you pinned>
+Those were pinned for this run and hold until they are cleared. Everything below them was retrieved for this prompt.
+Recalled from memory of earlier work — it may be incomplete or out of date, so verify against the code before relying on it.
+A line marked "(seen earlier)" was injected in full earlier in this conversation and is repeated here only as a reference; ask mubit_dereference for its text.
+
+## Active rules
+- <a rule>
+## Lessons
+- <a lesson>
+- (stale) <a lesson the server has marked stale>
+- (seen earlier) <reference id> — <the first clause of a lesson this conversation already saw in full>
+## Traces
+- <a tool call or result captured earlier on this run>
+</mubit-memory>
+```
+
+- **The tag.** `run` is the run id, `sources` the number of entries rendered, `tokens` the
+  estimate charged against `recallTokenBudget`. `pins` is present only when something is
+  pinned.
+- **Pins come first, above the caveat.** They are not retrieved and not scored: you typed
+  them, and they hold until you clear them. The sentence after them separates what you pinned
+  from what was retrieved.
+- **The caveat is on every block that carries retrieved memory.** Retrieval is a ranked guess
+  inside a token budget. Entries can be dropped for space, an entry can be stale, and nothing
+  was re-checked against the tree, so the model is told to verify before it acts.
+- **Sections render in a fixed order and only when they have an entry.** Mental models, Active
+  rules, Lessons, Facts, Observations, Working memory, Traces, Goals, then Archive blocks,
+  Handoffs, Feedback, Checkpoints, Logs and Other.
+- **One entry is one bullet.** `(stale)` is the server's mark, kept on the line so the model
+  can see it. `(seen earlier)` replaces an entry this conversation already received in full
+  with its reference id and first clause; the id still counts toward the outcome scoring, and
+  `mubit_dereference` returns the text. `recallRepeatMode: full` repeats entries in full instead.
+- **An entry that does not fit the budget is skipped, and a smaller one after it may still
+  fit.**
+
+| Section | What puts an entry there |
+| --- | --- |
+| `## Pinned for this run` | `pin`. Local to this machine and this run. |
+| `## Active rules` | Entries stored with the type `rule`. `remember` chooses the type from what you say; `mubit_remember` (off by default) writes an exact type and scope. |
+| `## Lessons` | Entries stored with the type `lesson`: `mubit_learned` when the model decides something is worth keeping, `remember`, and `reflect` at session end. |
+| `## Traces` | Tool calls, tool output and task results captured on earlier turns of this run. |
+| `## Checkpoints` | What `checkpoint` saved, including the automatic one before Claude Code compacts the conversation. |
+| `## Handoffs` | Notes left by `handoff` for another session or the other CLI. |
+| The rest | Mental models, Facts, Observations, Working memory, Goals, Feedback, Archive blocks, Logs, Other: the remaining entry types the instance can return. |
+
+### The briefing at session start
+
+On the first prompt of a session a second block can precede this one: `<mubit-resume>`, with
+the same three attributes, assembled at session start from where earlier work on the project
+left off. Its own preamble says it is a briefing and not a task list. `resumeBlock: false`
+turns it off.
+
+## Dashboard
+
+`dashboard` opens a local page over the record. It is loopback only and bearer-token gated,
+and it is the one place the injected text is readable in full. **Turns** lists every prompt
+with what was injected into it and what that earned; opening a turn shows the view above.
+**Lessons** lists every lesson with how often it was injected and how often it worked, and a
+verdict you give on a turn changes those counters.
+
+<p align="center">
+  <img src="docs/assets/dashboard-lessons-counters.png"
+       alt="Screenshot of the dashboard's Lessons page for a demo run: four lessons with their injected, worked, failed and confidence counters."
+       width="900">
+</p>
 
 ## Commands
 
@@ -188,6 +278,16 @@ mubit_dereference     expand a reference id it already holds
 mubit_status          is memory reachable
 mubit_memory_health   what is actually stored
 ```
+
+A Codex turn on the same demo service, after the suite passed. The model credits the lesson
+that was injected for the task (`mubit_outcome`, which raised its confidence to 0.6) and
+stores what it learned (`mubit_learned`, accepted and queued). Neither call was asked for.
+
+<p align="center">
+  <img src="docs/assets/codex-mubit-outcome-and-learned.png"
+       alt="Screenshot of a Codex CLI turn in which the model calls mubit_outcome to credit an injected lesson and mubit_learned to save a new one."
+       width="900">
+</p>
 
 The bundled server carries 21. The other fourteen cost nothing until you name them in
 `mcpTools` — a list you supply is used verbatim, not merged with the default.
