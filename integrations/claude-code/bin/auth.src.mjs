@@ -595,7 +595,12 @@ export async function runBrowserAuth(opts = {}) {
     clearTimeout(timer);
     // Always release the port. A listener left behind outlives the command and the next
     // run picks a different port, so the leak is silent until something else needs it.
-    await new Promise((r) => server.close(() => r(undefined)));
+    // `close()` alone waits for every open socket, and Chrome holds a spare preconnect to
+    // this port that never carries a request — Node counts it as active, not idle, so the
+    // command sat out Chrome's socket timeout (458 s measured) after a sub-second sign-in.
+    const closed = new Promise((r) => server.close(() => r(undefined)));
+    server.closeAllConnections();
+    await closed;
   }
 }
 
