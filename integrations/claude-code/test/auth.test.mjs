@@ -657,6 +657,37 @@ test('a still-provisioning workspace is retryable, not a failure', async () => {
   await console_.close();
 });
 
+/**
+ * Chrome opens a spare socket alongside the one that carries `/callback` and then never
+ * sends a byte on it. Node counts a socket with no request as active, not idle, so
+ * `server.close()` waited on it until Chrome let go — 458 s in a measured run, after a
+ * sign-in that had finished in under one.
+ */
+test('a browser preconnect that never sends a request does not hold the flow open', { timeout: 10000 }, async () => {
+  const { runBrowserAuth } = await mod('bin/auth.src.mjs');
+  const { connect } = await import('node:net');
+  const console_ = await fakeConsole();
+  /** @type {import('node:net').Socket | undefined} */
+  let preconnect;
+
+  const started = Date.now();
+  const res = await runBrowserAuth({
+    consoleUrl: console_.url,
+    openImpl: (url) => {
+      const port = Number(new URL(url).searchParams.get('port'));
+      preconnect = connect(port, '127.0.0.1', () => { console_.browse(url); });
+      preconnect.on('error', () => {});
+    },
+    timeoutMs: 5000,
+  });
+
+  assert.equal(res.mubitApiKey, 'mbt_issued_by_console');
+  assert.ok(Date.now() - started < 3000,
+    `the flow waited ${Date.now() - started} ms on a socket that never carried a request`);
+  preconnect?.destroy();
+  await console_.close();
+});
+
 test('a browser that never comes back times out instead of hanging', async () => {
   const { runBrowserAuth } = await mod('bin/auth.src.mjs');
   const console_ = await fakeConsole();
