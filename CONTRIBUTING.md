@@ -1,8 +1,7 @@
 # Contributing
 
-The most useful thing you can send is a good bug report. Code in this repository is published
-from Mubit's source repository on release, so a pull request opened against this tree cannot be
-carried forward.
+The most useful thing you can send is a good bug report. Development happens on the `pre-main`
+branch, and `main` is published from it on release, so open pull requests against `pre-main`.
 
 ## Reporting a bug
 
