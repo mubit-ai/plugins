@@ -834,9 +834,19 @@ applyCodexEnv(process.env);
 
 // cli/auth.mjs
 var shared = await init_auth_src().then(() => auth_src_exports);
-var { main: main2, CONSOLE_URL: CONSOLE_URL2, DEFAULT_ENDPOINT: DEFAULT_ENDPOINT2 } = shared;
+var {
+  main: main2,
+  CONSOLE_URL: CONSOLE_URL2,
+  DEFAULT_ENDPOINT: DEFAULT_ENDPOINT2,
+  authenticateWithKey: authenticateWithKey2,
+  currentCredentials: currentCredentials2,
+  normalizeEndpoint: normalizeEndpoint2
+} = shared;
 export {
   CONSOLE_URL2 as CONSOLE_URL,
   DEFAULT_ENDPOINT2 as DEFAULT_ENDPOINT,
-  main2 as main
+  authenticateWithKey2 as authenticateWithKey,
+  currentCredentials2 as currentCredentials,
+  main2 as main,
+  normalizeEndpoint2 as normalizeEndpoint
 };
