@@ -107,6 +107,10 @@ Full walkthrough, including the sandbox and trust gotchas:
 
 ### Claude Code
 
+Two ways to install, with the same result.
+
+**Inside Claude Code**, with `/plugin`:
+
 ```text
 /plugin marketplace add mubit-ai/plugins
 /plugin install mubit-memory@mubit
@@ -116,6 +120,31 @@ Full walkthrough, including the sandbox and trust gotchas:
 Then set your credentials in `/plugin` → **Mubit Memory** → **configure**, and **start a new
 session**. `/reload-plugins` registers the hooks but does not fire `SessionStart`, so until a
 new session begins the plugin has never actually run. It looks broken; it is fine.
+
+**From a terminal**, with the `claude` CLI:
+
+```bash
+claude plugin marketplace add mubit-ai/plugins
+claude plugin install mubit-memory@mubit
+
+# Sign in: opens the Mubit console in your browser and stores the key where the hooks read it.
+PLUGIN=$(ls -d ~/.claude/plugins/cache/mubit/mubit-memory/*/ | tail -1)
+node "$PLUGIN/bin/auth.mjs" --data-dir ~/.claude/plugins/data/mubit-memory-mubit
+```
+
+`Connected to https://api.mubit.ai.` means the key is valid and stored. Then start `claude`,
+or a new session if one was already open. Keep `--data-dir` as written: the plugin has not run
+yet, so without it the key can land in a directory the hooks never read. With no browser (over
+SSH, say), issue a key in the console and sign in with it instead:
+
+```bash
+MUBIT_AUTH_KEY='mbt_…' node "$PLUGIN/bin/auth.mjs" --data-dir ~/.claude/plugins/data/mubit-memory-mubit --paste
+```
+
+To keep the key in your OS keychain instead, as `/plugin` → **configure** does, skip the
+sign-in and pass both values at install time:
+`claude plugin install mubit-memory@mubit --config endpoint=https://api.mubit.ai --config apiKey=mbt_…`.
+The key then sits in your shell history.
 
 You are done when a new session opens with `Mubit memory is active` and a run id.
 
