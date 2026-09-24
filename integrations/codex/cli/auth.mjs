@@ -14,9 +14,13 @@
  * file's output path, so it runs when executed and not when imported. The two constants ride
  * along because `test/prod-defaults.test.mjs` next door reads the compiled-in console and
  * gateway off this bundle — the one place a non-production default would ship unnoticed.
+ * `scripts/login.mjs` imports the three credential helpers, so dropping one breaks sign-in.
  */
 
 import '../lib/boot.mjs';
 
 const shared = await import('../../claude-code/bin/auth.src.mjs');
-export const { main, CONSOLE_URL, DEFAULT_ENDPOINT } = shared;
+export const {
+  main, CONSOLE_URL, DEFAULT_ENDPOINT,
+  authenticateWithKey, currentCredentials, normalizeEndpoint,
+} = shared;

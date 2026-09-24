@@ -40,11 +40,11 @@ const BUNDLE = join(CODEX_ROOT, 'bin', 'auth.mjs');
  *
  * @param {string[]} args
  * @param {Record<string, string>} [env]
- * @param {{onStderr?: (line: string) => void, timeoutMs?: number}} [opts]
+ * @param {{onStderr?: (line: string) => void, timeoutMs?: number, script?: string}} [opts]
  */
 function runBundle(args, env = {}, opts = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, [BUNDLE, ...args], {
+    const child = spawn(process.execPath, [opts.script ?? BUNDLE, ...args], {
       cwd: tempDir('mubit-codex-auth-cwd-'),
       env: { PATH: tempDir('mubit-codex-auth-nopath-'), HOME: tempDir('mubit-codex-auth-home-'), ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -151,4 +151,28 @@ test('a full browser sign-in lands the key in the pinned data dir', async (t) =>
   assert.ok(!out.includes('mbt_codex_flow_key') && !err.includes('mbt_codex_flow_key'),
     'the key never crosses stdout or stderr — that is the point of the browser flow');
   instance.assertCalled('POST', '/v2/control/lessons');
+});
+
+// `scripts/login.mjs` is the README's Codex sign-in step, and it imports named helpers from
+// this bundle: a re-export dropped from `cli/auth.mjs` is a SyntaxError before line one runs.
+test('scripts/login.mjs signs in with a key and stores it in --data-dir', async (t) => {
+  const instance = await fakeMubit({ 'POST /v2/control/lessons': { json: { lessons: [] } } });
+  t.after(() => instance.close());
+  const dataDir = makeDataDir();
+  const script = join(CODEX_ROOT, 'scripts', 'login.mjs');
+
+  const { code, out, err } = await runBundle(
+    ['--json', `--data-dir=${dataDir}`, `--endpoint=${instance.url}`],
+    { MUBIT_AUTH_KEY: 'mbt_login_script_key' },
+    { script },
+  );
+
+  assert.equal(code, 0, `stderr was:\n${err}`);
+  assert.equal(JSON.parse(out).state, 'ready');
+  const stored = JSON.parse(readFileSync(join(dataDir, 'credentials.json'), 'utf8'));
+  assert.deepEqual(stored, { endpoint: instance.url, apiKey: 'mbt_login_script_key' });
+
+  const status = await runBundle(['--status', '--json', `--data-dir=${dataDir}`], {}, { script });
+  assert.equal(status.code, 0, `stderr was:\n${status.err}`);
+  assert.equal(JSON.parse(status.out).state, 'configured');
 });
