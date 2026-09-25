@@ -544,6 +544,14 @@ test('installs the instructions guard BEFORE importing the server', async () => 
     + 'from not installing it');
 });
 
+// The two write tools of the outcome loop are marked always-loaded, so reporting an outcome
+// does not cost a ToolSearch round trip first.
+test('the instructions guard is installed with the outcome loop\'s tools to mark always-loaded', async () => {
+  const r = await runLauncher();
+  assert.ok(r.importedServer, `the launcher never imported ./server.js. stderr:\n${r.stderr}`);
+  assert.deepEqual(r.instructionsAtImport?.alwaysLoad, ['mubit_outcome', 'mubit_learned']);
+});
+
 // The results guard sits on the same handle and obeys the same ordering rule. Installed after
 // the import, it would shape nothing: the transport already holds the unwrapped `write`.
 test('installs the results guard BEFORE importing the server, at the configured ceiling', async () => {

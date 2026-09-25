@@ -57,8 +57,10 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { lessonCensus } from '../../lib/activity.mjs';
+import { isHandle, knownRefsFromRows, resolveHandles } from '../../lib/handles.mjs';
 import { readMarker, updateMarker } from '../../lib/markers.mjs';
 import { loadSessionMap } from '../../lib/runid.mjs';
+import { readRowsAt, recentScoreLogs, scorecardPath } from '../../lib/scorecard-log.mjs';
 import { readJson, runDir } from '../../lib/state.mjs';
 
 /**
@@ -78,6 +80,15 @@ const INGEST_PATH = '/v2/control/ingest';
 
 /** The route an archived note leaves by. Its `metadata_json` sits on the body, not on an item. */
 const ARCHIVE_PATH = '/v2/control/archive';
+
+/** The two routes that take an id the model copied off an injected memory line. */
+const OUTCOME_PATH = '/v2/control/outcome';
+const DEREFERENCE_PATH = '/v2/control/dereference';
+
+/** The key an unresolved-handle note rides back under. */
+const HANDLES_NOTE_KEY = 'mubit_handles';
+const HANDLES_HINT = 'These ids match no memory line shown in this session and were sent as '
+  + 'typed. Use the [m…] id printed on a memory line, or a full reference_id.';
 
 /**
  * How long after a turn's `ended_at` a write is still attributed to it.
@@ -739,6 +750,91 @@ function countItems(body) {
 // ---------------------------------------------------------------------------
 
 /**
+ * @typedef {object} HandleResult
+ * @property {any} body          the ORIGINAL reference when nothing moved
+ * @property {boolean} changed
+ * @property {string[]} unresolved  handles no known ref produced, sent as typed
+ */
+
+/**
+ * Turn memory handles (`[mxxxx]`) in an outcome body back into reference ids: `reference_id`
+ * (never `"global"`, which is not a handle) and every entry of `entry_ids`. Pure, and inert on
+ * anything it does not understand.
+ *
+ * @param {any} body
+ * @param {string[]} knownRefs  oldest first; see `knownRefsFor`
+ * @returns {HandleResult}
+ */
+export function resolveOutcomeBody(body, knownRefs) {
+  return resolveFields(body, knownRefs, true);
+}
+
+/**
+ * The same for a dereference, which carries one `reference_id`.
+ *
+ * @param {any} body
+ * @param {string[]} knownRefs
+ * @returns {HandleResult}
+ */
+export function resolveDereferenceBody(body, knownRefs) {
+  return resolveFields(body, knownRefs, false);
+}
+
+/**
+ * Every ref the session logs say was shown, oldest first, with this session's own log read
+ * last so its refs win a handle collision. Without a session id (Codex gives the server none,
+ * and the id Claude Code gives it outlives `/clear`) the recent logs still answer.
+ *
+ * @param {Record<string, any>|undefined} cfg
+ * @param {string} sessionId
+ * @returns {string[]}
+ */
+export function knownRefsFor(cfg, sessionId) {
+  try {
+    const c = cfg ?? {};
+    const own = sessionId ? scorecardPath(c, sessionId) : '';
+    /** @type {Record<string, any>[]} */
+    const rows = [];
+    for (const p of recentScoreLogs(c).reverse()) if (p !== own) rows.push(...readRowsAt(p));
+    if (own) rows.push(...readRowsAt(own));
+    return knownRefsFromRows(rows);
+  } catch {
+    return [];
+  }
+}
+
+/** @param {any} body @param {boolean} withEntries @returns {boolean} */
+function carriesHandle(body, withEntries) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  if (isHandle(body.reference_id)) return true;
+  return withEntries && Array.isArray(body.entry_ids) && body.entry_ids.some((id) => isHandle(id));
+}
+
+/**
+ * @param {any} body @param {string[]} knownRefs @param {boolean} withEntries
+ * @returns {HandleResult}
+ */
+function resolveFields(body, knownRefs, withEntries) {
+  const noop = { body, changed: false, unresolved: /** @type {string[]} */ ([]) };
+  try {
+    if (!carriesHandle(body, withEntries)) return noop;
+    /** @type {string[]} */
+    const unresolved = [];
+    const one = (/** @type {any} */ id) => {
+      if (!isHandle(id)) return id;
+      const r = resolveHandles([id], knownRefs);
+      unresolved.push(...r.unresolved);
+      return r.ids[0] ?? id;
+    };
+    const next = { ...body, reference_id: one(body.reference_id) };
+    if (withEntries && Array.isArray(body.entry_ids)) next.entry_ids = body.entry_ids.map(one);
+    return { body: next, changed: true, unresolved };
+  } catch {
+    return noop;
+  }
+}
+
+/**
  * Wrap `globalThis.fetch` so every ingest the bundled server sends is clamped on the way
  * out and annotated on the way back.
  *
@@ -847,6 +943,21 @@ export function installFetchGuard(opts) {
         if (parsed.ok) {
           const out = stampProvenance(parsed.value, stampNow(), { at: 'body' });
           if (out.stamped) sendInit = { ...init, body: JSON.stringify(out.body) };
+        }
+      } else if (isPostTo(input, init, OUTCOME_PATH) || isPostTo(input, init, DEREFERENCE_PATH)) {
+        const parsed = parseBody(init);
+        const outcome = isPostTo(input, init, OUTCOME_PATH);
+        if (parsed.ok && carriesHandle(parsed.value, outcome)) {
+          // Read only when a handle is actually present: most outcomes carry real ids.
+          const refs = knownRefsFor(opts?.cfg, sessionId);
+          const out = outcome
+            ? resolveOutcomeBody(parsed.value, refs)
+            : resolveDereferenceBody(parsed.value, refs);
+          if (out.changed) sendInit = { ...init, body: JSON.stringify(out.body) };
+          if (out.unresolved.length) {
+            note = { unresolved: out.unresolved, hint: HANDLES_HINT };
+            noteKey = HANDLES_NOTE_KEY;
+          }
         }
       } else if (isLessonsRead(input, init)) {
         const plan = await planLessons(init);

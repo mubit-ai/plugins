@@ -328,3 +328,133 @@ test('the instructions name every curated verb that answers a question', async (
     + 'that now reaches it. A verb that left the tool surface without a forwarding address is one '
     + `the model will search the tool list for and not find.${REMEDY}`);
 });
+
+// ---------------------------------------------------------------------------
+// The outcome loop — ids the model can cite, and the tools to cite them with
+// ---------------------------------------------------------------------------
+//
+// Claude rarely called mubit_outcome for three reasons: memory lines carried no id to cite,
+// nothing asked at the moment it mattered, and the tool sat deferred behind ToolSearch, so
+// reporting cost a lookup before the call. The instructions now say where the ids are, and
+// the two write tools of the loop are marked always-loaded.
+
+test('the instructions say memory lines carry a bracketed id that mubit_outcome takes', async () => {
+  const { INSTRUCTIONS } = await mod('mcp/src/instructions.mjs');
+  assert.match(INSTRUCTIONS, /id in brackets/i);
+  assert.match(INSTRUCTIONS, /mubit_outcome/);
+  assert.match(INSTRUCTIONS, /\bsuccess\b/);
+  assert.match(INSTRUCTIONS, /\bfailure\b/);
+  assert.match(INSTRUCTIONS, /misled/);
+});
+
+/** A `tools/list` result as the bundled server writes it. */
+function toolsList(extra = {}) {
+  return {
+    jsonrpc: '2.0',
+    id: 2,
+    result: {
+      tools: [
+        { name: 'mubit_recall', description: 'r', inputSchema: { type: 'object' } },
+        { name: 'mubit_outcome', description: 'o', inputSchema: { type: 'object' }, _meta: { keep: 1 } },
+        { name: 'mubit_learned', description: 'l', inputSchema: { type: 'object' } },
+      ],
+      ...extra,
+    },
+  };
+}
+
+test('guardToolsList marks the named tools always-loaded and leaves the rest alone', async () => {
+  const { guardToolsList, ALWAYS_LOAD_META } = await mod('mcp/src/instructions.mjs');
+  assert.equal(ALWAYS_LOAD_META, 'anthropic/alwaysLoad');
+  const frame = toolsList();
+  const out = guardToolsList(frame, ['mubit_outcome', 'mubit_learned']);
+  assert.equal(out.changed, true);
+  const byName = Object.fromEntries(out.message.result.tools.map((t) => [t.name, t]));
+  assert.deepEqual(byName.mubit_outcome._meta, { keep: 1, 'anthropic/alwaysLoad': true });
+  assert.deepEqual(byName.mubit_learned._meta, { 'anthropic/alwaysLoad': true });
+  assert.equal(byName.mubit_recall, frame.result.tools[0], 'an unnamed tool was rebuilt');
+  assert.equal(frame.result.tools[1]._meta['anthropic/alwaysLoad'], undefined, 'the input frame was mutated');
+});
+
+test('guardToolsList returns anything it should not touch by identity', async () => {
+  const { guardToolsList } = await mod('mcp/src/instructions.mjs');
+  const already = toolsList();
+  already.result.tools = already.result.tools.map((t) => ({ ...t, _meta: { 'anthropic/alwaysLoad': true } }));
+  for (const [label, frame, names] of [
+    ['no names', toolsList(), []],
+    ['names absent from the list', toolsList(), ['mubit_status']],
+    ['already marked', already, ['mubit_outcome', 'mubit_learned']],
+    ['a tool result', { jsonrpc: '2.0', id: 3, result: { content: [{ type: 'text', text: 'x' }] } }, ['mubit_outcome']],
+    ['an initialize result', { jsonrpc: '2.0', id: 1, result: { protocolVersion: 'x', serverInfo: {} } }, ['mubit_outcome']],
+    ['not json-rpc', { result: { tools: [{ name: 'mubit_outcome' }] } }, ['mubit_outcome']],
+    ['null', null, ['mubit_outcome']],
+  ]) {
+    const out = guardToolsList(frame, /** @type {string[]} */ (names));
+    assert.equal(out.changed, false, `${label} was rewritten`);
+    assert.equal(out.message, frame, `${label} did not come back by identity`);
+  }
+});
+
+test('alwaysLoadFor names the loop\'s write tools unless the review is off or the host is Codex', async () => {
+  const { alwaysLoadFor } = await mod('mcp/src/instructions.mjs');
+  assert.deepEqual(alwaysLoadFor({}), ['mubit_outcome', 'mubit_learned']);
+  assert.deepEqual(alwaysLoadFor({ outcomeReview: 'stop', host: 'claude-code' }), ['mubit_outcome', 'mubit_learned']);
+  assert.deepEqual(alwaysLoadFor({ outcomeReview: 'nudge' }), ['mubit_outcome', 'mubit_learned']);
+  assert.deepEqual(alwaysLoadFor({ outcomeReview: 'off' }), []);
+  assert.deepEqual(alwaysLoadFor({ host: 'codex' }), []);
+  assert.deepEqual(alwaysLoadFor(undefined), ['mubit_outcome', 'mubit_learned']);
+});
+
+/** A stand-in for `process.stdout` that records what the guard forwards. */
+function fakeStream() {
+  /** @type {string[]} */
+  const written = [];
+  return { written, write(chunk) { written.push(String(chunk)); return true; } };
+}
+
+test('the stdout guard marks tools/list on every listing, after filling initialize, byte-exact elsewhere', async () => {
+  const { installInstructionsGuard } = await mod('mcp/src/instructions.mjs');
+  const stream = fakeStream();
+  installInstructionsGuard({ instructions: 'TEXT', stream, alwaysLoad: ['mubit_outcome'] });
+  assert.deepEqual(/** @type {any} */ (stream.write).mubitInstructionsGuard.alwaysLoad, ['mubit_outcome']);
+
+  const init = `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 'v', serverInfo: { name: 's' } } })}\n`;
+  const list = `${JSON.stringify(toolsList())}\n`;
+  const call = `${JSON.stringify({ jsonrpc: '2.0', id: 4, result: { content: [{ type: 'text', text: '"tools":[ in text' }] } })}\n`;
+  stream.write(init);
+  stream.write(list);
+  stream.write(call);
+  stream.write(list);
+
+  assert.equal(JSON.parse(stream.written[0]).result.instructions, 'TEXT');
+  for (const i of [1, 3]) {
+    const tools = JSON.parse(stream.written[i]).result.tools;
+    assert.equal(tools.find((t) => t.name === 'mubit_outcome')._meta['anthropic/alwaysLoad'], true);
+    assert.equal(tools.find((t) => t.name === 'mubit_learned')._meta, undefined);
+    assert.ok(stream.written[i].endsWith('\n'), 'the frame lost its newline');
+  }
+  assert.equal(stream.written[2], call, 'a tool result was re-serialised');
+});
+
+test('with nothing to mark, tools/list goes out byte for byte', async () => {
+  const { installInstructionsGuard } = await mod('mcp/src/instructions.mjs');
+  const stream = fakeStream();
+  installInstructionsGuard({ instructions: 'TEXT', stream, alwaysLoad: [] });
+  const list = `${JSON.stringify(toolsList())}\n`;
+  stream.write(list);
+  assert.equal(stream.written[0], list);
+});
+
+// The shipped bundle. Passes once `mcp/dist/index.js` is rebuilt from this source.
+test('the shipped server lists mubit_outcome and mubit_learned as always-loaded', async () => {
+  const { results } = await mcpDrive({ steps: [{ method: 'tools/list' }] });
+  const tools = results[0]?.result?.tools ?? [];
+  for (const name of ['mubit_outcome', 'mubit_learned']) {
+    const t = tools.find((x) => x.name === name);
+    assert.ok(t, `${name} is not listed`);
+    assert.equal(t._meta?.['anthropic/alwaysLoad'], true,
+      `${name} is still deferred behind ToolSearch.${REMEDY}`);
+  }
+  const recall = tools.find((x) => x.name === 'mubit_recall');
+  assert.notEqual(recall?._meta?.['anthropic/alwaysLoad'], true, 'only the loop\'s write tools are always loaded');
+});

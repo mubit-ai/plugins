@@ -81,9 +81,31 @@ export const INSTRUCTIONS = [
     + 'worked, a standing preference — stated so it is still true in a later session. It is '
     + 'not a session log: narrating what happened ("the user asked for X", "I refactored Y") '
     + 'is the common way this tool is misused, and every future recall pays for it. '
-    + 'mubit_outcome credits the reference_ids that actually helped, which is what makes the '
-    + 'memory that helps rank higher next time.',
+    + 'Each injected memory line starts with an id in brackets, like [m7k2q]: pass those ids '
+    + '(or reference_ids) to mubit_outcome — outcome success for entries that helped, failure '
+    + 'for ones that were wrong or misled you — which is what makes the memory that helps '
+    + 'rank higher next time.',
 ].join('\n');
+
+/** The per-tool `_meta` flag that keeps a tool loaded instead of deferred behind tool search. */
+export const ALWAYS_LOAD_META = 'anthropic/alwaysLoad';
+
+/** The outcome loop's two write tools: credit what helped, and record what was learned. */
+export const ALWAYS_LOAD_TOOLS = Object.freeze(['mubit_outcome', 'mubit_learned']);
+
+/**
+ * Which tools to mark always-loaded. None when the outcome review is switched off, and none
+ * on Codex, which has no tool deferral for the key to act on.
+ *
+ * @param {Record<string, any>|undefined} cfg
+ * @returns {string[]}
+ */
+export function alwaysLoadFor(cfg) {
+  const c = cfg && typeof cfg === 'object' ? cfg : {};
+  if (String(c.outcomeReview ?? '').trim().toLowerCase() === 'off') return [];
+  if (c.host === 'codex') return [];
+  return [...ALWAYS_LOAD_TOOLS];
+}
 
 // ---------------------------------------------------------------------------
 // The rewrite
@@ -143,6 +165,39 @@ export function guardInitialize(message, instructions) {
   }
 }
 
+/**
+ * Mark the named tools in a `tools/list` result with `_meta["anthropic/alwaysLoad"] = true`,
+ * so Claude Code loads each one up front rather than deferring it behind tool search.
+ * Existing `_meta` keys are kept. Pure, and returns the frame by identity when nothing moved.
+ *
+ * @param {any} message
+ * @param {string[]} names
+ * @returns {FrameResult}
+ */
+export function guardToolsList(message, names) {
+  const noop = { message, changed: false };
+  try {
+    const wanted = new Set(Array.isArray(names) ? names : []);
+    if (!wanted.size) return noop;
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return noop;
+    if (message.jsonrpc !== '2.0') return noop;
+    const result = message.result;
+    if (!result || typeof result !== 'object' || !Array.isArray(result.tools)) return noop;
+
+    let changed = false;
+    const tools = result.tools.map((/** @type {any} */ t) => {
+      if (!t || typeof t !== 'object' || !wanted.has(t.name)) return t;
+      const meta = t._meta && typeof t._meta === 'object' && !Array.isArray(t._meta) ? t._meta : {};
+      if (meta[ALWAYS_LOAD_META] === true) return t;
+      changed = true;
+      return { ...t, _meta: { ...meta, [ALWAYS_LOAD_META]: true } };
+    });
+    return changed ? { message: { ...message, result: { ...result, tools } }, changed } : noop;
+  } catch {
+    return noop;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The stdout wrapper
 // ---------------------------------------------------------------------------
@@ -159,12 +214,18 @@ export function guardInitialize(message, instructions) {
  * Idempotent. Re-installing rewraps the original `write` rather than stacking a second layer
  * on the first, so a double call cannot inspect the same frame twice.
  *
- * @param {{instructions: string, stream?: any}} opts
+ * `alwaysLoad` names tools to mark in every `tools/list` result (`guardToolsList`); the host
+ * may list tools more than once, so that half keeps looking after `initialize`.
+ *
+ * @param {{instructions: string, stream?: any, alwaysLoad?: string[]}} opts
  *   `stream` overrides the target for tests; production always wraps `process.stdout`.
  * @returns {void}
  */
 export function installInstructionsGuard(opts) {
   const instructions = typeof opts?.instructions === 'string' ? opts.instructions : '';
+  const alwaysLoad = Array.isArray(opts?.alwaysLoad)
+    ? opts.alwaysLoad.filter((n) => typeof n === 'string' && n.trim())
+    : [];
   // Nothing to say is not a reason to sit in the protocol path.
   if (instructions.trim() === '') return;
 
@@ -198,6 +259,14 @@ export function installInstructionsGuard(opts) {
         // field: one stray byte makes the whole server unparseable to the host.
       }
     }
+    // An unescaped `"tools":[` only occurs at the top level of a frame, never inside a tool
+    // result's text, so every other frame skips the parse.
+    if (alwaysLoad.length && typeof chunk === 'string' && chunk.includes('"tools":[')) {
+      try {
+        const marked = rewriteLines(chunk, (frame) => guardToolsList(frame, alwaysLoad));
+        if (marked !== null) chunk = marked;
+      } catch { /* the server's bytes go out as written */ }
+    }
     return base.call(this, chunk, ...rest);
   };
 
@@ -206,7 +275,7 @@ export function installInstructionsGuard(opts) {
   });
   // The launch tests read this off `process.stdout.write` from inside the stub server and
   // JSON-serialise it, so it stays plain data.
-  wrapped.mubitInstructionsGuard = { chars: instructions.length };
+  wrapped.mubitInstructionsGuard = { chars: instructions.length, alwaysLoad };
 
   stream.write = wrapped;
 }
@@ -229,7 +298,18 @@ export function installInstructionsGuard(opts) {
  */
 function fill(chunk, instructions) {
   if (!chunk.includes('"result"')) return null;
+  return rewriteLines(chunk, (frame) => guardInitialize(frame, instructions));
+}
 
+/**
+ * Apply `guard` to each parseable line of a chunk, re-serialising only the lines it changed.
+ * `null` when nothing moved, so the caller forwards the original string.
+ *
+ * @param {string} chunk
+ * @param {(frame: any) => FrameResult} guard
+ * @returns {string|null}
+ */
+function rewriteLines(chunk, guard) {
   const parts = chunk.split('\n');
   let changed = false;
   for (let i = 0; i < parts.length; i += 1) {
@@ -237,7 +317,7 @@ function fill(chunk, instructions) {
     /** @type {any} */
     let frame;
     try { frame = JSON.parse(parts[i]); } catch { continue; }
-    const out = guardInitialize(frame, instructions);
+    const out = guard(frame);
     if (!out.changed) continue;
     parts[i] = JSON.stringify(out.message);
     changed = true;
