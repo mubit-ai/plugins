@@ -40,6 +40,7 @@ import { log } from '../../lib/log.mjs';
 import { implicitOutcomesEnabled } from '../../lib/outcome.mjs';
 import { deriveRunId, turnKey } from '../../lib/runid.mjs';
 import { appendScoreRow, readScoreRows } from '../../lib/scorecard-log.mjs';
+import { previousTurn } from '../../lib/scorecard.mjs';
 import { spoolStats } from '../../lib/spool.mjs';
 import {
   ensureDir, readJson, resolveDataDir, runDir, safeSegment, writeJsonAtomic,
@@ -142,6 +143,9 @@ function stageTurn(cfg, runId, payload) {
         : ordinalFor(dir, !!prev),
     };
     if (truncated) next.prompt_truncated = true;
+    // A second prompt under the same id is a message queued into the running turn; capture
+    // reads this to tell an answer given after the outcome review from the review itself.
+    if (typeof base.prompt === 'string') next.queued_at = Date.now();
 
     return writeJsonAtomic(file, next);
   } catch (err) {
@@ -198,17 +202,11 @@ function scorePrompt(cfg, payload) {
     // A message queued while Claude works arrives under the running turn's prompt_id: it joins
     // that turn, so it is neither a new prompt nor a correction of the turn before.
     if (rows.some((r) => r.kind === 'prompt' && r.prompt_id === promptId)) return;
-    /** @type {Record<string, any>|null} */
-    let prev = null;
-    let afterClear = false;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const r = rows[i];
-      if (r.kind === 'start' && r.source === 'clear') afterClear = true;
-      if (r.kind === 'turn' && typeof r.prompt_id === 'string' && r.prompt_id && r.prompt_id !== promptId) {
-        prev = r;
-        break;
-      }
-    }
+    // The turn the card would fail: the latest non-slash prompt before this one. An
+    // interrupted turn has no turn row, so it corrects nothing.
+    const before = previousTurn(rows, promptId);
+    const prev = before?.turn ?? null;
+    const afterClear = before?.afterClear === true;
 
     const correction = !slash && !!prev && !afterClear
       && isCorrection(prompt, { lastReplyEndedWithQuestion: prev?.ended_with_question === true });

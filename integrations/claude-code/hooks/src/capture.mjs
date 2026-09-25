@@ -43,7 +43,7 @@ import { classifyTool, classifyTurn, toolIntent } from '../../lib/classify.mjs';
 import { appendLedger, turnLedgerRow } from '../../lib/ledger.mjs';
 import { fileChanges, recordFileChanges } from '../../lib/filechange.mjs';
 import { knownRefsFromRows, resolveHandles } from '../../lib/handles.mjs';
-import { reviewCandidates, reviewReason, shouldReview } from '../../lib/review.mjs';
+import { reviewCandidates, reviewReason, shouldReview, stripReviewLine } from '../../lib/review.mjs';
 import { foldScorecard, renderScorecard } from '../../lib/scorecard.mjs';
 import { appendScoreRow, readScoreRows } from '../../lib/scorecard-log.mjs';
 import { evaluateUse, matchTerms, termSet } from '../../lib/terms.mjs';
@@ -283,10 +283,20 @@ function capture(rawPayload, cfg, mode) {
   const runId = attempt(() => deriveRunId(cfg, payload), '');
   if (!runId) return null;
 
-  // A Stop that follows the review this hook asked for: its reply is the one-line review, not
-  // an answer, so it is neither stored as the turn's Q/A nor re-measured.
-  const followUp = mode === 'stop' && payload.stop_hook_active === true
-    && attempt(() => reviewPending(readTurn(cfg, runId, turnKey(payload))), false);
+  // The outcome review this hook asked for on this turn, while it is still open.
+  const pending = mode === 'stop' || mode === 'stop-failure'
+    ? attempt(() => {
+      const t = readTurn(cfg, runId, turnKey(payload));
+      return reviewPending(t) ? t : null;
+    }, null)
+    : null;
+  // A Stop that follows the review: its reply is the one-line review, not an answer, so it is
+  // neither stored as the turn's Q/A nor re-measured — unless a message queued during the
+  // review was answered in the same continuation (stage-prompt stamps `queued_at`).
+  const followUp = mode === 'stop' && payload.stop_hook_active === true && !!pending;
+  const afterReview = followUp ? stripReviewLine(str(payload.last_assistant_message) || str(payload.message)) : '';
+  const answered = followUp && !!afterReview
+    && Number(pending?.queued_at) > Number(pending?.review_requested_at);
 
   // 4-6. classify, build the text, redact.
   //
@@ -296,8 +306,11 @@ function capture(rawPayload, cfg, mode) {
   // also be recalled later as though it were what the assistant had to say on the subject.
   const item = attempt(
     () => {
-      if (mode === 'stop-failure' || followUp) return null;
+      if (mode === 'stop-failure' || (followUp && !answered)) return null;
       if (mode === 'permission') return buildPermissionItem(payload, cfg);
+      if (answered) {
+        return buildTurnItem({ ...payload, last_assistant_message: afterReview }, cfg, runId, mode, 'queued');
+      }
       return mode === 'stop' || mode === 'subagent'
         ? buildTurnItem(payload, cfg, runId, mode)
         : buildToolItem(payload, cfg, mode, runId);
@@ -312,7 +325,7 @@ function capture(rawPayload, cfg, mode) {
   //    moment its attribution can be recorded. Every other mode drains only on a trigger,
   //    because one detached node process per tool call is the cost this design avoids.
   if (mode === 'stop') {
-    const closed = attempt(() => closeTurn(cfg, runId, payload, '', followUp), null);
+    const closed = attempt(() => closeTurn(cfg, runId, payload, { followUp, answered }), null);
     const summary = closed ? attempt(() => foldScorecard(closed.rows, closed.promptId), null) : null;
     const review = attempt(() => reviewFor(cfg, payload, closed, summary), null);
     if (review) {
@@ -344,8 +357,17 @@ function capture(rawPayload, cfg, mode) {
   //     `--with-outcome`; there is no outcome to carry here, so this falls through to the
   //     ordinary batch trigger below — the turn's captured tool calls were real work, and
   //     the model's API falling over says nothing about Mubit's.
+  //
+  //     Except after the outcome review: the answer was complete when the review was asked
+  //     for and only the review's round trip failed, so the first reply's measurement stands
+  //     and the outcome it was waiting on is posted now.
+  if (mode === 'stop-failure' && pending) {
+    attempt(() => closeTurn(cfg, runId, payload, { followUp: true, reviewError: apiErrorOf(payload) }));
+    attempt(() => fireDrain(cfg, runId, payload, outcomeArgs(payload)));
+    return null;
+  }
   if (mode === 'stop-failure') {
-    attempt(() => closeTurn(cfg, runId, payload, apiErrorOf(payload)));
+    attempt(() => closeTurn(cfg, runId, payload, { apiError: apiErrorOf(payload) }));
   }
 
   if (attempt(() => drainTriggerFired(cfg, runId), false)) {
@@ -601,9 +623,10 @@ function buildPermissionItem(payload, cfg) {
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {'stop'|'subagent'} mode
+ * @param {string} [suffix]  set for the answer to a message queued during the outcome review
  * @returns {Record<string, any>|null}
  */
-function buildTurnItem(payload, cfg, runId, mode) {
+function buildTurnItem(payload, cfg, runId, mode, suffix = '') {
   const event = mode === 'subagent' ? 'SubagentStop' : 'Stop';
   const cls = attempt(
     () => classifyTurn('', '', {
@@ -660,7 +683,7 @@ function buildTurnItem(payload, cfg, runId, mode) {
     payload,
     id: mode === 'subagent'
       ? `cc-sub-${idPart(payload.agent_id) || 'anon'}-${idPart(turnKey(payload)) || idPart(payload.session_id) || 'turn'}`
-      : `cc-stop-${idPart(turnKey(payload)) || idPart(payload.session_id) || 'turn'}`,
+      : `cc-stop-${idPart(turnKey(payload)) || idPart(payload.session_id) || 'turn'}${suffix ? `-${suffix}` : ''}`,
     text,
     intent: cls.intent,
     importance: cls.importance,
@@ -894,16 +917,21 @@ function readTurn(cfg, runId, promptId) {
  *
  * `apiError` is `StopFailure`'s half: it turns the used-signal off. `followUp` is the Stop
  * after the outcome review: the reply is the review line, so the first Stop's measurement is
- * kept and only the verdicts are merged.
+ * kept and only the verdicts are merged. `answered` is a follow-up whose continuation also
+ * answered a queued message: that answer is measured and merged into the first. `reviewError`
+ * is a review round trip that ended on an API error.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {Record<string, any>} payload
- * @param {string} [apiError]  the taxonomy value that ended the turn; '' on a normal Stop
- * @param {boolean} [followUp]
+ * @param {{apiError?: string, followUp?: boolean, answered?: boolean, reviewError?: string}} [opts]
  * @returns {{turn: Record<string, any>, rows: Record<string, any>[], promptId: string}|null}
  */
-function closeTurn(cfg, runId, payload, apiError = '', followUp = false) {
+function closeTurn(cfg, runId, payload, opts = {}) {
+  const apiError = str(opts.apiError);
+  const followUp = opts.followUp === true;
+  const answered = followUp && opts.answered === true;
+  const reviewError = str(opts.reviewError);
   const promptId = turnKey(payload);
   const p = turnPath(cfg, runId, promptId);
   if (!p) return null;
@@ -924,22 +952,25 @@ function closeTurn(cfg, runId, payload, apiError = '', followUp = false) {
   // answer stopped early" — and the answer it would produce is `used: false`, which
   // `decideOutcome` reads as "the model ignored the memory". Unmeasurable is not unused, and
   // this is the one place that distinction can still be made honestly.
+  const raw = str(payload.last_assistant_message) || str(payload.message);
+  const reply = answered ? stripReviewLine(raw) : raw;
+  const measured = answered ? { ...payload, last_assistant_message: reply } : payload;
   let evidence = null;
   if (!apiError) {
-    if (followUp) {
+    if (followUp && !answered) {
       evidence = prevEvidence;
     } else {
-      const v1 = attempt(() => usedEvidence(base, payload), null);
-      const entries = attempt(() => entryEvidence(base, standing, payload), null);
-      evidence = v1 || entries
+      const v1 = attempt(() => usedEvidence(base, measured), null);
+      const entries = attempt(() => entryEvidence(base, standing, measured), null);
+      const fresh = v1 || entries
         ? { ...(v1 ?? {}), ...(entries ? { entry_method: ENTRY_SIGNAL_METHOD, entries } : {}) }
         : null;
+      evidence = answered ? mergeEvidence(prevEvidence, fresh) : fresh;
     }
   }
   const explicit = attempt(() => explicitFor(rows, promptId, base), { ids: [], byRef: {} });
   const toolFailed = !apiError && attempt(() => lastActingToolFailed(rows, promptId), false);
-  const reply = str(payload.last_assistant_message) || str(payload.message);
-  const endedWithQuestion = followUp
+  const endedWithQuestion = followUp && !answered
     ? base.ended_with_question === true
     : /\?\s*$/.test(reply.trim());
 
@@ -952,12 +983,21 @@ function closeTurn(cfg, runId, payload, apiError = '', followUp = false) {
     ...(evidence ? { used_evidence: evidence } : {}),
     ...(apiError ? { [API_ERROR_KEY]: apiError } : {}),
     ...(explicit.ids.length ? { explicit_ids: explicit.ids, explicit: explicit.byRef } : {}),
-    ...(toolFailed ? { outcome: 'failure', failure_reason: 'tool_failure' } : {}),
     ...(followUp ? { review_closed_at: Date.now() } : {}),
+    ...(reviewError ? { review_error: reviewError } : {}),
     ended_with_question: endedWithQuestion,
     ended_at: Date.now(),
     outcome_pending: true,
   };
+  // Re-decided on every close: a failed call the review continuation re-ran cleanly is no
+  // longer the turn's last word.
+  if (toolFailed) {
+    closed.outcome = 'failure';
+    closed.failure_reason = 'tool_failure';
+  } else if (str(base.failure_reason) === 'tool_failure') {
+    delete closed.outcome;
+    delete closed.failure_reason;
+  }
   writeJsonAtomic(p, closed);
   // The durable copy. The turn file above is pruned six hours from now; the ledger row is
   // what the dashboard reads after that, and it is the last step here, inside its own
@@ -980,6 +1020,30 @@ function closeTurn(cfg, runId, payload, apiError = '', followUp = false) {
     if (attempt(() => appendScoreRow(cfg, sessionId, row), false)) rows.push({ v: 1, at: Date.now(), ...row });
   }
   return { turn: closed, rows, promptId };
+}
+
+/**
+ * The first reply's evidence with the queued answer's merged in: per entry, a use wins over a
+ * miss and a miss over "could not tell"; the turn-level signal likewise.
+ *
+ * @param {Record<string, any>|null} prev
+ * @param {Record<string, any>|null} next
+ * @returns {Record<string, any>|null}
+ */
+function mergeEvidence(prev, next) {
+  if (!isObject(prev)) return next;
+  if (!isObject(next)) return prev;
+  const rank = (/** @type {any} */ e) => (e?.used === true ? 2 : e?.used === false ? 1 : 0);
+  const base = rank(next) > rank(prev) ? next : prev;
+  const a = isObject(prev.entries) ? prev.entries : {};
+  const b = isObject(next.entries) ? next.entries : {};
+  /** @type {Record<string, any>} */
+  const entries = {};
+  for (const ref of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    entries[ref] = rank(b[ref]) > rank(a[ref]) ? b[ref] : a[ref];
+  }
+  const { entries: _drop, ...v1 } = base;
+  return Object.keys(entries).length ? { ...v1, entry_method: ENTRY_SIGNAL_METHOD, entries } : v1;
 }
 
 /**

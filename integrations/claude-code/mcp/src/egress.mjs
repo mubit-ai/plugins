@@ -783,16 +783,19 @@ export function resolveDereferenceBody(body, knownRefs) {
 /**
  * Every ref the session logs say was shown, oldest first, with this session's own log read
  * last so its refs win a handle collision. Without a session id (Codex gives the server none,
- * and the id Claude Code gives it outlives `/clear`) the recent logs still answer.
+ * and the id Claude Code gives it outlives `/clear`) the session that last started a turn in
+ * this run stands in for it, and the recent logs still answer.
  *
  * @param {Record<string, any>|undefined} cfg
  * @param {string} sessionId
+ * @param {string} [runId]
  * @returns {string[]}
  */
-export function knownRefsFor(cfg, sessionId) {
+export function knownRefsFor(cfg, sessionId, runId = '') {
   try {
     const c = cfg ?? {};
-    const own = sessionId ? scorecardPath(c, sessionId) : '';
+    const sid = sessionId || (runId ? latestSessionOf(c, runId) : '');
+    const own = sid ? scorecardPath(c, sid) : '';
     /** @type {Record<string, any>[]} */
     const rows = [];
     for (const p of recentScoreLogs(c).reverse()) if (p !== own) rows.push(...readRowsAt(p));
@@ -801,6 +804,31 @@ export function knownRefsFor(cfg, sessionId) {
   } catch {
     return [];
   }
+}
+
+/**
+ * The session of the most recently started turn in `runId`, or ''.
+ *
+ * @param {Record<string, any>} cfg @param {string} runId
+ * @returns {string}
+ */
+function latestSessionOf(cfg, runId) {
+  const dir = join(runDir(cfg, runId), 'turns');
+  /** @type {string[]} */
+  let names;
+  try { names = readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return ''; }
+  const recent = names
+    .map((f) => ({ f, at: mtimeOf(join(dir, f)) }))
+    .sort((a, b) => b.at - a.at)
+    .slice(0, TURN_FILES_TO_READ);
+  let best = '';
+  let bestAt = -1;
+  for (const { f } of recent) {
+    const t = readJson(join(dir, f), null);
+    const sid = isPlainObject(t) && typeof t.session_id === 'string' ? t.session_id.trim() : '';
+    if (sid && num(t.started_at) > bestAt) { best = sid; bestAt = num(t.started_at); }
+  }
+  return best;
 }
 
 /** @param {any} body @param {boolean} withEntries @returns {boolean} */
@@ -949,7 +977,7 @@ export function installFetchGuard(opts) {
         const outcome = isPostTo(input, init, OUTCOME_PATH);
         if (parsed.ok && carriesHandle(parsed.value, outcome)) {
           // Read only when a handle is actually present: most outcomes carry real ids.
-          const refs = knownRefsFor(opts?.cfg, sessionId);
+          const refs = knownRefsFor(opts?.cfg, sessionId, runId);
           const out = outcome
             ? resolveOutcomeBody(parsed.value, refs)
             : resolveDereferenceBody(parsed.value, refs);

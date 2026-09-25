@@ -99,6 +99,13 @@ const LOCK_CONFIRM_MS = 20;
  */
 const OUTCOME_LOCK_WAIT_MS = 2_000;
 
+/**
+ * How long `--correct` waits for the lock: past any single holder's hard stop. Nothing waits
+ * on this detached process, and a correction that stood down would only be retried at
+ * SessionEnd.
+ */
+const CORRECTION_LOCK_WAIT_MS = HARD_STOP_MS + 3_000;
+
 /** How often to re-try the lock while waiting. */
 const LOCK_POLL_MS = 25;
 
@@ -207,7 +214,8 @@ async function main() {
   const promptId = str(outcomeArg) || turnKey(payload);
 
   // §5.5 step 1: exactly one drainer per run.
-  const lock = await acquireConfirmed(cfg, runId, wantsOutcome || !!correctArg, started);
+  const waitMs = correctArg ? CORRECTION_LOCK_WAIT_MS : wantsOutcome ? OUTCOME_LOCK_WAIT_MS : 0;
+  const lock = await acquireConfirmed(cfg, runId, waitMs, started);
   if (!lock) {
     log(cfg, 'debug', 'drain: another drainer holds the lock; standing down', { run_id: runId });
     return;
@@ -384,10 +392,10 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
  * does not get to be an exception to it.
  *
  * @param {Record<string, any>} cfg @param {string} runId
- * @param {boolean} wantsOutcome @param {number} started
+ * @param {number} waitMs  0 stands down at once @param {number} started
  * @returns {Promise<any>} the confirmed lock, or null after standing down
  */
-async function acquireConfirmed(cfg, runId, wantsOutcome, started) {
+async function acquireConfirmed(cfg, runId, waitMs, started) {
   for (;;) {
     const lock = acquireDrainLock(cfg, runId);
     if (lock) {
@@ -395,7 +403,7 @@ async function acquireConfirmed(cfg, runId, wantsOutcome, started) {
       if (await stillOurs(lock)) return lock;
       heldLock = null;               // it belongs to the winner now — never delete it
     }
-    if (!wantsOutcome || Date.now() - started >= OUTCOME_LOCK_WAIT_MS) return null;
+    if (Date.now() - started >= waitMs) return null;
     await sleep(LOCK_POLL_MS);
   }
 }
@@ -643,7 +651,8 @@ async function sendOutcome(cfg, runId, agentId, promptId) {
 
 /**
  * `--correct <prompt_id>`: post one −0.3 against the entries that turn's reply used, minus the
- * ones Claude judged itself (`decideCorrection`). Not retried: a later prompt never re-asks.
+ * ones Claude judged itself (`decideCorrection`). One that fails is retried by SessionEnd,
+ * which finds it through the session log.
  *
  * @param {Record<string, any>} cfg @param {string} runId @param {string} agentId
  * @param {string} promptId

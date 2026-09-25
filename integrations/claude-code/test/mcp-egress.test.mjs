@@ -724,6 +724,20 @@ test('knownRefsFor reads this session last, so its refs win a handle collision',
   assert.deepEqual(knownRefsFor({ dataDir: makeDataDir() }, SID), []);
 });
 
+test('knownRefsFor without a session id reads the run\'s latest session last (Codex)', async () => {
+  const { knownRefsFor } = await E();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, SID, [REF_B]);
+  await new Promise((r) => setTimeout(r, 15));
+  await showRefs(dataDir, 'other-session', [REF_C, REF_A]);
+  const turns = join(dataDir, 'runs', RUN, 'turns');
+  mkdirSync(turns, { recursive: true });
+  writeFileSync(join(turns, 'p-old.json'), JSON.stringify({ prompt_id: 'p-old', session_id: 'other-session', started_at: Date.now() - 60_000 }));
+  writeFileSync(join(turns, 'p-new.json'), JSON.stringify({ prompt_id: 'p-new', session_id: SID, started_at: Date.now() }));
+  assert.deepEqual(knownRefsFor({ dataDir }, '', RUN).slice(-1), [REF_B], 'the run\'s live session wins');
+  assert.deepEqual(knownRefsFor({ dataDir }, '').slice(-2).sort(), [REF_A, REF_C].sort(), 'no run: the newest log wins');
+});
+
 /**
  * Install the guard in THIS process and dial a fake through it — the guard itself, from
  * source, end to end. The shipped bundle is covered by the wire test further down.

@@ -382,6 +382,65 @@ test('capture --stop: the Stop after the review posts the outcome, prints the ca
   assert.doesNotMatch(items[0].text, /Memory review/);
 });
 
+test('capture --stop-failure during the review: the answer stands — measured, credited, drained', async (t) => {
+  const { dataDir, env, spy } = await setup(t);
+  seedTurn(dataDir);
+  seedTurnLog(dataDir);
+  await runHook('capture', stop({ last_assistant_message: ECHO_A, stop_hook_active: false }), { env, args: ['--stop'] });
+  const r = await runHook('capture', stopFailure({ last_assistant_message: '', stop_hook_active: true }), { env, args: ['--stop-failure'] });
+  assert.equal(r.code, 0);
+  const turn = readJsonFile(turnFile(dataDir));
+  assert.equal(turn.api_error, undefined, 'the answer was complete; only the review failed');
+  assert.equal(turn.review_error, 'rate_limit');
+  assert.ok(turn.review_closed_at > 0);
+  assert.equal(turn.used_evidence.entries[REF_A].used, true);
+  const row = readLog(dataDir).filter((x) => x.kind === 'turn').at(-1);
+  assert.equal(row.api_error, undefined);
+  assert.equal(row.lessons[REF_A].used, true);
+  assert.equal((await drainSpawns(spy)).filter((s) => s.argv.includes('--with-outcome')).length, 1);
+});
+
+test('capture --stop: a message queued during the review is answered in the continuation — stored and measured', async (t) => {
+  const { dataDir, env, spy } = await setup(t);
+  seedTurn(dataDir);
+  seedTurnLog(dataDir);
+  await runHook('capture', stop({ last_assistant_message: ECHO_A, stop_hook_active: false }), { env, args: ['--stop'] });
+  // The queued message: stage-prompt restages the prompt and stamps queued_at.
+  const staged = readJsonFile(turnFile(dataDir));
+  writeFileSync(turnFile(dataDir), JSON.stringify({ ...staged, prompt: 'and how should I seed it?', queued_at: Date.now() + 1 }));
+  const answer = 'Run migrations before seeding the database, so the schema exists first.';
+  const r = await runHook('capture', stop({
+    last_assistant_message: `Memory review: credited [${handleFor(REF_A)}].\n\n${answer}`, stop_hook_active: true,
+  }), { env, args: ['--stop'] });
+  assert.equal(r.json.decision, undefined);
+  const turn = readJsonFile(turnFile(dataDir));
+  assert.equal(turn.used_evidence.entries[REF_A].used, true, 'the first reply\'s measurement stays');
+  assert.equal(turn.used_evidence.entries[REF_B].used, true, 'the queued answer is measured too');
+  assert.ok(turn.review_closed_at > 0);
+  const row = readLog(dataDir).filter((x) => x.kind === 'turn').at(-1);
+  assert.deepEqual([row.lessons[REF_A].used, row.lessons[REF_B].used], [true, true]);
+  const items = spoolFiles(dataDir, RUN_ID).map(readJsonFile).filter((i) => String(i.item_id).startsWith('cc-stop-'));
+  assert.equal(items.length, 2, items.map((i) => i.item_id).join(', '));
+  const queued = items.find((i) => /seed it/.test(i.text));
+  assert.ok(queued, 'the queued Q/A is stored');
+  assert.match(queued.text, /Run migrations before seeding/);
+  assert.doesNotMatch(queued.text, /Memory review/);
+  assert.equal((await drainSpawns(spy)).filter((s) => s.argv.includes('--with-outcome')).length, 1);
+});
+
+test('capture --stop: a tool failure the review continuation fixed no longer fails the turn', async (t) => {
+  const { dataDir, env } = await setup(t);
+  seedTurn(dataDir);
+  seedTurnLog(dataDir, [{ kind: 'tool', prompt_id: PROMPT_ID, intent: 'exec', failed: true }]);
+  await runHook('capture', stop({ last_assistant_message: ECHO_A, stop_hook_active: false }), { env, args: ['--stop'] });
+  assert.equal(readJsonFile(turnFile(dataDir)).outcome, 'failure');
+  await runHook('capture', postToolUse({ tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_response: { stdout: 'ok' }, tool_use_id: 'toolu_rerun' }), { env });
+  await runHook('capture', stop({ last_assistant_message: 'Memory review: nothing to credit.', stop_hook_active: true }), { env, args: ['--stop'] });
+  const turn = readJsonFile(turnFile(dataDir));
+  assert.equal(turn.outcome, undefined);
+  assert.equal(turn.failure_reason, undefined);
+});
+
 test('capture --stop: another hook\'s continuation is not treated as our review', async (t) => {
   const { dataDir, env, spy } = await setup(t);
   seedTurn(dataDir);

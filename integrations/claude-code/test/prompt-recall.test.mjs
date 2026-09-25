@@ -1853,6 +1853,34 @@ test('scorecard: a repeat lesson is a pointer in the row, and keeps the terms of
   assert.equal(turn(dir, 'p_seen_002').shown[1].pointer, true);
 });
 
+// A message queued while Claude works arrives under the same prompt_id (Claude Code 2.1.282):
+// both injections were in front of the model, so the turn keeps both.
+test('scorecard: a second injection into the same turn adds to what the first staged', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  mkdirSync(join(dir, 'runs', RUN_ID, 'turns'), { recursive: true });
+  writeFileSync(turnPath(dir), JSON.stringify({
+    prompt: 'first message', prompt_id: PROMPT_ID, session_id: SESSION_ID, started_at: Date.now(),
+    recalled: ['ref_first_1', 'ref_lesson_1'],
+    recall: { at: Date.now(), rung: 1, sources: 2, tokens: 50, chars: 200, pointers: 0, terms: ['alpha'] },
+    shown: [
+      { ref: 'ref_first_1', handle: 'mfrst', type: 'lesson', pointer: false, terms: ['alpha', 'beta'] },
+      { ref: 'ref_lesson_1', handle: 'mless', type: 'lesson', pointer: true, terms: ['kept'] },
+    ],
+  }));
+
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: env(dir, server) }));
+
+  const t2 = turn(dir);
+  assert.deepEqual(t2.shown.map((e) => e.ref), ['ref_first_1', 'ref_lesson_1', 'ref_rule_1', 'ref_fact_1']);
+  assert.equal(t2.shown[1].pointer, false, 'the full rendering replaces an earlier pointer');
+  assert.ok(t2.shown[1].terms.includes('indexing'));
+  assert.deepEqual([...t2.recalled].sort(), ['ref_fact_1', 'ref_first_1', 'ref_lesson_1', 'ref_rule_1']);
+  assert.ok(t2.recall.tokens > 50, `tokens add up: ${t2.recall.tokens}`);
+  assert.ok(t2.recall.terms.includes('alpha') && t2.recall.terms.includes('indexing'));
+});
+
 test('scorecard: a lesson title is its first clause, scrubbed and capped at 48 characters', async (t) => {
   const server = await fakeMubit({
     'POST /v2/control/query': {

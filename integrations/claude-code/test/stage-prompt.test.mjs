@@ -451,6 +451,55 @@ test('stage-prompt: this prompt\'s own turn row is not the previous turn', async
   assert.equal(logRows(dataDir).at(-1).correction, false);
 });
 
+test('stage-prompt: a second prompt into the same turn is stamped queued_at; the first is not', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  await runHook('stage-prompt', userPromptSubmit({ prompt: PROMPT }), { env: staticEnv(dataDir, server) });
+  assert.equal(readJsonFile(turnPath(dataDir)).queued_at, undefined);
+  const before = Date.now();
+  await runHook('stage-prompt', userPromptSubmit({ prompt: 'and one more thing' }), { env: staticEnv(dataDir, server) });
+  const staged = readJsonFile(turnPath(dataDir));
+  assert.ok(staged.queued_at >= before, JSON.stringify(staged));
+  assert.equal(staged.prompt, 'and one more thing');
+});
+
+// The correction targets the turn the card fails: the latest non-slash prompt before this one
+// (lib/scorecard.mjs previousTurn), never merely the latest turn row.
+test('stage-prompt: after an interrupted turn the correction is that turn\'s, so nothing earlier is posted', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  holdDrainLock(dataDir);
+  seedLog(dataDir, [
+    { kind: 'prompt', prompt_id: PREV, correction: false, slash: false },
+    prevTurn(),
+    { kind: 'prompt', prompt_id: 'interrupted-1', correction: false, slash: false },
+    { kind: 'shown', prompt_id: 'interrupted-1', lessons: {}, refs: [], tokens: 10 },
+  ]);
+  const { env, file } = withSpy(staticEnv(dataDir, server));
+  await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), { env });
+  assert.equal(logRows(dataDir).at(-1).correction, false);
+  await new Promise((res) => setTimeout(res, 250));
+  assert.equal(correctSpawns(file).length, 0);
+});
+
+test('stage-prompt: a slash command between is skipped — the turn before it is corrected', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  holdDrainLock(dataDir);
+  seedLog(dataDir, [
+    { kind: 'prompt', prompt_id: PREV, correction: false, slash: false },
+    prevTurn(),
+    { kind: 'prompt', prompt_id: 'slash-1', correction: false, slash: true },
+    prevTurn({ prompt_id: 'slash-1', used_refs: [] }),
+  ]);
+  const { env, file } = withSpy(staticEnv(dataDir, server));
+  await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), { env });
+  assert.equal(logRows(dataDir).at(-1).correction, true);
+  await waitForSpawn(file);
+  const argv = correctSpawns(file)[0]?.argv ?? [];
+  assert.equal(argv[argv.indexOf('--correct') + 1], PREV);
+});
+
 // Observed live (Claude Code 2.1.282): a message typed while Claude is working is delivered
 // into the running turn under the SAME prompt_id. It joins that turn; it is not a new prompt,
 // and it can never correct the turn before it.

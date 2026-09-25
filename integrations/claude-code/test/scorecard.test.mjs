@@ -199,6 +199,94 @@ test('scorecard: unknown row kinds and malformed rows are ignored', async () => 
   assert.deepEqual(S.foldScorecard(/** @type {any} */ (null), 'p1').lessons.shown, 0);
 });
 
+test('scorecard: a correction after an interrupted turn fails nothing — the interrupted turn is the one it follows', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [
+    P('p1'), SH('p1', { a: lesson('A') }), T('p1', { a: true }),
+    P('p2'), SH('p2', { b: lesson('B') }),
+    P('p3', { correction: true }),
+  ];
+  const s = S.foldScorecard(rows, 'p3');
+  assert.equal(s.lessons.failed, 0);
+  assert.equal(s.lessons.worked, 1);
+});
+
+test('scorecard: a prompt row that lands after its shown row still carries the correction', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [
+    P('p1'), SH('p1', { a: lesson('A') }), T('p1', { a: true }),
+    SH('p2', { b: lesson('B') }), P('p2', { correction: true }),
+  ];
+  assert.equal(S.foldScorecard(rows, 'p2').lessons.failed, 1);
+});
+
+test('scorecard: a slash prompt whose shown row landed first is still a slash prompt', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [P('p1'), SH('p1', { a: lesson('A') }), T('p1', { a: true }), SH('p2', {}), P('p2', { slash: true })];
+  const s = S.foldScorecard(rows, 'p1');
+  assert.equal(s.prompts, 1);
+  assert.equal(s.lessons.waiting, 1);
+});
+
+test('previousTurn: the latest non-slash prompt before this one, with its turn row', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [
+    P('p1'), SH('p1', { a: lesson('A') }), T('p1', { a: true }),
+    P('p2', { slash: true }), T('p2', {}),
+  ];
+  const prev = S.previousTurn(rows, 'p3');
+  assert.equal(prev?.promptId, 'p1');
+  assert.equal(prev?.turn?.prompt_id, 'p1');
+  assert.equal(prev?.afterClear, false);
+});
+
+test('previousTurn: an interrupted turn is the previous one, and it has no turn row', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [P('p1'), SH('p1', { a: lesson('A') }), T('p1', { a: true }), P('p2'), SH('p2', { b: lesson('B') })];
+  const prev = S.previousTurn(rows, 'p3');
+  assert.equal(prev?.promptId, 'p2');
+  assert.equal(prev?.turn, null);
+});
+
+test('previousTurn: this prompt\'s own rows, already logged, are skipped', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [P('p1'), T('p1', { a: true }), SH('p2', { b: lesson('B') })];
+  assert.equal(S.previousTurn(rows, 'p2')?.promptId, 'p1');
+});
+
+test('previousTurn: the latest turn row wins, a /clear in between is reported, and an empty log has none', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [
+    P('p1'), T('p1', { a: true }), T('p1', { a: false }),
+    { kind: 'start', source: 'clear', lessons: {}, refs: [], tokens: 0 },
+  ];
+  const prev = S.previousTurn(rows, 'p2');
+  assert.deepEqual(prev?.turn?.used_refs, []);
+  assert.equal(prev?.afterClear, true);
+  assert.equal(S.previousTurn([], 'p1'), null);
+  assert.equal(S.previousTurn(/** @type {any} */ (null), 'p1'), null);
+});
+
+test('correctionTargets: each correction names the turn it corrected, when that turn used memory', async () => {
+  const S = await lib('scorecard.mjs');
+  const rows = [
+    P('p1'), SH('p1', { a: lesson('A') }), T('p1', { a: true }),
+    P('p2', { correction: true }), T('p2', { b: false }),
+    P('p3', { correction: true }),
+    P('p4'), T('p4', { c: true }, { run_id: 'r2' }),
+    P('p5', { slash: true }), T('p5', {}),
+    P('p6', { correction: true }),
+    P('p7'), T('p7', { d: true }),
+    { kind: 'start', source: 'clear', lessons: {}, refs: [], tokens: 0 },
+    P('p8', { correction: true }),
+  ];
+  assert.deepEqual(S.correctionTargets(rows), [
+    { runId: 'r', promptId: 'p1' },
+    { runId: 'r2', promptId: 'p4' },
+  ]);
+  assert.deepEqual(S.correctionTargets(/** @type {any} */ (null)), []);
+});
+
 // ---------------------------------------------------------------------------
 // Invariants over random logs
 // ---------------------------------------------------------------------------

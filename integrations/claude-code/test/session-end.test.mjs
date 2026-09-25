@@ -323,6 +323,59 @@ test('flushes a turn left outcome_pending, before reflecting', async (t) => {
   assert.equal(row.attempts, 1);
 });
 
+// A correction `drain --correct` could not deliver (lock lost, endpoint down) is retried here,
+// found through the session log: the prompt row that corrected, and the turn it corrected.
+const CORRECTED = '31313131-4242-4353-8464-757575757575';
+
+function seedCorrection(dataDir, over = {}) {
+  const dir = join(runDir(dataDir), 'turns');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${CORRECTED}.json`), JSON.stringify({
+    prompt_id: CORRECTED, session_id: fx.SESSION_ID, prompt: 'fix the flaky test',
+    recalled: ['ref_lesson_1', 'ref_fact_1'],
+    outcome_pending: false, outcome_sent_at: Date.now() - 5_000,
+    used_evidence: {
+      method: 'memory-term-echo/v1', used: true, entry_method: 'memory-term-echo/v2-entry',
+      entries: { ref_lesson_1: { used: true, matched: ['a', 'b'], candidates: 4 }, ref_fact_1: { used: false, matched: [], candidates: 3 } },
+    },
+    ...over,
+  }));
+  mkdirSync(join(dataDir, 'scorecard'), { recursive: true });
+  const rows = [
+    { kind: 'prompt', prompt_id: CORRECTED, correction: false, slash: false },
+    { kind: 'turn', prompt_id: CORRECTED, run_id: RUN_ID, lessons: {}, used_refs: ['ref_lesson_1'], ended_with_question: false },
+    { kind: 'prompt', prompt_id: fx.PROMPT_ID, correction: true, slash: false },
+  ];
+  writeFileSync(join(dataDir, 'scorecard', `${fx.SESSION_ID}.jsonl`),
+    rows.map((r) => JSON.stringify({ v: 1, at: Date.now(), ...r })).join('\n') + '\n');
+  return join(dir, `${CORRECTED}.json`);
+}
+
+test('a correction the drain never delivered is posted at session end', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  const turnPath = seedCorrection(dataDir);
+  assertHookContract(await runHook('session-end', fx.sessionEnd({ cwd: PROJECT_DIR }), { env: env(dataDir, server.url) }));
+  const posts = server.requests.filter((r) => r.method === 'POST' && r.path === '/v2/control/outcome');
+  const body = posts.map((r) => r.body).find((b) => String(b.idempotency_key).startsWith('cc-correction-'));
+  assert.ok(body, `no correction posted: ${seq(server)}`);
+  assert.equal(body.idempotency_key, `cc-correction-${RUN_ID}-${CORRECTED}`);
+  assert.equal(body.outcome, 'failure');
+  assert.deepEqual(body.entry_ids, ['ref_lesson_1']);
+  assert.ok(readJsonFile(turnPath).correction_sent_at > 0);
+});
+
+test('a correction already delivered is not posted again at session end', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  seedCorrection(dataDir, { correction_sent_at: Date.now() - 1_000 });
+  assertHookContract(await runHook('session-end', fx.sessionEnd({ cwd: PROJECT_DIR }), { env: env(dataDir, server.url) }));
+  const keys = server.requests.filter((r) => r.path === '/v2/control/outcome').map((r) => r.body.idempotency_key);
+  assert.ok(!keys.some((k) => String(k).startsWith('cc-correction-')), keys.join(', '));
+});
+
 // ---------------------------------------------------------------------------
 // §5.7 step 3, conditioned on evidence — one rule, shared with `drain` (§5.5 step 7)
 // ---------------------------------------------------------------------------

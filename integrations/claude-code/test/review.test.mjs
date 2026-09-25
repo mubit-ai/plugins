@@ -138,3 +138,13 @@ test('review: nothing to review gives an empty reason', async () => {
   assert.equal(R.reviewReason([]), '');
   assert.equal(R.reviewReason(/** @type {any} */ (null)), '');
 });
+
+test('review: stripReviewLine drops the closing review line and nothing else', async () => {
+  const R = await lib('review.mjs');
+  assert.equal(R.stripReviewLine('Memory review: credited [mabcd].'), '');
+  assert.equal(R.stripReviewLine('**Memory review:** credited [mabcd].\n\nRun migrations first.'), 'Run migrations first.');
+  assert.equal(R.stripReviewLine('Run migrations first.\n- memory review: none helped'), 'Run migrations first.');
+  assert.equal(R.stripReviewLine('The memory review: step is optional here.'), 'The memory review: step is optional here.');
+  assert.equal(R.stripReviewLine(''), '');
+  assert.equal(R.stripReviewLine(/** @type {any} */ (null)), '');
+});
