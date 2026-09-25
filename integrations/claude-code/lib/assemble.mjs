@@ -36,6 +36,8 @@
  * per token for exactly that reason: a real tokenizer would cost more than the recall.
  */
 
+import { handleFor, handleTag } from './handles.mjs';
+
 /** §1.3 (`control.proto`) — the only section keys that may ever be emitted. */
 export const SECTION_KEYS = Object.freeze([
   'mental_models', 'active_rules', 'lessons', 'archive_blocks', 'handoffs', 'feedback',
@@ -195,6 +197,19 @@ export function estimateTokens(text) {
  * @property {number} dropped         candidates that did not render
  * @property {number} pointers        rendered items degraded to a one-line pointer
  * @property {string} emptyReason     `''` | `'no_evidence'` | `'budget_exhausted'`
+ * @property {AssembledEntry[]} entries  every rendered item, in render order, deduped by ref
+ */
+
+/**
+ * @typedef {object} AssembledEntry
+ * @property {string} ref       `reference_id`, '' when the entry has none
+ * @property {string} handle    `handleFor(ref)`, '' when there is no ref
+ * @property {string} section
+ * @property {string} type      lowercased `origin_entry_type || entry_type`
+ * @property {string} text      the full one-lined content, even when rendered as a pointer
+ * @property {string} title     `firstClause(text)`
+ * @property {boolean} pointer
+ * @property {boolean} stale
  */
 
 /**
@@ -232,7 +247,7 @@ export function assembleContext(evidence, opts = {}) {
 
   const list = Array.isArray(evidence) ? evidence : [];
 
-  /** @type {Map<string, {ref: string, text: string, score: number, stale: boolean, at: number}[]>} */
+  /** @type {Map<string, {ref: string, type: string, text: string, score: number, stale: boolean, at: number}[]>} */
   const bySection = new Map();
   let candidates = 0;
 
@@ -245,13 +260,15 @@ export function assembleContext(evidence, opts = {}) {
 
     // §4.10: "maps entry_type (or origin_entry_type when the entry came through an
     // overlay)". The overlay's own type is bookkeeping; the origin is what the user reads.
-    const section = sectionFor(str(e.origin_entry_type) || str(e.entry_type));
+    const type = (str(e.origin_entry_type) || str(e.entry_type)).toLowerCase();
+    const section = sectionFor(type);
     if (allowed && !allowed.has(section)) continue;
 
     candidates++;
     const bucket = bySection.get(section) ?? [];
     bucket.push({
       ref: str(e.reference_id),
+      type,
       text,
       score: finite(e.score, 0),
       stale: e.is_stale === true,
@@ -263,7 +280,7 @@ export function assembleContext(evidence, opts = {}) {
   if (candidates === 0) {
     return {
       block: '', tokenEstimate: 0, sections: [], sourceRefIds: [],
-      dropped: 0, pointers: 0, emptyReason: 'no_evidence',
+      dropped: 0, pointers: 0, emptyReason: 'no_evidence', entries: [],
     };
   }
 
@@ -272,6 +289,8 @@ export function assembleContext(evidence, opts = {}) {
   /** @type {string[]} */
   const sourceRefIds = [];
   const seenRefs = new Set();
+  /** @type {AssembledEntry[]} */
+  const entries = [];
   /** @type {SectionSummary[]} */
   const sections = [];
 
@@ -298,9 +317,10 @@ export function assembleContext(evidence, opts = {}) {
       // §4.10: the server marks an entry stale; a mark the client renders nowhere is a mark
       // that does nothing. It rides on the line it qualifies, where the model reads it —
       // including on a pointer, where the model still has to know not to trust the entry.
-      const full = `- ${item.stale ? '(stale) ' : ''}${item.text}\n`;
+      const tag = handleTag(item.ref);
+      const full = `- ${tag ? `${tag} ` : ''}${item.stale ? '(stale) ' : ''}${item.text}\n`;
       const pointer = seen && item.ref && seen.has(item.ref)
-        ? `- ${POINTER_MARK} ${item.stale ? '(stale) ' : ''}${item.ref} — ${firstClause(item.text)}\n`
+        ? `- ${POINTER_MARK} ${item.stale ? '(stale) ' : ''}${tag} — ${firstClause(item.text)}\n`
         : '';
       // A pointer longer than the entry it points at is a pessimisation in the costume of an
       // optimisation, and one-line lessons are both common and already cheap.
@@ -322,6 +342,18 @@ export function assembleContext(evidence, opts = {}) {
         seenRefs.add(item.ref);
         sourceRefIds.push(item.ref);
       }
+      if (!item.ref || entries.every((x) => x.ref !== item.ref)) {
+        entries.push({
+          ref: item.ref,
+          handle: handleFor(item.ref),
+          section: key,
+          type: item.type,
+          text: item.text,
+          title: firstClause(item.text),
+          pointer: degraded,
+          stale: item.stale,
+        });
+      }
     }
 
     if (count > 0) sections.push({ section: key, count });
@@ -340,6 +372,7 @@ export function assembleContext(evidence, opts = {}) {
     // reader can tell a block that shrank from a block that lost half its evidence.
     pointers,
     emptyReason: rendered > 0 ? '' : 'budget_exhausted',
+    entries: rendered > 0 ? entries : [],
   };
 }
 

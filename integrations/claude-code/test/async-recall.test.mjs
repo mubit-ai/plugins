@@ -209,6 +209,27 @@ test('writeCarry then takeCarry round-trips the Outcome the ladder produced', as
     'what the refresh spent is the number that shows the prompt no longer pays it');
 });
 
+test('writeCarry then takeCarry round-trips per-entry data, keeping only entries with a ref', async () => {
+  const { cfg, C } = await setup();
+  const entries = [
+    { ref: 'ref_rule_1', handle: 'mabcd', section: 'active_rules', type: 'rule', text: 'Poll the ingest job.', title: 'Poll the ingest job.', pointer: false, stale: false },
+    { ref: '', handle: '', section: 'facts', type: 'fact', text: 'no id', title: 'no id', pointer: false, stale: false },
+    { handle: 'x' },
+    'junk',
+  ];
+  assert.equal(C.writeCarry(cfg, RUN_ID, outcome({ entries }), { promptId: PROMPT_ID }), true);
+  const got = C.takeCarry(cfg, RUN_ID);
+  assert.deepEqual(got.entries.map((e) => e.ref), ['ref_rule_1', '']);
+  assert.equal(got.entries[0].text, 'Poll the ingest job.');
+  assert.equal(got.entries[0].type, 'rule');
+});
+
+test('takeCarry: a carry file from before per-entry data reads back with no entries', async () => {
+  const { cfg, C } = await setup();
+  C.writeCarry(cfg, RUN_ID, outcome(), { promptId: PROMPT_ID });
+  assert.deepEqual(C.takeCarry(cfg, RUN_ID).entries, []);
+});
+
 // The load-bearing property of the whole file. A refresh that stops answering — the server
 // went down, the process was reaped — must not leave the last good block to be re-injected
 // on every prompt for the rest of the session. Consumed means gone.
@@ -509,6 +530,26 @@ test('recallAsync: the carried block is credited to the turn that RECEIVED it', 
     + 'memory to a turn that could not possibly have used it');
 });
 
+test('recallAsync: the receiving turn stages per-entry data for the Stop-side check', async (t) => {
+  const server = await fakeMubit({ 'POST /v2/control/query': { json: ONE } });
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  const e = env(dataDir, server, ASYNC_ON);
+
+  await turnAndRefresh(e, userPromptSubmit({ prompt_id: PROMPT_ID }));
+  await waitFor(() => existsSync(carryPath(dataDir)));
+  const b = await runHook('prompt-recall', userPromptSubmit({
+    prompt_id: PROMPT_ID_B, prompt: 'and what does the drain do when it is 5xx?',
+  }), { env: e });
+  assertHookContract(b);
+
+  const turnB = readJsonFile(turnPath(dataDir, PROMPT_ID_B));
+  assert.equal(turnB.shown.length, 1);
+  assert.equal(turnB.shown[0].ref, 'ref_rule_1');
+  assert.equal(turnB.shown[0].type, 'rule');
+  assert.ok(turnB.shown[0].terms.includes('stored'), JSON.stringify(turnB.shown[0].terms));
+});
+
 // The other half of the seen-set decision. The reader marks, before it spawns, so the child's
 // `readSeen` already carries this turn's ids — and turn C's block degrades the repeat to a
 // pointer exactly as the blocking path does. Mark *after* the spawn and this silently reverts
@@ -546,8 +587,9 @@ test('recallAsync: the receiving turn marks seen, so the NEXT block degrades the
   assert.ok(!block.includes('poll the job'),
     'the refresh reads the seen-set the reader has already written, so a repeat is degraded. '
     + 'Marking after the spawn instead reverts the whole seen-set saving with no test failing');
-  assert.ok(block.includes('ref_rule_1'),
-    'a degraded repeat keeps its reference id — dropping it would break attribution for '
+  const { handleTag } = await lib('handles.mjs');
+  assert.ok(block.includes(handleTag('ref_rule_1')),
+    'a degraded repeat keeps its handle — dropping it would break attribution for '
     + 'exactly the memories that keep proving relevant');
 });
 

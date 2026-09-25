@@ -25,7 +25,7 @@ import { basename, join } from 'node:path';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import {
   fakeMubit, queryResponse, evidence, runHook, assertHookContract,
-  baseEnv, makeDataDir, makeProjectDir, readJsonFile, readJsonDir, waitFor,
+  baseEnv, makeDataDir, makeProjectDir, readJsonFile, readJsonDir, waitFor, lib,
 } from './helpers/harness.mjs';
 import { userPromptSubmit, PROMPT_ID, SECRETS, SESSION_ID } from './helpers/fixtures.mjs';
 
@@ -1143,7 +1143,8 @@ test('a prompt marks what it injected into the run seen-set', async (t) => {
   const second = await runHook('prompt-recall', nthPrompt(2), { env: e });
   assertHookContract(second);
   const block = second.json.hookSpecificOutput.additionalContext;
-  assert.ok(block.includes('ref_rule_1'), 'the repeat points at the entry by reference id');
+  const { handleTag } = await lib('handles.mjs');
+  assert.ok(block.includes(handleTag('ref_rule_1')), 'the repeat points at the entry by its handle');
   assert.ok(!block.includes('TAIL_RULE'), 'and does not re-send a body the model already has');
   assert.deepEqual(turn(dir, 'p_seen_002').recalled,
     ['ref_rule_1', 'ref_lesson_1', 'ref_fact_1'],
@@ -1422,19 +1423,24 @@ test('pins: with none set the injected block is byte-identical to the block befo
   const r = await runHook('prompt-recall', userPromptSubmit(), { env: env(dir, server) });
 
   assertHookContract(r);
-  assert.equal(r.json.hookSpecificOutput.additionalContext,
-    '<mubit-memory run="cc-test-run-1" sources="3" tokens="51">\n'
-    + 'Recalled from memory of earlier work — it may be incomplete or out of date, so verify '
-    + 'against the code before relying on it.\n'
-    + '\n'
-    + '## Active rules\n'
-    + '- Ingest returns when queued, not when stored; poll the job.\n'
+  const { handleTag } = await lib('handles.mjs');
+  const { estimateTokens } = await lib('assemble.mjs');
+  const block = '## Active rules\n'
+    + `- ${handleTag('ref_rule_1')} Ingest returns when queued, not when stored; poll the job.\n`
     + '\n'
     + '## Lessons\n'
-    + '- A job stays queued until indexing completes.\n'
+    + `- ${handleTag('ref_lesson_1')} A job stays queued until indexing completes.\n`
     + '\n'
     + '## Facts\n'
-    + '- IngestAccepted.status is always "queued" on success.\n'
+    + `- ${handleTag('ref_fact_1')} IngestAccepted.status is always "queued" on success.\n`;
+  assert.equal(r.json.hookSpecificOutput.additionalContext,
+    `<mubit-memory run="cc-test-run-1" sources="3" tokens="${estimateTokens(block)}">\n`
+    + 'Recalled from memory of earlier work — it may be incomplete or out of date, so verify '
+    + 'against the code before relying on it.\n'
+    + 'Each entry starts with its id in brackets. Before you finish, report the entries that '
+    + 'helped or misled you with mubit_outcome, passing those ids.\n'
+    + '\n'
+    + block
     + '</mubit-memory>',
     'a user with no pins must pay nothing for the feature — not a token, not a byte');
 });
@@ -1744,4 +1750,185 @@ test('pins: a truncated cache costs the pins and not the prompt', async (t) => {
   assertHookContract(r);
   assert.match(r.json.hookSpecificOutput.additionalContext, /## Active rules/,
     'a broken pin cache must not take recall down with it');
+});
+
+// ---------------------------------------------------------------------------
+// Per-entry staging and the session log (the scorecard)
+// ---------------------------------------------------------------------------
+
+/*
+ * The Stop hook can only tell WHICH entry a reply used if the turn carries each entry's own
+ * vocabulary, and the session scorecard can only count lessons if every turn says which of
+ * its entries were lessons. Both are written here, where the entries and the prompt are in hand.
+ */
+
+const scoreLog = (d) => join(d, 'scorecard', `${SESSION_ID}.jsonl`);
+const scoreRows = (d) => (existsSync(scoreLog(d))
+  ? readFileSync(scoreLog(d), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  : []);
+
+test('scorecard: the staged turn carries one shown entry per rendered entry, with its own terms', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  const { handleFor } = await lib('handles.mjs');
+
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: env(dir, server) }));
+
+  const shown = turn(dir).shown;
+  assert.deepEqual(shown.map((e) => [e.ref, e.type, e.pointer, e.handle]), [
+    ['ref_rule_1', 'rule', false, handleFor('ref_rule_1')],
+    ['ref_lesson_1', 'lesson', false, handleFor('ref_lesson_1')],
+    ['ref_fact_1', 'fact', false, handleFor('ref_fact_1')],
+  ]);
+  const lesson = shown[1].terms;
+  assert.ok(lesson.includes('indexing') && lesson.includes('completes'), JSON.stringify(lesson));
+  assert.ok(!lesson.includes('queued'), 'the prompt said "queued"; an echo of it proves nothing');
+  assert.ok(!shown.some((e) => e.terms.some((tm) => /^m[a-z2-9]{4}$/.test(tm) && tm === e.handle)),
+    'a handle is not vocabulary');
+});
+
+test('scorecard: v1 recall.terms never include a handle', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  const { handleFor } = await lib('handles.mjs');
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: env(dir, server) }));
+  const terms = turn(dir).recall.terms;
+  for (const ref of ['ref_rule_1', 'ref_lesson_1', 'ref_fact_1']) {
+    assert.ok(!terms.includes(handleFor(ref)), `${handleFor(ref)} leaked into ${terms.join(', ')}`);
+  }
+});
+
+test('scorecard: every recall appends a shown row with the lessons, every ref and the cost', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  const { handleFor } = await lib('handles.mjs');
+
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: env(dir, server) }));
+
+  const rows = scoreRows(dir).filter((r) => r.kind === 'shown');
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.equal(row.prompt_id, PROMPT_ID);
+  assert.equal(row.v, 1);
+  assert.deepEqual(Object.keys(row.lessons), ['ref_lesson_1'], 'only entry_type lesson is a lesson');
+  assert.deepEqual(row.lessons.ref_lesson_1.title, 'A job stays queued until indexing completes');
+  assert.equal(row.lessons.ref_lesson_1.handle, handleFor('ref_lesson_1'));
+  assert.equal(row.lessons.ref_lesson_1.pointer, false);
+  assert.ok(row.lessons.ref_lesson_1.terms.includes('indexing'));
+  assert.deepEqual(row.refs, ['ref_rule_1', 'ref_lesson_1', 'ref_fact_1']);
+  assert.equal(row.tokens, turn(dir).recall.tokens);
+});
+
+test('scorecard: an empty recall still appends a shown row, with nothing in it', async (t) => {
+  const server = await fakeMubit({ 'POST /v2/control/query': { json: queryResponse({ evidence: [] }) } });
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: env(dir, server) }));
+  const [row] = scoreRows(dir);
+  assert.equal(row.kind, 'shown');
+  assert.deepEqual(row.lessons, {});
+  assert.deepEqual(row.refs, []);
+  assert.equal(row.tokens, 0);
+  assert.deepEqual(turn(dir).shown, []);
+});
+
+test('scorecard: a repeat lesson is a pointer in the row, and keeps the terms of its full text', async (t) => {
+  const server = await fakeMubit({
+    'POST /v2/control/query': { json: queryResponse({ evidence: STICKY_EVIDENCE() }) },
+  });
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  const e = env(dir, server);
+  assertHookContract(await runHook('prompt-recall', nthPrompt(1), { env: e }));
+  assertHookContract(await runHook('prompt-recall', nthPrompt(2), { env: e }));
+  const rows = scoreRows(dir).filter((r) => r.kind === 'shown');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].lessons.ref_lesson_1.pointer, false);
+  assert.equal(rows[1].lessons.ref_lesson_1.pointer, true);
+  assert.ok(rows[1].lessons.ref_lesson_1.terms.includes('tail_lesson'),
+    JSON.stringify(rows[1].lessons.ref_lesson_1.terms));
+  assert.equal(turn(dir, 'p_seen_002').shown[1].pointer, true);
+});
+
+test('scorecard: a lesson title is its first clause, scrubbed and capped at 48 characters', async (t) => {
+  const server = await fakeMubit({
+    'POST /v2/control/query': {
+      json: queryResponse({
+        evidence: [
+          evidence({ id: 'e1', reference_id: 'ref_long', entry_type: 'lesson', score: 0.9,
+            content: 'Always run the integration suite against a disposable database before merging anything; it catches migrations.' }),
+          evidence({ id: 'e2', reference_id: 'ref_secret', entry_type: 'lesson', score: 0.8,
+            content: `Export ${SECRETS.openaiKey} before running the publish script, never later.` }),
+        ],
+      }),
+    },
+  });
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: env(dir, server) }));
+  const [row] = scoreRows(dir);
+  const long = row.lessons.ref_long.title;
+  assert.ok(long.length <= 48, long);
+  assert.ok(long.endsWith('…'), long);
+  assert.ok(long.startsWith('Always run the integration suite'), long);
+  const raw = readFileSync(scoreLog(dir), 'utf8');
+  assert.ok(!raw.includes(SECRETS.openaiKey), `a credential reached the session log:\n${raw}`);
+});
+
+test('scorecard: MUBIT_CC_CAPTURE=0 writes no session log, and the turn still stages shown', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(),
+    { env: env(dir, server, { MUBIT_CC_CAPTURE: '0' }) }));
+  assert.equal(existsSync(scoreLog(dir)), false);
+  assert.equal(turn(dir).shown.length, 3);
+});
+
+test('scorecard: rung 3 has no per-entry data, so it stages no shown entries and no lessons', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  assertHookContract(await runHook('prompt-recall', userPromptSubmit(),
+    { env: env(dir, server, { MUBIT_CC_RECALL_ASSEMBLE: 'server' }) }));
+  assert.deepEqual(turn(dir).shown, []);
+  const [row] = scoreRows(dir);
+  assert.deepEqual(row.lessons, {});
+  assert.ok(row.refs.length > 0, 'the context sources are still refs the model was shown');
+});
+
+test('outcome nudge: a block with handles asks for mubit_outcome with those ids', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const r = await runHook('prompt-recall', userPromptSubmit(), { env: env(makeDataDir(), server) });
+  assertHookContract(r);
+  assert.ok(r.json.hookSpecificOutput.additionalContext.includes(
+    'Each entry starts with its id in brackets. Before you finish, report the entries that '
+    + 'helped or misled you with mubit_outcome, passing those ids.'));
+});
+
+test('outcome nudge: a server-rendered block has no handles, so it carries no nudge', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const r = await runHook('prompt-recall', userPromptSubmit(),
+    { env: env(makeDataDir(), server, { MUBIT_CC_RECALL_ASSEMBLE: 'server' }) });
+  assertHookContract(r);
+  assert.ok(!r.json.hookSpecificOutput.additionalContext.includes('mubit_outcome'));
+});
+
+test('outcome nudge: the pointer note tells the model to dereference by id', async (t) => {
+  const server = await fakeMubit({
+    'POST /v2/control/query': { json: queryResponse({ evidence: STICKY_EVIDENCE() }) },
+  });
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  const e = env(dir, server);
+  await runHook('prompt-recall', nthPrompt(1), { env: e });
+  const second = await runHook('prompt-recall', nthPrompt(2), { env: e });
+  assertHookContract(second);
+  assert.ok(second.json.hookSpecificOutput.additionalContext.includes(
+    'ask mubit_dereference with its id for the text.'));
 });

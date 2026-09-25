@@ -57,7 +57,11 @@ import { normalizeActivityLesson } from '../../lib/dashboard-api.mjs';
 import { health, heartbeat, registerAgent } from '../../lib/http.mjs';
 import { log } from '../../lib/log.mjs';
 import { updateMarker } from '../../lib/markers.mjs';
+import { estimateTokens } from '../../lib/assemble.mjs';
+import { handleFor, handleTag } from '../../lib/handles.mjs';
 import { recordRules } from '../../lib/rules.mjs';
+import { appendScoreRow } from '../../lib/scorecard-log.mjs';
+import { entryTerms, entryTitle } from '../../lib/terms.mjs';
 import { deriveAgentId, deriveRunId } from '../../lib/runid.mjs';
 import { dataDir, readJson, resolveDataDir, writeJsonAtomic } from '../../lib/state.mjs';
 
@@ -146,6 +150,7 @@ await runHook('session-start', {
       // `static` with no pin is the only realistic path here. Steering with a run id we
       // refuse to stand behind would be worse than not steering at all.
       log(cfg, 'error', `session-start: no usable run id (${messageOf(err)})`);
+      appendStart(cfg, payload, []);
       return {};
     }
 
@@ -160,6 +165,7 @@ await runHook('session-start', {
     if (!isConfigured(cfg)) {
       updateMarker(cfg, runId, { mode: cfg.mode, state: 'unconfigured', cold_start_until: 0, last_error: '' });
       log(cfg, 'debug', 'session-start: no endpoint configured', { run_id: runId });
+      appendStart(cfg, payload, []);
       return {
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
@@ -206,6 +212,7 @@ await runHook('session-start', {
       // §4.7: inside the grace window the user is told nothing — they just started Mubit.
       if (!warming) out.systemMessage = `mubit: offline (${state})${DOT}capture buffered`;
       if (statusLineHint) out.systemMessage = statusLineHint;
+      appendStart(cfg, payload, []);
       return out;
     }
 
@@ -313,6 +320,7 @@ await runHook('session-start', {
         },
       };
       out.systemMessage = statusLineHint || `mubit: auth failed${DOT}capture buffered`;
+      appendStart(cfg, payload, []);
       return out;
     }
 
@@ -352,6 +360,7 @@ await runHook('session-start', {
       ? 'global lessons: partial listing'
       : `${lessons.length} global lesson${lessons.length === 1 ? '' : 's'}`;
     const summary = `mubit: ${cfg.mode}${DOT}run ${runId}${DOT}${standing}`;
+    appendStart(cfg, payload, lessons);
 
     return {
       hookSpecificOutput: {
@@ -365,6 +374,56 @@ await runHook('session-start', {
     };
   },
 });
+
+// ---------------------------------------------------------------------------
+// The session scorecard
+// ---------------------------------------------------------------------------
+
+/**
+ * The standing lessons as the steer block renders them, each led by its handle.
+ * @param {{id: string, type: string, content: string}[]} lessons
+ * @returns {string[]}
+ */
+function lessonLines(lessons) {
+  return lessons.map((l) => {
+    const tag = handleTag(l.id);
+    return `- ${tag ? `${tag} ` : ''}[${l.type}] ${l.content}`;
+  });
+}
+
+/**
+ * The session log's `start` row: standing lessons count as shown on the next prompt, and a
+ * `clear` source stops a correction being read across it. Never throws.
+ * @param {Record<string, any>} cfg
+ * @param {Record<string, any>} payload
+ * @param {{id: string, type: string, content: string}[]} lessons
+ */
+function appendStart(cfg, payload, lessons) {
+  try {
+    if (cfg.capture === false) return;
+    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
+    if (!sessionId) return;
+    const withIds = lessons.filter((l) => l.id);
+    /** @type {Record<string, {title: string, terms: string[], handle: string}>} */
+    const rows = {};
+    for (const l of withIds) {
+      rows[l.id] = {
+        title: entryTitle(cfg, l.content),
+        terms: entryTerms(cfg, l.content, new Set()),
+        handle: handleFor(l.id),
+      };
+    }
+    appendScoreRow(cfg, sessionId, {
+      kind: 'start',
+      source: sourceOf(payload) || 'startup',
+      lessons: rows,
+      refs: withIds.map((l) => l.id),
+      tokens: estimateTokens(lessonLines(lessons).join('\n')),
+    });
+  } catch {
+    // The scorecard is worth a row, never a session start.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The resume briefing
@@ -494,7 +553,7 @@ function steerBlock(cfg, runId, lessons, anchor = '', partial = false) {
     // possibly in another part of the codebase, and nothing re-checked them against this one.
     lines.push('Learned from earlier work — they may be out of date, so verify before relying '
       + 'on one.');
-    for (const l of lessons) lines.push(`- [${l.type}] ${l.content}`);
+    lines.push(...lessonLines(lessons));
     if (partial) {
       // Rendering "none" off a listing that had more behind it would state, as a fact, the
       // one thing this read cannot establish.

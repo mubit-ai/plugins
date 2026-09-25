@@ -736,3 +736,41 @@ test('the pin spend is recorded on the sub-run, never on the parent\'s marker', 
   assert.ok(!('pin_tokens' in (m.recall ?? {})),
     'a subagent writing the parent\'s marker is how a fan-out of ten reports one number');
 });
+
+// ---------------------------------------------------------------------------
+// Handles resolve for a subagent too
+// ---------------------------------------------------------------------------
+
+const scoreLog = (d) => join(d, 'scorecard', `${SESSION_ID}.jsonl`);
+const scoreRows = (d) => (existsSync(scoreLog(d))
+  ? readFileSync(scoreLog(d), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  : []);
+
+test('a subagent block leaves a refs row on the parent session log, and no shown row', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dir = makeDataDir();
+  stageParentTurn(dir);
+  const r = await runHook('subagent-start', subagentStart(), { env: env(dir, server) });
+  assertHookContract(r);
+  assert.match(injected(r.json), /\[m[a-z2-9]{4}\] /, 'subagent lines carry handles too');
+  const rows = scoreRows(dir);
+  assert.deepEqual(rows.map((row) => row.kind), ['refs']);
+  assert.equal(rows[0].source, 'subagent');
+  assert.deepEqual(rows[0].refs, ['ref_rule_1', 'ref_lesson_1', 'ref_fact_1']);
+});
+
+test('an empty subagent recall or capture off leaves no refs row', async (t) => {
+  const empty = await fakeMubit({ 'POST /v2/control/query': { json: queryResponse({ evidence: [] }) } });
+  const full = await fakeMubit();
+  t.after(() => { empty.close(); full.close(); });
+  const a = makeDataDir();
+  stageParentTurn(a);
+  assertHookContract(await runHook('subagent-start', subagentStart(), { env: env(a, empty) }));
+  assert.deepEqual(scoreRows(a), []);
+  const b = makeDataDir();
+  stageParentTurn(b);
+  assertHookContract(await runHook('subagent-start', subagentStart(),
+    { env: env(b, full, { MUBIT_CC_CAPTURE: '0' }) }));
+  assert.deepEqual(scoreRows(b), []);
+});

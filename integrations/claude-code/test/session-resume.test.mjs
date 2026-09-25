@@ -809,7 +809,8 @@ test('the briefing\'s ids are credited to the turn that received it, and marked 
     const briefing = block.slice(0, block.indexOf('<mubit-memory'));
     const memory = block.slice(block.indexOf('<mubit-memory'));
     assert.ok(briefing.includes(TAIL), 'the full entry is in the briefing');
-    assert.ok(memory.includes('(seen earlier)') && memory.includes('ref_wm_1'),
+    const { handleTag } = await lib('handles.mjs');
+    assert.ok(memory.includes('(seen earlier)') && memory.includes(handleTag('ref_wm_1')),
       'ref_wm_1 was in the briefing, so the recall block below degrades it to a pointer. '
       + 'Marking after the assembly instead sends the same entry twice in one message, at '
       + `full price both times. The recall block was:\n${memory}`);

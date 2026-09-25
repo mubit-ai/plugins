@@ -16,12 +16,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
   runHook, assertHookContract, assertWithinBudget, fakeMubit, makeDataDir, makeProjectDir,
-  baseEnv, readJsonFile,
+  baseEnv, readJsonFile, lib,
 } from './helpers/harness.mjs';
 import * as fx from './helpers/fixtures.mjs';
 
@@ -913,4 +913,89 @@ test('a failing activity feed degrades only the lesson section', async (t) => {
   assert.match(ctx, /Mubit memory is active/, 'the rest of the steer block survives');
   assert.ok(!/standing lessons/i.test(ctx));
   assert.equal(readMarker(dataDir).state, 'ready');
+});
+
+// ---------------------------------------------------------------------------
+// Handles and the session scorecard log
+// ---------------------------------------------------------------------------
+
+const scoreLog = (d) => join(d, 'scorecard', `${fx.SESSION_ID}.jsonl`);
+const startRows = (d) => (existsSync(scoreLog(d))
+  ? readFileSync(scoreLog(d), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    .filter((r) => r.kind === 'start')
+  : []);
+
+test('a standing lesson renders with its handle ahead of its type', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const { handleTag } = await lib('handles.mjs');
+  const r = await runHook('session-start', fx.sessionStart({ cwd: PROJECT_DIR }),
+    { env: env(makeDataDir(), server.url) });
+  assertHookContract(r);
+  const ctx = r.json.hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes(`- ${handleTag('les_g1')} [rule] Run the migration before starting the server.`), ctx);
+});
+
+test('session start appends a start row carrying the standing lessons, their handles and cost', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  const { handleFor } = await lib('handles.mjs');
+  assertHookContract(await runHook('session-start', fx.sessionStart({ cwd: PROJECT_DIR }),
+    { env: env(dataDir, server.url) }));
+  const rows = startRows(dataDir);
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.equal(row.source, 'startup');
+  assert.deepEqual(row.refs, ['les_g1']);
+  assert.deepEqual(Object.keys(row.lessons), ['les_g1']);
+  assert.equal(row.lessons.les_g1.title, 'Run the migration before starting the server');
+  assert.equal(row.lessons.les_g1.handle, handleFor('les_g1'));
+  assert.ok(row.lessons.les_g1.terms.includes('migration'), JSON.stringify(row.lessons.les_g1.terms));
+  assert.ok(row.tokens > 0);
+});
+
+test('a clear start row says so, so a correction is never read across it', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  assertHookContract(await runHook('session-start', fx.sessionStart({ cwd: PROJECT_DIR, source: 'clear' }),
+    { env: env(dataDir, server.url) }));
+  assert.equal(startRows(dataDir)[0].source, 'clear');
+});
+
+test('an unconfigured, offline or unauthenticated start still appends a start row, with no lessons', async (t) => {
+  const down = await fakeMubit({ 'GET /v2/core/health': { status: 503, text: 'unavailable' } });
+  const denied = await fakeMubit({
+    'POST /v2/control/agents/register': { status: 401, json: { error: 'invalid api key' } },
+    'POST /v2/control/activity': { status: 401, json: { error: 'invalid api key' } },
+  });
+  t.after(() => { down.close(); denied.close(); });
+  for (const [label, endpoint, extra] of [
+    ['unconfigured', '', {}],
+    ['offline', down.url, { MUBIT_CC_COLDSTART_GRACE_MS: '0' }],
+    ['auth failed', denied.url, {}],
+  ]) {
+    const dataDir = makeDataDir();
+    assertHookContract(await runHook('session-start', fx.sessionStart({ cwd: PROJECT_DIR }),
+      { env: env(dataDir, endpoint, extra) }));
+    const rows = startRows(dataDir);
+    assert.equal(rows.length, 1, `${label}: ${JSON.stringify(rows)}`);
+    assert.deepEqual(rows[0].lessons, {}, label);
+    assert.deepEqual(rows[0].refs, [], label);
+    assert.equal(rows[0].tokens, 0, label);
+  }
+});
+
+test('capture off writes no start row, and a payload with no session id writes none', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const off = makeDataDir();
+  assertHookContract(await runHook('session-start', fx.sessionStart({ cwd: PROJECT_DIR }),
+    { env: env(off, server.url, { MUBIT_CC_CAPTURE: '0' }) }));
+  assert.equal(existsSync(join(off, 'scorecard')), false);
+  const anon = makeDataDir();
+  assertHookContract(await runHook('session-start', fx.sessionStart({ cwd: PROJECT_DIR, session_id: '' }),
+    { env: env(anon, server.url) }));
+  assert.equal(existsSync(join(anon, 'scorecard')), false);
 });
