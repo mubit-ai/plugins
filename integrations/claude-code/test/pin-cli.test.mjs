@@ -379,7 +379,7 @@ test('pin --run: names the run even while two are live', async (t) => {
   assert.equal(server.lastCall('POST', '/v2/control/variables/set').body.run_id, 'cc-mine-11111111');
 });
 
-// §4.3: a `/clear` leaves the pre-clear marker on disk beside `-c1`, and a subagent writes
+// A `/clear` leaves the pre-clear marker on disk beside `-c1`, and a subagent writes
 // `-sub-<short>`. Both name the session that is already the answer. Reading either as a second
 // session would make pinning refuse for the rest of any run that had ever been cleared.
 test('pin: a /clear successor is the same session, not a rival', async (t) => {
@@ -523,7 +523,7 @@ test('pin slugify: produces a handle a person can type back', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The entry-point guard — §11.1
+// The entry-point guard
 // ---------------------------------------------------------------------------
 
 // The reported defect: `pin.mjs list --json` printed nothing and exited 0. Node's loader

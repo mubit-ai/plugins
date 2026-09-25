@@ -30,7 +30,7 @@
  */
 
 /**
- * §5.5: "the implicit signal is deliberately weak (0.2, not 1.0) — a turn completing is not
+ * "the implicit signal is deliberately weak (0.2, not 1.0) — a turn completing is not
  * proof the recalled memory helped, only weak positive evidence." A failed turn is stronger
  * evidence in the other direction, but still an inference, not a user verdict.
  *
@@ -101,7 +101,7 @@ export const MAX_OUTCOME_ATTEMPTS = 3;
 export const API_ERROR_KEY = 'api_error';
 
 /**
- * §6.1: the two `outcomeMode` values that silence the implicit path.
+ * The two `outcomeMode` values that silence the implicit path.
  *
  * `off` disables implicit attribution altogether. `explicit` hands the call to the model
  * through `mubit_outcome`, so a hook firing one as well would dilute the model's deliberate
@@ -139,7 +139,7 @@ export function implicitOutcomesEnabled(cfg) {
  */
 
 /**
- * §5.5 step 7: what to post for one staged turn.
+ * What to post for one staged turn.
  *
  * | turn | posted |
  * | --- | --- |
@@ -330,7 +330,7 @@ export function correctionRequest(o) {
 }
 
 /**
- * §5.5: derived from `(run_id, prompt_id)`, **never random**.
+ * Derived from `(run_id, prompt_id)`, **never random**.
  *
  * The server keeps an outcome idempotency ledger across restarts, which only helps if the
  * client sends a stable key — and it is what makes a drain and a SessionEnd flush racing over

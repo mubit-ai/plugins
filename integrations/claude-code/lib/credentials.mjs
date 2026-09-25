@@ -17,7 +17,7 @@
  *   1. Zero dependencies, Node >= 20 built-ins only.
  *   2. Synchronous — every caller is a short-lived process about to exit.
  *   3. Nothing throws. `loadConfig` calls in on a hook's critical path, and a
- *      credential store has no business breaking a prompt (§4.9).
+ *      credential store has no business breaking a prompt.
  *
  * Nothing here logs. The values are secrets, and the redaction layer is downstream of
  * this module, not around it.

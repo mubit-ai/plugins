@@ -10,7 +10,7 @@
  * `drain.mjs` each scope to exactly one run, and that run is this session's current one. If
  * the id simply moved, the run the session left would keep a spool nobody was ever going to
  * send: it survives only if the user walks back into that repo before `pruneStale` deletes it
- * (§7, 24 h), and it never gets a reflect, so its lessons never widen past `run` scope.
+ * (24 h), and it never gets a reflect, so its lessons never widen past `run` scope.
  *
  * So this hook is the moment of the move, and it does three things with it:
  *
@@ -39,7 +39,7 @@
  * `runStrategy: static` — which no `cd` can move — so a republish would be inert under the
  * default and misleading under the pin.
  *
- * **Failure:** swallow everything (§4.9). The cost of an unwritable data dir here is one
+ * **Failure:** swallow everything. The cost of an unwritable data dir here is one
  * mis-attributed run, which is exactly the cost of not having this hook at all.
  */
 
@@ -89,7 +89,7 @@ await runHook('cwd-changed', {
       // be a chance to disagree with it.
       entering = deriveRunId(cfg, moved);
     } catch (err) {
-      // `static` with no pin, or a derivation that could only have answered "default" (§4.3).
+      // `static` with no pin, or a derivation that could only have answered "default".
       log(cfg, 'warn', `cwd-changed: no usable run id (${messageOf(err)})`);
       return SUPPRESS;
     }
@@ -135,7 +135,7 @@ function drainLeavingRun(cfg, payload, runId) {
       log(cfg, 'debug', 'cwd-changed: nothing spooled for the run being left', { run_id: runId });
       return;
     }
-    // §4.9: the payload travels by file, not by inherited stdin — a detached child's stdin is
+    // The payload travels by file, not by inherited stdin — a detached child's stdin is
     // not reliably readable once this process exits.
     spawnDetached(cfg, 'drain', ['--run', runId], stashPayload(cfg, payload));
     log(cfg, 'debug', 'cwd-changed: draining the run being left', { run_id: runId, count });
@@ -152,7 +152,7 @@ function drainLeavingRun(cfg, payload, runId) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.8: stamp a marker for the new run.
+ * Stamp a marker for the new run.
  *
  * `bin/statusline.mjs` resolves the run from the session map on every frame and renders `''`
  * when `updated_at` is 0 — its way of saying "no hook has run here yet". Without this write
@@ -177,7 +177,7 @@ function markEnteredRun(cfg, leaving, entering) {
       captured: { pending: spoolStats(cfg, entering).count },
     });
   } catch (err) {
-    // §4.9: the status line is cosmetic; never fail a hook over it.
+    // The status line is cosmetic; never fail a hook over it.
     log(cfg, 'debug', `cwd-changed: could not mark the new run (${messageOf(err)})`,
       { run_id: entering });
   }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * `hooks/src/prompt-recall.mjs` — UserPromptSubmit, blocking (§5.2, §1.8).
+ * `hooks/src/prompt-recall.mjs` — UserPromptSubmit, blocking.
  *
  * ---------------------------------------------------------------------------
  * What is here, and what moved
@@ -13,7 +13,7 @@
  *
  * What is left here is the part that is specific to a *user prompt*: deciding whether this
  * prompt is worth recalling against at all, deriving the run, and then writing down what the
- * injection cost and what it named so `Stop` can attribute against it (§5.5).
+ * injection cost and what it named so `Stop` can attribute against it.
  *
  * ---------------------------------------------------------------------------
  * The cross-turn seen-set
@@ -107,7 +107,7 @@
  *
  * Breaker-open, a timeout, an empty result or any non-2xx all emit exactly
  * `{"suppressOutput": true}`. Injecting "I found nothing" wastes tokens and teaches the
- * model to distrust the channel. The hook never blocks and never exits non-zero (§4.9).
+ * model to distrust the channel. The hook never blocks and never exits non-zero.
  */
 
 import { join } from 'node:path';
@@ -130,10 +130,10 @@ import { appendScoreRow } from '../../lib/scorecard-log.mjs';
 import { readJson, resolveDataDir, safeSegment, writeJsonAtomic } from '../../lib/state.mjs';
 import { entryTerms, entryTitle, MAX_PROMPT_SCAN, memoryTerms, termSet } from '../../lib/terms.mjs';
 
-/** §5.2 step 0: "ok", "yes", "go on" carry no retrievable intent. */
+/** "ok", "yes", "go on" carry no retrievable intent. */
 const MIN_PROMPT_CHARS = 8;
 
-/** §5.2: recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
+/** Recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
 const MAX_QUERY_CHARS = 2000;
 
 /** U+00B7, the separator the status line and every systemMessage share. */
@@ -156,7 +156,7 @@ const RECALL_BUDGET_MS = clampInt(CFG.recallBudgetMs, 1500, 50, 10_000);
 const HARNESS_BUDGET_MS = Math.min(RECALL_BUDGET_MS + 400, 2800);
 
 /**
- * The one shape every skip, failure and empty result emits (§5.2). Declared before the
+ * The one shape every skip, failure and empty result emits. Declared before the
  * top-level `await` below: the hook body runs while this module is still suspended at it,
  * so anything the body reads has to be initialised by then.
  */
@@ -187,7 +187,7 @@ await runHook('prompt-recall', {
     // switch for "inject nothing ever", and the user who set it is the one most likely to be
     // leaning on a pin instead.
     if (!cfg.recall) return pinsGate(cfg, payload);
-    // §4.1: with no endpoint there is nothing to recall from. Ahead of run-id derivation,
+    // With no endpoint there is nothing to recall from. Ahead of run-id derivation,
     // which can shell out to `git rev-parse` — this hook blocks every prompt, and an install
     // nobody has signed in to yet should not pay a subprocess per prompt to learn that.
     // `session-start` has already written `unconfigured` to the marker for this run.
@@ -207,7 +207,7 @@ await runHook('prompt-recall', {
       runId = deriveRunId(cfg, payload);
       agentId = deriveAgentId(payload);
     } catch (err) {
-      // `static` with no pin, or a derivation that could only have answered "default" (§4.3).
+      // `static` with no pin, or a derivation that could only have answered "default".
       log(cfg, 'warn', `prompt-recall: no usable run id (${messageOf(err)})`);
       return SUPPRESS;
     }
@@ -227,11 +227,11 @@ await runHook('prompt-recall', {
     // `pinsGate` rather than with this.
     const resume = claimResume(cfg, runId, sessionId);
 
-    // §5.2 — the carry-forward path. Everything below this line dials; nothing beyond this
+    // The carry-forward path. Everything below this line dials; nothing beyond this
     // point in `carryForward` does. See the header for why the order inside it is fixed.
     if (cfg.recallAsync) return carryForward(cfg, payload, runId, sessionId, started, pins, resume);
 
-    // §4.7: a blocking hook in front of every prompt must not pay a connect timeout to a
+    // A blocking hook in front of every prompt must not pay a connect timeout to a
     // server already known to be down. Read-only — `allowRequest` would spend the single
     // half-open probe that `lib/http.mjs` is about to ask for itself.
     if (breakerOpen(cfg)) {
@@ -268,7 +268,7 @@ await runHook('prompt-recall', {
     }
 
     const query = prompt.slice(0, MAX_QUERY_CHARS);
-    // §5.2 — how the server should fuse this query's scores. Read off the query text itself
+    // How the server should fuse this query's scores. Read off the query text itself
     // while `recallRankBy` is `auto`: "where were we?" is a question about the most recent
     // state of the work, and default fusion weights recency at 0.10, so it answers with
     // whatever is most *similar* to those three words. The same rule runs over the same text
@@ -301,7 +301,7 @@ await runHook('prompt-recall', {
       return injection(cfg, runId, NO_RECALL, resume, pins, ms);
     }
 
-    // §5.2 step 6: what was rendered is what `Stop` attributes against (§5.5). Written even
+    // What was rendered is what `Stop` attributes against. Written even
     // when it is empty — an absent key is a different value from an empty one downstream.
     persistRecalled(cfg, runId, promptId, payload, outcome, resume);
 
@@ -330,7 +330,7 @@ await runHook('prompt-recall', {
       },
     });
 
-    // §5.2: an empty result injects NOTHING — of recalled memory. A pin was not retrieved, so
+    // An empty result injects NOTHING — of recalled memory. A pin was not retrieved, so
     // it does not become untrue because retrieval came back empty, and a briefing was assembled
     // before this prompt existed and is not an answer to it either.
     if (!outcome.block && !resume) return pinsOnly(cfg, pins, runId, true);
@@ -340,7 +340,7 @@ await runHook('prompt-recall', {
 });
 
 // ---------------------------------------------------------------------------
-// §5.2 — carry-forward (`recallAsync`)
+// Carry-forward (`recallAsync`)
 // ---------------------------------------------------------------------------
 
 /**
@@ -472,7 +472,7 @@ function claimResume(cfg, runId, sessionId) {
       { run_id: runId });
     return resume;
   } catch {
-    // §4.9: a briefing is worth a session's opening summary, never a prompt.
+    // A briefing is worth a session's opening summary, never a prompt.
     return null;
   }
 }
@@ -508,13 +508,13 @@ function spawnRefresh(cfg, payload, runId) {
 }
 
 // ---------------------------------------------------------------------------
-// §5.2 step 6 — the staged turn
+// The staged turn
 // ---------------------------------------------------------------------------
 
 /**
  * Write `recalled` into `runs/<run_id>/turns/<prompt_id>.json` without clobbering the
  * `prompt` / `started_at` that `stage-prompt.mjs` writes into the same file on the same
- * event (§5.3). The two hooks are separate processes with no ordering guarantee, so this is
+ * event. The two hooks are separate processes with no ordering guarantee, so this is
  * read-modify-write, renamed into place — the mirror image of the merge on that side.
  *
  * ---------------------------------------------------------------------------
@@ -525,7 +525,7 @@ function spawnRefresh(cfg, payload, runId) {
  * leaves exactly one record, so "what did an injection cost" is answerable only for whichever
  * prompt happened to be last. Recall fires on every prompt over 8 characters with no
  * relevance gate; the cost of that is measured (191 tokens a turn) and the return on it is
- * not. This is the denominator — `Stop` writes the numerator into the same file (§5.5).
+ * not. This is the denominator — `Stop` writes the numerator into the same file.
  *
  * `terms` is the injected block's own vocabulary MINUS the prompt's, because that subtraction
  * is what makes the Stop-side signal mean anything: a word the user typed would have come
@@ -569,7 +569,7 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
         sources: (outcome.refIds.length || outcome.sources)
           + (resume ? (resume.refIds.length || resume.sources) : 0),
         tokens: outcome.tokens + (resume ? resume.tokens : 0),
-        // The token figure is a four-chars-per-token estimate (§4.10). Characters are what
+        // The token figure is a four-chars-per-token estimate. Characters are what
         // was actually injected, so a later reader can re-derive the estimate rather than
         // inherit it.
         chars: outcome.block.length + (resume ? resume.block.length : 0),
@@ -611,7 +611,7 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
       appendShownRow(cfg, payload, promptId, entries, shown, outcome, resume);
     }
   } catch (err) {
-    // §4.9: the cost of an unwritable data dir is this turn's attribution, never the prompt.
+    // The cost of an unwritable data dir is this turn's attribution, never the prompt.
     log(cfg, 'warn', `prompt-recall: could not stage recalled ids (${messageOf(err)})`, { run_id: runId });
   }
 }
@@ -714,7 +714,7 @@ function claimStandingLessons(cfg, runId) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.7/§4.8: the status line reads nothing but the marker, so a failed recall has to leave
+ * The status line reads nothing but the marker, so a failed recall has to leave
  * a true state behind — the state as observed, with no display lens applied. The cold-start
  * grace still exists and still shows `◍ warming` over a failure, but it is resolved by
  * `bin/statusline.mjs` from the window the marker carries, which means it expires on its own
@@ -750,7 +750,7 @@ function noteFailure(cfg, runId, outcome, ms) {
 }
 
 /**
- * §4.8 — the one field that can tell "recall is dead" from "recall found nothing this time".
+ * The one field that can tell "recall is dead" from "recall found nothing this time".
  *
  * Every other field in the `recall` group describes the last call, so a path that has
  * returned nothing for forty consecutive prompts is byte-identical to a healthy one that drew
@@ -774,7 +774,7 @@ function dryness(cfg, runId, hit) {
     const prior = numOr(readMarker(cfg, runId).recall?.dry_streak, 0);
     return { dry_streak: (prior >= 0 ? prior : 0) + 1 };
   } catch {
-    // §4.9: the marker is cosmetic. A read that fails costs a count, never the hook.
+    // The marker is cosmetic. A read that fails costs a count, never the hook.
     return { dry_streak: 1 };
   }
 }
@@ -942,7 +942,7 @@ function pinsGate(cfg, payload) {
     const runId = deriveRunId(cfg, payload);
     return pinsOnly(cfg, readPins(cfg, runId), runId);
   } catch {
-    // `static` with no pin, or a derivation that could only have answered "default" (§4.3).
+    // `static` with no pin, or a derivation that could only have answered "default".
     return SUPPRESS;
   }
 }

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/rank.mjs` — is this prompt asking "what is true?" or "what happened lately?" (§5.2).
+ * `lib/rank.mjs` — is this prompt asking "what is true?" or "what happened lately?".
  *
  * ---------------------------------------------------------------------------
  * The dial this exists to turn
@@ -61,7 +61,7 @@
  * every negative; treat that table as part of the rule.
  *
  * Discipline shared with the rest of `lib/`: **zero imports**, synchronous, pure, and nothing
- * here throws (§4.9) — this runs in front of every prompt.
+ * here throws — this runs in front of every prompt.
  */
 
 /**

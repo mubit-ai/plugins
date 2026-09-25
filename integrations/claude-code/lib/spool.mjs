@@ -12,7 +12,7 @@
  *      drain child imports this module by absolute `file://` URL.
  *   2. Everything is synchronous. A hook process is about to exit; an event-loop round trip
  *      buys nothing and adds a "the process died before the write landed" failure mode.
- *   3. Nothing here throws. A memory layer has no business breaking a prompt (§4.9).
+ *   3. Nothing here throws. A memory layer has no business breaking a prompt.
  *
  * ---------------------------------------------------------------------------
  * Why one file per item and not an append-only NDJSON log
@@ -37,11 +37,11 @@ import { join } from 'node:path';
 
 import { ensureDir, resolveDataDir, runDir, safeSegment } from './state.mjs';
 
-/** §7: `runs/<run_id>/drain.lock` is assumed orphaned past this age and stolen. */
+/** `runs/<run_id>/drain.lock` is assumed orphaned past this age and stolen. */
 const DRAIN_LOCK_TTL_MS = 60_000;
 
 /**
- * §7: `runs/<run_id>/flush-<session_id>.lock`. Past the detached body's own 58 s ceiling by
+ * `runs/<run_id>/flush-<session_id>.lock`. Past the detached body's own 58 s ceiling by
  * enough that a lease is never stolen from a child that is still working.
  */
 const FLUSH_LEASE_TTL_MS = 90_000;
@@ -85,12 +85,12 @@ export function batchIdempotencyKey(runId, items) {
 // Paths
 // ---------------------------------------------------------------------------
 
-/** §7: `runs/<run_id>/spool/`. @param {Record<string, any>} cfg @param {string} runId */
+/** `runs/<run_id>/spool/`. @param {Record<string, any>} cfg @param {string} runId */
 function spoolDir(cfg, runId) {
   return join(runDir(cfg, runId), 'spool');
 }
 
-/** `<ts>-<rand6>.json` (§7). Crypto-seeded so two processes cannot agree by accident. */
+/** `<ts>-<rand6>.json`. Crypto-seeded so two processes cannot agree by accident. */
 function rand6() {
   let s = '';
   try {
@@ -107,7 +107,7 @@ function rand6() {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.6: write one wire-shaped ingest item to `runs/<run_id>/spool/<ts>-<rand6>.json`.
+ * Write one wire-shaped ingest item to `runs/<run_id>/spool/<ts>-<rand6>.json`.
  *
  * The file content is the item verbatim — the drain sends it through untouched, so
  * whatever `capture.mjs` hands over here is what reaches `/v2/control/ingest`.
@@ -148,7 +148,7 @@ export function appendItem(cfg, runId, item) {
     }
     return '';
   } catch {
-    // §4.9/§12.1: an unwritable ${CLAUDE_PLUGIN_DATA} costs the capture, nothing else.
+    // An unwritable ${CLAUDE_PLUGIN_DATA} costs the capture, nothing else.
     return '';
   }
 }
@@ -201,12 +201,12 @@ function orderedNames(dir) {
 }
 
 /**
- * §4.6: up to `max` entries, oldest first. A read — nothing is unlinked except files that
+ * Up to `max` entries, oldest first. A read — nothing is unlinked except files that
  * cannot be parsed.
  *
  * An unparseable file is a SIGKILL caught mid-write (or a foreign file dropped in the
  * spool). It is unlinked in passing and the batch still ships: retrying a torn file
- * forever is how a spool becomes unbounded (§12.1).
+ * forever is how a spool becomes unbounded.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
@@ -254,7 +254,7 @@ export function readBatch(cfg, runId, max = DEFAULT_MAX) {
 }
 
 /**
- * §5.5 step 6: unlink, and only after a 2xx. A 5xx or a network failure must leave the
+ * Unlink, and only after a 2xx. A 5xx or a network failure must leave the
  * files exactly where they are so the next drain retries them.
  *
  * A double drain carries one `idempotency_key` for the server to collapse (see
@@ -331,7 +331,7 @@ function pidAlive(pid) {
 }
 
 /**
- * §5.5 step 1: exactly one drainer per run, enforced by `O_EXCL` rather than a daemon —
+ * Exactly one drainer per run, enforced by `O_EXCL` rather than a daemon —
  * two hooks can fire a detached drain within milliseconds of each other.
  *
  * A held lock is stolen in two cases:
@@ -341,7 +341,7 @@ function pidAlive(pid) {
  *   - It is older than 60 s, *unconditionally* — even when its owner is demonstrably
  *     alive. A stuck lock silently stops ALL capture for a run, which is strictly worse
  *     than the rare double drain the per-batch `idempotency_key` covers — including the
- *     cross-drainer case this lock exists to make rare. (§7)
+ *     cross-drainer case this lock exists to make rare.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
@@ -382,7 +382,7 @@ export function acquireDrainLock(cfg, runId) {
  * stamp lands a moment later; a second drainer arriving inside that window reads an
  * unparseable lock, correctly concludes "orphaned" by the rule above, and steals a lock
  * that is microseconds old. Both then drain the same batch. Two hooks fire detached drains
- * within milliseconds of each other by design (§5.5), so this is the ordinary case, not an
+ * within milliseconds of each other by design, so this is the ordinary case, not an
  * exotic one — measured at 4 double-acquires in 40 racing trials.
  *
  * `link(2)` is the fix: it fails with `EEXIST` when the target exists, so the lock never
@@ -421,7 +421,7 @@ function create(lockPath) {
 }
 
 /**
- * §5.5: released in a `finally`, where the lock is legitimately null on every path that
+ * Released in a `finally`, where the lock is legitimately null on every path that
  * stood down. Accepts the lock object or a bare path.
  * @param {DrainLock|string|null|undefined} lock
  * @returns {void}
@@ -442,7 +442,7 @@ export function releaseDrainLock(lock) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.7 step 1: one SessionEnd flush per session *at a time*.
+ * One SessionEnd flush per session *at a time*.
  *
  * `claimHeld`/`claimOnce` answer "has this session already been flushed", and they answer it
  * that way on purpose — a claim recorded up front marks a session flushed with the drain and
@@ -461,7 +461,7 @@ export function releaseDrainLock(lock) {
  * every later flush is worse than the double it exists to prevent.
  *
  * **Returns a lease, not null, when one cannot be recorded at all** — an unwritable or
- * read-only `${CLAUDE_PLUGIN_DATA}` must not be able to stop the flush entirely (§4.6). That
+ * read-only `${CLAUDE_PLUGIN_DATA}` must not be able to stop the flush entirely. That
  * lease carries an empty `path` and releasing it is a no-op.
  *
  * @param {Record<string, any>} cfg
@@ -518,14 +518,14 @@ export function releaseFlushLease(lease) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.7 step 1 / §7: the once-only marker at `runs/<run_id>/<name>.marker`, used to make
+ * The once-only marker at `runs/<run_id>/<name>.marker`, used to make
  * the SessionEnd flush idempotent across the several ways a session can end.
  *
  * **Returns `true` on a non-`EEXIST` error — proceed on marker failure.** The marker exists
  * to prevent a *double* flush; a read-only or full `${CLAUDE_PLUGIN_DATA}` must not be able
  * to prevent the flush *entirely*. Losing a session's captures is worse than sending them
  * twice, and the same items carry the same per-batch `idempotency_key` either way, so the
- * double send is one the server can collapse (§4.6, §12.1).
+ * double send is one the server can collapse.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
@@ -594,7 +594,7 @@ export function claimOnce(cfg, runId, name) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.3: `count >= batchMaxItems OR oldestMs >= batchMaxAgeMs` triggers a detached drain,
+ * `count >= batchMaxItems OR oldestMs >= batchMaxAgeMs` triggers a detached drain,
  * so this is asked on every single prompt. It must be cheap, total, and never throw.
  *
  * It is the OLDEST item that decides, not the newest: with a newest-first age a steady

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/log.mjs` — the ring log at `logs/mubit-cc.log` (§4.8, §7).
+ * `lib/log.mjs` — the ring log at `logs/mubit-cc.log`.
  *
  * "Every message passes through `redactText` on the way out." That is not a
  * nicety: the log is the easiest place in the whole plugin to leak the API key
@@ -51,7 +51,7 @@ export function log(cfg, level, msg, fields = {}) {
     rotateIfNeeded(dir, file);
     appendFileSync(file, `${line}\n`, 'utf8');
   } catch {
-    // §4.9/§12.1: a log that cannot be written costs the log, nothing else.
+    // A log that cannot be written costs the log, nothing else.
   }
 }
 

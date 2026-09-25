@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `hooks/src/stage-prompt.mjs` — UserPromptSubmit, fast path (§5.3).
+ * `hooks/src/stage-prompt.mjs` — UserPromptSubmit, fast path.
  *
  * Budget < 25 ms, zero network. It exists because the `Stop` payload carries
  * `last_assistant_message` but **not** the prompt that produced it: without staging, every
@@ -125,7 +125,7 @@ async function mubit(t, routes) {
 
 // ---------------------------------------------------------------------------
 
-// §5.3 step 1 — the staged turn file, and nothing on the wire.
+// The staged turn file, and nothing on the wire.
 test('stage-prompt: writes turns/<prompt_id>.json and issues zero HTTP', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -151,7 +151,7 @@ test('stage-prompt: writes turns/<prompt_id>.json and issues zero HTTP', async (
   assert.deepEqual(turn.recalled, [], 'prompt-recall fills `recalled` in this same file');
 });
 
-// §5.3 — race, ordering A: stage first, then recall. Recall must merge, not overwrite.
+// Race, ordering A: stage first, then recall. Recall must merge, not overwrite.
 test('stage-prompt then prompt-recall: the turn file keeps both the prompt and the recalled ids', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -169,7 +169,7 @@ test('stage-prompt then prompt-recall: the turn file keeps both the prompt and t
     'recalled carries reference_id — not id — because that is what feeds RecordOutcome.entry_ids');
 });
 
-// §5.3 — race, ordering B: recall lands first. Staging must merge, not overwrite.
+// Race, ordering B: recall lands first. Staging must merge, not overwrite.
 test('prompt-recall then stage-prompt: the turn file keeps both the prompt and the recalled ids', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -185,7 +185,7 @@ test('prompt-recall then stage-prompt: the turn file keeps both the prompt and t
     `stage-prompt clobbered the recalled ids: ${JSON.stringify(turn.recalled)}`);
 });
 
-// §5.3 step 2 — count trigger: spoolStats().count >= batchMaxItems.
+// Count trigger: spoolStats().count >= batchMaxItems.
 test('stage-prompt: spawns a drain when the item-count trigger fires', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -201,7 +201,7 @@ test('stage-prompt: spawns a drain when the item-count trigger fires', async (t)
   assert.equal(spawns[0].detached, '1');
 });
 
-// §5.3 step 2 — age trigger: spoolStats().oldestMs >= batchMaxAgeMs. A quiet session still
+// Age trigger: spoolStats().oldestMs >= batchMaxAgeMs. A quiet session still
 // gets its captures flushed on the next prompt.
 test('stage-prompt: spawns a drain when the oldest-item age trigger fires', async (t) => {
   const dataDir = makeDataDir();
@@ -220,7 +220,7 @@ test('stage-prompt: spawns a drain when the oldest-item age trigger fires', asyn
   assert.equal(spawns.length, 1, 'a 60s-old spool item against maxAge=1000ms must spawn one drain');
 });
 
-// §5.3 step 2 — neither trigger fires: no drain, and still nothing on the wire.
+// Neither trigger fires: no drain, and still nothing on the wire.
 test('stage-prompt: spawns no drain when neither trigger fires', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -240,7 +240,7 @@ test('stage-prompt: spawns no drain when neither trigger fires', async (t) => {
   assert.equal(server.requests.length, 0, `saw unexpected HTTP: ${server.summary()}`);
 });
 
-// §5.3 — "Failure: swallow everything; the cost is one Q&A pair." An unwritable data dir
+// "Failure: swallow everything; the cost is one Q&A pair." An unwritable data dir
 // must not turn into a failed hook, and certainly not into a blocked prompt.
 test('stage-prompt: exits 0 with valid JSON when the data dir is unwritable', async (t) => {
   if (typeof process.getuid === 'function' && process.getuid() === 0) {

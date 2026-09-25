@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * `hooks/src/recall-refresh.mjs` — the detached half of carry-forward recall (§5.2).
+ * `hooks/src/recall-refresh.mjs` — the detached half of carry-forward recall.
  *
  * Not registered in `hooks.json`, for the same reason `drain.mjs` is not: it is spawned
  * detached by `prompt-recall` when `recallAsync` is on, exactly the way `stage-prompt.mjs`
@@ -49,7 +49,7 @@
  * each individual request at `timeoutMs`, so a hung endpoint costs one abandoned socket.
  *
  * Constraints shared with the rest of the plugin: zero dependencies, Node >= 20 built-ins,
- * and **exit code 0, always** (§4.9).
+ * and **exit code 0, always**.
  */
 
 import { isConfigured, loadConfig } from '../../lib/config.mjs';
@@ -77,7 +77,7 @@ const HARNESS_BUDGET_MS = REFRESH_BUDGET_MS + 2_000;
 /** §5.2 step 0, shared with `prompt-recall`: "ok", "go on" carry no retrievable intent. */
 const MIN_PROMPT_CHARS = 8;
 
-/** §5.2: recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
+/** Recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
 const MAX_QUERY_CHARS = 2000;
 
 /** `prompt_id` is carried as provenance only, but it is still host input. */
@@ -126,7 +126,7 @@ await runHook('recall-refresh', {
       query,
       deadline: started + REFRESH_BUDGET_MS,
       seen,
-      // §5.2 — the same rule over the same query text `prompt-recall` would have used.
+      // The same rule over the same query text `prompt-recall` would have used.
       // Carry-forward moves WHEN the call happens, never what it asks for: a handoff prompt
       // ranked by similarity in the background is the same bug, one turn later.
       rankBy: rankForRecall(cfg, query),
@@ -136,7 +136,7 @@ await runHook('recall-refresh', {
     });
     const fetchMs = Date.now() - started;
 
-    // §4.7/§4.8: the state as observed. This is the only process that dials once the flag is
+    // The state as observed. This is the only process that dials once the flag is
     // on, so the status line's connection glyph is sourced from here or from nowhere. The
     // `recall` group is deliberately left alone — that describes what was *injected*, and
     // this process injects nothing.

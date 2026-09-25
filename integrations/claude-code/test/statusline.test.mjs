@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `bin/statusline.mjs` — the status line (§10, and §16.2 for the degradation path).
+ * `bin/statusline.mjs` — the status line (and §16.2 for the degradation path).
  *
  * The status line is the only part of this plugin that runs on every frame of the
  * host UI. Three properties matter more than anything it prints:
@@ -34,7 +34,7 @@ import {
 
 /**
  * Prefer the committed bundle; fall back to the source entry so the suite is usable
- * before the first `npm run build` (§11.2).
+ * before the first `npm run build`.
  */
 function statuslineScript() {
   const built = join(PLUGIN_ROOT, 'bin', 'statusline.mjs');
@@ -84,10 +84,10 @@ async function runStatusline(o) {
 }
 
 // ---------------------------------------------------------------------------
-// Seeding the two files the status line is allowed to read (§7)
+// Seeding the two files the status line is allowed to read
 // ---------------------------------------------------------------------------
 
-/** The run id the hooks would derive for this env — the marker is keyed by it (§4.3). */
+/** The run id the hooks would derive for this env — the marker is keyed by it. */
 async function derivedRunId(env) {
   const { loadConfig } = await lib('config.mjs');
   const { deriveRunId } = await lib('runid.mjs');
@@ -157,14 +157,14 @@ function env(dataDir, extra = {}) {
 function assertNoStackTrace(r) {
   assert.equal(r.code, 0, `status line must exit 0, got ${r.code}. stderr:\n${r.stderr}`);
   assert.ok(!/^\s+at\s/m.test(r.stderr),
-    `status line printed a stack trace — §16.2: a fresh install must never see one:\n${r.stderr}`);
+    `status line printed a stack trace.2: a fresh install must never see one:\n${r.stderr}`);
 }
 
 // ---------------------------------------------------------------------------
-// §10 — network-free
+// Network-free
 // ---------------------------------------------------------------------------
 
-// §10 — "network-free" is the load-bearing property. If the status line dials Mubit,
+// "network-free" is the load-bearing property. If the status line dials Mubit,
 // every frame of the host UI is coupled to a remote server's latency.
 test('makes zero network requests — it only reads local state', async () => {
   const server = await fakeMubit();
@@ -184,7 +184,7 @@ test('makes zero network requests — it only reads local state', async () => {
   }
 });
 
-// §10 — the real budget is 15ms of work. The ceiling asserted here is deliberately generous;
+// The real budget is 15ms of work. The ceiling asserted here is deliberately generous;
 // it exists to catch an implementation that grew a directory walk, a spawn, or a socket.
 //
 // This test already took the best of three samples, which was the right instinct and still not
@@ -202,7 +202,7 @@ test('renders well inside its budget (real target < 15ms; ceiling here is genero
     async () => (await runStatusline({ env: e })).ms);
 });
 
-// §10 — the documented line. Example from the guide:
+// The documented line. Example from the guide:
 //   ● mubit: cc-my-project-9f2a11c4 · local · recall 6/1.2k tok · saved 12t/1q · lessons 3g
 // The run id is whatever §4.3 derives for this directory, so it is substituted here.
 test('renders the documented shape: glyph, run, mode, recall, saved, lessons', async () => {
@@ -254,7 +254,7 @@ test('a dry streak under the threshold does not cry wolf', async () => {
   assert.match(r.line, /recall 6\/1\.2k tok/);
 });
 
-// §16.2 — reflect is the only call that widens a lesson past `run` scope, so a failed one
+// Reflect is the only call that widens a lesson past `run` scope, so a failed one
 // costs the session its cross-session memory. It failed 12 times over four days in silence:
 // the failure logs at `warn`, the success at `info`, so at the default level a healthy and a
 // broken instance print the same nothing.
@@ -304,7 +304,7 @@ test('a marker predating dry_streak renders unchanged', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// §10 — glyph precedence: worst state wins, top to bottom
+// Glyph precedence: worst state wins, top to bottom
 // ---------------------------------------------------------------------------
 
 /**
@@ -329,7 +329,7 @@ for (let i = 0; i < PRECEDENCE.length - 1; i++) {
   const worse = PRECEDENCE[i];
   const lesser = PRECEDENCE[i + 1];
 
-  // §10 — two sources can disagree (the marker was written by the last hook, the breaker
+  // Two sources can disagree (the marker was written by the last hook, the breaker
   // file by the last failure). The worse of the two is what the user needs to see.
   test(`glyph precedence: ${worse.state} beats ${lesser.state} whichever source reports it`, async () => {
     for (const [markerState, breakerState] of [[lesser.state, worse.state], [worse.state, lesser.state]]) {
@@ -351,7 +351,7 @@ for (let i = 0; i < PRECEDENCE.length - 1; i++) {
   });
 }
 
-// §4.7 — within coldStartGraceMs of SessionStart a failure is not a verdict. A user who
+// Within coldStartGraceMs of SessionStart a failure is not a verdict. A user who
 // whose instance is still starting must not be told memory is broken for the
 // first seconds it spends warming up.
 test('cold start renders ◍ warming rather than a failure glyph', async () => {
@@ -390,11 +390,11 @@ test('cold start suppresses not_responding too — the ◌/◍ pair §10 and §4
   const r = await runStatusline({ env: e });
   assertNoStackTrace(r);
   assert.ok(r.line.startsWith('◍'),
-    `a timeout streak inside the grace window is not a verdict (§4.7), got: ${r.line}`);
+    `a timeout streak inside the grace window is not a verdict, got: ${r.line}`);
   assert.ok(!r.line.includes('slow'), `expected "warming", not "slow", got: ${r.line}`);
 });
 
-// §10 — warming outranks ready: a run that has not proven itself yet is not "ready".
+// Warming outranks ready: a run that has not proven itself yet is not "ready".
 test('cold start beats ready in the precedence order', async () => {
   const dataDir = makeDataDir();
   const e = env(dataDir);
@@ -406,7 +406,7 @@ test('cold start beats ready in the precedence order', async () => {
   assert.ok(r.line.startsWith('◍'), `expected ◍ warming to outrank ● ready, got: ${r.line}`);
 });
 
-// §4.7 — auth_failed is sticky and pins the status line: it is the one error the user can
+// auth_failed is sticky and pins the status line: it is the one error the user can
 // actually fix, so cold start must not hide it. This is also the top of the §10 table.
 test('auth_failed outranks cold start — the one error the user can fix is never hidden', async () => {
   const dataDir = makeDataDir();
@@ -420,7 +420,7 @@ test('auth_failed outranks cold start — the one error the user can fix is neve
   assert.ok(r.line.includes('auth failed'), `expected the "auth failed" label, got: ${r.line}`);
 });
 
-// §4.7 — the second state cold start must not cover. `◍ warming` says "wait, it is coming
+// The second state cold start must not cover. `◍ warming` says "wait, it is coming
 // up"; there is no instance coming up, and waiting never resolves it. The user has to run
 // one command, so the glyph has to keep saying so.
 test('unconfigured outranks cold start — waiting does not set an endpoint', async () => {
@@ -457,10 +457,10 @@ test('every ConnState has a glyph row — a missing one blanks the status line s
 });
 
 // ---------------------------------------------------------------------------
-// §10 — breaker cooldown and the rung label
+// Breaker cooldown and the rung label
 // ---------------------------------------------------------------------------
 
-// §10 — an open breaker recovers by itself. Showing the remaining cooldown is the
+// An open breaker recovers by itself. Showing the remaining cooldown is the
 // difference between "it will come back in 94 seconds" and "this thing is dead".
 test('an open breaker appends the remaining cooldown, e.g. " · paused 94s"', async () => {
   const dataDir = makeDataDir();
@@ -477,13 +477,13 @@ test('an open breaker appends the remaining cooldown, e.g. " · paused 94s"', as
   const r = await runStatusline({ env: e });
   assertNoStackTrace(r);
   const m = / · paused (\d+)s/.exec(r.line);
-  assert.ok(m, `expected " · paused <n>s" while the breaker is open (§10), got: ${r.line}`);
+  assert.ok(m, `expected " · paused <n>s" while the breaker is open, got: ${r.line}`);
   const remaining = Number(m[1]);
   assert.ok(remaining >= 92 && remaining <= 94,
     `expected ~94s of cooldown remaining (120s cooldown opened 26s ago), got ${remaining}s in: ${r.line}`);
 });
 
-// §10 — a closed breaker says nothing. Noise in a per-frame widget is worse than silence.
+// A closed breaker says nothing. Noise in a per-frame widget is worse than silence.
 test('a closed breaker adds no paused suffix', async () => {
   const dataDir = makeDataDir();
   const e = env(dataDir);
@@ -496,7 +496,7 @@ test('a closed breaker adds no paused suffix', async () => {
   assert.ok(!/paused/.test(r.line), `closed breaker must not print a paused suffix, got: ${r.line}`);
 });
 
-// §10/§1.8 — rung 1 is the free path (0 LLM calls). Rung 2 spends one LLM call per
+// Rung 1 is the free path (0 LLM calls). Rung 2 spends one LLM call per
 // prompt and rung 3 spends two. The user is entitled to know that without reading a log.
 for (const { rung, expected } of [
   { rung: 1, expected: null },
@@ -515,19 +515,19 @@ for (const { rung, expected } of [
     assertNoStackTrace(r);
     if (expected === null) {
       assert.ok(!/rung/.test(r.line),
-        `rung 1 is the free path and needs no label (§10), got: ${r.line}`);
+        `rung 1 is the free path and needs no label, got: ${r.line}`);
     } else {
       assert.ok(r.line.includes(expected),
-        `expected "${expected.trim()}" — rung ${rung} means the instance is spending LLM calls on every prompt (§1.8), got: ${r.line}`);
+        `expected "${expected.trim()}" — rung ${rung} means the instance is spending LLM calls on every prompt, got: ${r.line}`);
     }
   });
 }
 
 // ---------------------------------------------------------------------------
-// §10/§16.2 — the off switch and the empty states
+// The off switch and the empty states
 // ---------------------------------------------------------------------------
 
-// §10 — an empty status line, not an error. Turning the widget off must not make the
+// An empty status line, not an error. Turning the widget off must not make the
 // host print a failed-command banner every frame.
 test('MUBIT_CC_STATUSLINE=0 prints nothing and exits 0', async () => {
   const dataDir = makeDataDir();
@@ -540,8 +540,8 @@ test('MUBIT_CC_STATUSLINE=0 prints nothing and exits 0', async () => {
   assert.equal(r.stdout, '', `MUBIT_CC_STATUSLINE=0 must print nothing, got: ${JSON.stringify(r.stdout)}`);
 });
 
-// §6.2/§6.3 — the same off switch reached through userConfig. Both env spellings are
-// set because the exact transform for a userConfig key is not fully documented (§6.3).
+// The same off switch reached through userConfig. Both env spellings are
+// set because the exact transform for a userConfig key is not fully documented.
 test('statusLine: false via userConfig prints nothing and exits 0', async () => {
   const dataDir = makeDataDir();
   const e = env(dataDir, {
@@ -557,7 +557,7 @@ test('statusLine: false via userConfig prints nothing and exits 0', async () => 
   assert.equal(r.stdout, '', `statusLine:false must print nothing, got: ${JSON.stringify(r.stdout)}`);
 });
 
-// §16.2 — the state every user is in for their first few seconds: installed, enabled,
+// The state every user is in for their first few seconds: installed, enabled,
 // no SessionStart yet, no directories, no files. This must be silent, not a crash.
 test('survives a fresh install with no Mubit state at all: prints nothing, exits 0', async () => {
   const emptyDir = tempDir('mubit-cc-fresh-'); // deliberately NOT makeDataDir(): no skeleton either
@@ -566,10 +566,10 @@ test('survives a fresh install with no Mubit state at all: prints nothing, exits
   const r = await runStatusline({ env: e });
   assertNoStackTrace(r);
   assert.equal(r.stdout, '',
-    `with no state at all the status line must print nothing (§16.2), got: ${JSON.stringify(r.stdout)}`);
+    `with no state at all the status line must print nothing, got: ${JSON.stringify(r.stdout)}`);
 });
 
-// §7/§16.2 — the skeleton exists but no marker has been written yet (between install and
+// The skeleton exists but no marker has been written yet (between install and
 // the first SessionStart). Same contract.
 test('survives an empty data dir skeleton with no marker: prints nothing, exits 0', async () => {
   const dataDir = makeDataDir();
@@ -594,7 +594,7 @@ test('survives a corrupt marker file: no throw, exit 0', async () => {
     'a corrupt marker must yield either silence or a valid line — never a partial render');
 });
 
-// §10 — a marker whose fields are missing (an older schema, a partial write that still
+// A marker whose fields are missing (an older schema, a partial write that still
 // parsed) must not produce "undefined" in the user's prompt line.
 test('a marker missing optional sections never renders "undefined" or "NaN"', async () => {
   const dataDir = makeDataDir();

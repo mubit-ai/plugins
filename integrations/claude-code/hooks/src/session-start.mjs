@@ -20,7 +20,7 @@
  *      say it to — emit `{}` and dial nothing.
  *   2. `deriveRunId` honouring the §4.3 `source` table (that module owns the whole table,
  *      including `/clear`'s counter and the session-map write).
- *   3. `marker.cold_start_until = now + coldStartGraceMs` (§4.7) — the grace window starts
+ *   3. `marker.cold_start_until = now + coldStartGraceMs` — the grace window starts
  *      here, so a server still starting up does not read as "memory broken".
  *   4. `GET /v2/core/health` @`HEALTH_MS`. Not ok → skip 5-6 but **still steer**, saying memory
  *      is offline. Without that the model invents recall or apologises for its absence.
@@ -65,7 +65,7 @@ import { entryTerms, entryTitle } from '../../lib/terms.mjs';
 import { deriveAgentId, deriveRunId } from '../../lib/runid.mjs';
 import { dataDir, readJson, resolveDataDir, writeJsonAtomic } from '../../lib/state.mjs';
 
-/** §5.1: 2500 ms internal. The harness gets a slightly looser leash so the internal
+/** 2500 ms internal. The harness gets a slightly looser leash so the internal
  *  deadline — which still returns a steer block — is always the one that fires first. */
 const BUDGET_MS = 2500;
 const HARNESS_BUDGET_MS = 3200;
@@ -93,7 +93,7 @@ const HEALTH_MS = Math.round(BUDGET_MS * 0.5);
 const REGISTER_MS = 600;
 const LESSONS_MS = 900;
 
-/** §5.1: the register body, verbatim. */
+/** The register body, verbatim. */
 const CAPABILITIES = ['code', 'shell', 'edit', 'search'];
 const LESSON_LIMIT = 5;
 
@@ -110,14 +110,14 @@ const LESSON_SCAN = 200;
 /** U+00B7. The status line and this line share a separator; a hyphen here is a visible bug. */
 const DOT = ' · ';
 
-/** §16.2 step 2 — the marker `bin/statusline.mjs` stamps and this hook reads. */
+/** The marker `bin/statusline.mjs` stamps and this hook reads. */
 const LIVENESS_FILE = 'statusline-installed.json';
 
 /** A checkpoint id is quoted into the injected block; keep it boring, as `checkpoint.mjs` does. */
 const MAX_ID_CHARS = 160;
 
 /**
- * §16.2 step 3: "after two consecutive sessions with no status-line invocation".
+ * "after two consecutive sessions with no status-line invocation".
  *
  * Two, not one: the first session after install writes the marker and cannot conclude
  * anything from it, because the status line has not been given a frame yet.
@@ -129,7 +129,7 @@ await runHook('session-start', {
   body: async (payload) => {
     const cfg = loadConfig();
 
-    // §5.1 step 1 — both halves off: no steer block, no marker, no HTTP.
+    // Both halves off: no steer block, no marker, no HTTP.
     if (!cfg.capture && !cfg.recall) return {};
 
     const deadline = Date.now() + BUDGET_MS;
@@ -140,7 +140,7 @@ await runHook('session-start', {
      */
     const budgetFor = (sub) => Math.max(0, Math.min(sub, deadline - Date.now()));
 
-    // §4.3 — the source table lives in lib/runid.mjs, counter and session map included.
+    // The source table lives in lib/runid.mjs, counter and session map included.
     let runId = '';
     let agentId = '';
     try {
@@ -158,7 +158,7 @@ await runHook('session-start', {
     // shipped `settings.json` actually took effect is independent of whether Mubit is up.
     const statusLineHint = probeStatusLine(cfg);
 
-    // §4.1 — no endpoint, nothing to dial, and nothing to diagnose about a server. Ahead of
+    // No endpoint, nothing to dial, and nothing to diagnose about a server. Ahead of
     // the grace window and the health probe: arming a cold-start window would mask this
     // behind `◍ warming`, and probing would spend the budget on a `fetch` that throws
     // `ERR_INVALID_URL` before it opens a socket.
@@ -175,7 +175,7 @@ await runHook('session-start', {
       };
     }
 
-    // §4.7 — the grace window, armed once per endpoint rather than once per session. It
+    // The grace window, armed once per endpoint rather than once per session. It
     // exists to cover an instance that is genuinely still starting, which is a property of
     // the instance and not of this session; re-arming it on entry meant the window was open
     // at the instant every probe failed, forever, and `◍ warming` became the only failure
@@ -185,7 +185,7 @@ await runHook('session-start', {
     const coldStartUntil = armColdStart(cfg);
     updateMarker(cfg, runId, { mode: cfg.mode, cold_start_until: coldStartUntil });
 
-    // §5.1 step 4 — health is the gate. It returns the bare string `OK`, not JSON; reading
+    // Health is the gate. It returns the bare string `OK`, not JSON; reading
     // it as JSON would report every healthy server as down (lib/http.mjs owns that).
     const hres = await health(cfg, { timeoutMs: budgetFor(HEALTH_MS) });
     if (!hres.ok) {
@@ -209,14 +209,14 @@ await runHook('session-start', {
           additionalContext: offlineBlock(cfg, runId, state),
         },
       };
-      // §4.7: inside the grace window the user is told nothing — they just started Mubit.
+      // Inside the grace window the user is told nothing — they just started Mubit.
       if (!warming) out.systemMessage = `mubit: offline (${state})${DOT}capture buffered`;
       if (statusLineHint) out.systemMessage = statusLineHint;
       appendStart(cfg, payload, []);
       return out;
     }
 
-    // §5.1 step 5 — register, or heartbeat on a resume.
+    // Register, or heartbeat on a resume.
     //
     // This is also the first call of the session that proves anything about the key. Health
     // reports reachability, not credentials, so on its own it cannot support the claim the
@@ -255,7 +255,7 @@ await runHook('session-start', {
       }
     }
 
-    // §5.1 step 6 — the standing set: lessons stored at `global` scope, by any run.
+    // The standing set: lessons stored at `global` scope, by any run.
     //
     // One page of the activity feed, filtered to `global` here, rather than a request for
     // five global lessons. Asking for a handful at a named scope comes back empty against a
@@ -324,7 +324,7 @@ await runHook('session-start', {
       return out;
     }
 
-    // §5.1 step 7.
+    //
     updateMarker(cfg, runId, {
       mode: cfg.mode,
       state: 'ready',
@@ -345,7 +345,7 @@ await runHook('session-start', {
     // this is emphatically not, and `spawnResume` is where that is argued.
     spawnResume(cfg, payload, runId, agentId, src);
 
-    // §5.6 — the post-compaction re-anchor, on the one source that means "the host just
+    // The post-compaction re-anchor, on the one source that means "the host just
     // compacted this conversation". A local read of the file `checkpoint --pre` already wrote,
     // so it costs no budget and needs no round trip. It sits below the offline branch on
     // purpose rather than beside it: the anchor's only use is asking the server for detail
@@ -639,7 +639,7 @@ function offlineBlock(cfg, runId, state) {
 }
 
 // ---------------------------------------------------------------------------
-// §4.7 — the cold-start grace, armed per endpoint
+// The cold-start grace, armed per endpoint
 // ---------------------------------------------------------------------------
 
 /**
@@ -679,11 +679,11 @@ function armColdStart(cfg) {
 }
 
 // ---------------------------------------------------------------------------
-// §5.6 — the anchor `checkpoint --pre` left behind
+// The anchor `checkpoint --pre` left behind
 // ---------------------------------------------------------------------------
 
 /**
- * §7: the newest `checkpoint_id` in `runs/<run_id>/checkpoints.json`, or `''`.
+ * The newest `checkpoint_id` in `runs/<run_id>/checkpoints.json`, or `''`.
  *
  * Read with the same tolerance `hooks/src/checkpoint.mjs` reads it with, and for the same
  * reason: a missing, empty or corrupt file is the normal state of a run that has never

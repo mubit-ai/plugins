@@ -168,7 +168,7 @@ test('a secret in the rollout never reaches the wire', async (t) => {
     { role: 'assistant', text: 'done' },
   ]);
   const raw = server.lastCall('POST', '/v2/control/checkpoint')?.raw ?? '';
-  // § The transcript is the densest secret surface the plugin ever touches (§4.4), and a
+  // § The transcript is the densest secret surface the plugin ever touches, and a
   //   rollout is no different — Codex records the same shell commands. Every stage of the
   //   snapshot is individually caught, and a stage that fails yields no snapshot at all: an
   //   unredacted transcript is not an acceptable degraded mode.

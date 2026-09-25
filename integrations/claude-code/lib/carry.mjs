@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/carry.mjs` — the block one turn leaves for the next (§5.2, `recallAsync`).
+ * `lib/carry.mjs` — the block one turn leaves for the next (`recallAsync`).
  *
  * ---------------------------------------------------------------------------
  * Why a file, and not `"async": true`
@@ -45,7 +45,7 @@
  *
  *   1. Zero dependencies, Node >= 20 built-ins only, no import outside `lib/`.
  *   2. Everything is synchronous. A hook process is about to exit.
- *   3. Nothing throws. Losing this file costs one un-recalled turn, never a prompt (§4.9).
+ *   3. Nothing throws. Losing this file costs one un-recalled turn, never a prompt.
  */
 
 import { unlinkSync } from 'node:fs';
@@ -90,7 +90,7 @@ export const CARRY_TTL_MS = 15 * 60 * 1000;
  */
 
 /**
- * §7: `runs/<run_id>/carry.json`, or `''` when the run id leaves no usable path segment.
+ * `runs/<run_id>/carry.json`, or `''` when the run id leaves no usable path segment.
  *
  * A run id can be pinned by hand in a settings file or an environment variable, so it is
  * untrusted input to a path — the same rule `lib/state.mjs` applies everywhere. An empty
@@ -158,7 +158,7 @@ export function takeCarry(cfg, runId) {
       fetchMs: int(raw.fetch_ms, 0),
     };
   } catch {
-    // §4.9/§12.1: an unreadable ${CLAUDE_PLUGIN_DATA} costs the carried turn, nothing else.
+    // An unreadable ${CLAUDE_PLUGIN_DATA} costs the carried turn, nothing else.
     return null;
   }
 }
@@ -176,7 +176,7 @@ export function takeCarry(cfg, runId) {
  *
  * Note what is **not** stored: the prompt text. It is already in
  * `runs/<run_id>/turns/<prompt_id>.json`, and a second copy would be a second place for a
- * secret to land (§4.4). `for_prompt_id` gives the same provenance for free.
+ * secret to land. `for_prompt_id` gives the same provenance for free.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
@@ -220,7 +220,7 @@ export function writeCarry(cfg, runId, outcome, meta = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Drop whatever is carried — the compaction reset (§5.6), shared with `clearSeen`.
+ * Drop whatever is carried — the compaction reset, shared with `clearSeen`.
  *
  * A block assembled *before* a compaction may carry pointer lines, and a pointer is a
  * promise that the full entry is somewhere earlier in this conversation. After a compaction

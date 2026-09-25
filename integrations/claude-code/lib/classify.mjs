@@ -7,7 +7,7 @@
  * inventory); spec §6.2 (categorisation).
  *
  * ---------------------------------------------------------------------------
- * The performance fact this whole module exists to serve (§1.5)
+ * The performance fact this whole module exists to serve
  * ---------------------------------------------------------------------------
  * An item that arrives at ingest already carrying a real intent is classified far more
  * cheaply than one that arrives without it. At tool-call frequency that difference is
@@ -22,7 +22,7 @@
  * Zero dependencies, Node >= 20 built-ins only, synchronous, and nothing here throws.
  */
 
-/** §1.3: every ingest item carries a `content_type`; the plugin only ever writes text. */
+/** Every ingest item carries a `content_type`; the plugin only ever writes text. */
 const CONTENT_TYPE = 'text';
 
 /**
@@ -116,14 +116,14 @@ const TOOL_TABLE = {
   collaborationassign_agent_task: ['trace', 'medium'],
 };
 
-/** §1.5: the fallback for anything unrecognised. A real intent, never `unclassified`. */
+/** The fallback for anything unrecognised. A real intent, never `unclassified`. */
 const FALLBACK = /** @type {[string, string]} */ (['tool_output', 'low']);
 
-/** §4.5: foreign `mcp__*` — server + tool in metadata. */
+/** Foreign `mcp__*` — server + tool in metadata. */
 const MCP = /** @type {[string, string]} */ (['tool_output', 'low']);
 
 /**
- * §4.5: "any tool, `PostToolUseFailure` -> `trace` / **`high`**".
+ * "any tool, `PostToolUseFailure` -> `trace` / **`high`**".
  *
  * Failures are `high` on purpose, and it overrides every row above. A failed approach is
  * the highest-value thing a coding agent can remember — it is the one class of knowledge
@@ -158,7 +158,7 @@ function parseMcp(name) {
 }
 
 /**
- * §5.4 step 4: `classifyTool() -> {intent, importance, contentType}`.
+ * `classifyTool() -> {intent, importance, contentType}`.
  *
  * `toolInput` is accepted, never required, and never trusted: the classification is a
  * function of the tool name and the outcome alone, so a hostile or enormous `tool_input`
@@ -180,7 +180,7 @@ export function classifyTool(toolName, toolInput, outcome = 'ok') {
   /** @type {{intent: string, importance: string, contentType: string, metadata?: Record<string, string>}} */
   const out = { intent, importance, contentType: CONTENT_TYPE };
 
-  // §4.5: keep the server/tool split for an MCP call even when it failed — "which server"
+  // Keep the server/tool split for an MCP call even when it failed — "which server"
   // is most of the signal in `mcp__github__create_issue` blowing up.
   if (mcp) out.metadata = { mcp_server: mcp.server, mcp_tool: mcp.tool, tool: name };
 
@@ -201,7 +201,7 @@ export function classifyTool(toolName, toolInput, outcome = 'ok') {
  * needs: a fan-out's results listed as open handoffs until each is answered.
  *
  * `PreCompact`'s importance is "—" in the table because the item never reaches ingest: it
- * goes to `POST /v2/control/checkpoint` (§5.6), which has no importance field. A valid
+ * goes to `POST /v2/control/checkpoint`, which has no importance field. A valid
  * value is still emitted so a caller that spreads this into an item cannot produce an
  * invalid one.
  *

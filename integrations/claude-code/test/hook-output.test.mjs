@@ -251,7 +251,7 @@ function writeTranscript(dataDir) {
 }
 
 /**
- * §7: `runs/<run_id>/rules.json`, the store `session-start` and `prompt-recall` fill and
+ * `runs/<run_id>/rules.json`, the store `session-start` and `prompt-recall` fill and
  * `pre-tool` reads. The text has to share terms with the `preToolUse` fixture's command
  * (`git push --force origin main`) or the hook correctly says nothing and this gate goes
  * vacuous.
@@ -267,7 +267,7 @@ function seedRule(dataDir) {
 }
 
 /**
- * §5.3: `runs/<run_id>/turns/<prompt_id>.json`, the turn `stage-prompt` writes on the
+ * `runs/<run_id>/turns/<prompt_id>.json`, the turn `stage-prompt` writes on the
  * parent's `UserPromptSubmit` and `subagent-start` reads its query back out of.
  */
 function stageParentTurn(dataDir) {
@@ -282,7 +282,7 @@ function stageParentTurn(dataDir) {
   }));
 }
 
-/** §7: `runs/<run_id>/checkpoints.json`, the file `--pre` writes and `--post` reads. */
+/** `runs/<run_id>/checkpoints.json`, the file `--pre` writes and `--post` reads. */
 function seedCheckpoint(dataDir) {
   const dir = join(dataDir, 'runs', RUN_ID);
   mkdirSync(dir, { recursive: true });

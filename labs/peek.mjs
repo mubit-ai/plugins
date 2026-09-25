@@ -81,7 +81,7 @@ function tree() {
 }
 
 function sessions() {
-  head('sessions/  — host session id → Mubit run id (§4.3)');
+  head('sessions/  — host session id → Mubit run id');
   for (const [name, rec] of jsonFiles(join(DATA, 'sessions'))) {
     say(`  ${name}`);
     say(`    run_id       ${rec.run_id}`);

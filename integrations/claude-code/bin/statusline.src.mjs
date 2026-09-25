@@ -22,7 +22,7 @@
  *      trace there is the first thing they would ever see of this plugin. Every path out of
  *      `render()` is wrapped; the worst outcome is an empty line.
  *
- * Bundled to `bin/statusline.mjs` by §11.2 and registered by `settings.json` (§3.4).
+ * Bundled to `bin/statusline.mjs` by §11.2 and registered by `settings.json`.
  */
 
 import { realpathSync } from 'node:fs';
@@ -36,7 +36,7 @@ import { deriveRunId, loadSessionMap } from '../lib/runid.mjs';
 import { dataDir, readJson, writeJsonAtomic } from '../lib/state.mjs';
 
 /**
- * §16.2 step 2 — the liveness probe. Whether a plugin may own `statusLine` through a shipped
+ * The liveness probe. Whether a plugin may own `statusLine` through a shipped
  * `settings.json` is undocumented and may simply be ignored by the host, so the plugin has to
  * find out empirically: this process stamps the marker, and the *next* `session-start` reads
  * it. `session-start` owns the file's creation — a status line that created it would also be
@@ -59,7 +59,7 @@ const RECALL_DRY_ESCALATION = 3;
 const STDIN_TIMEOUT_MS = 300;
 
 // ---------------------------------------------------------------------------
-// §10 — glyph precedence, worst state wins, top to bottom
+// Glyph precedence, worst state wins, top to bottom
 // ---------------------------------------------------------------------------
 
 /**
@@ -86,7 +86,7 @@ const DISPLAY = {
  * last call that failed. They can disagree, and §10 says the user gets the worse of the
  * two — a breaker that has seen five refusals is still the truth even if the last marker
  * write predates them, and a marker written by a hook that just got a 401 is still the
- * truth even if the breaker is closed (auth failures never open it, §4.7).
+ * truth even if the breaker is closed (auth failures never open it).
  *
  * **Cold start is resolved here rather than by `readBreaker().display`, deliberately.**
  * `lib/breaker.mjs:290-302` only reports `warming` when the *breaker's* own state is a
@@ -124,8 +124,8 @@ const DISPLAY = {
  * inside the grace window is a real verdict — and it is the one error the user can fix.
  * ---------------------------------------------------------------------------
  *
- * @param {string} markerState  `marker.state` (§4.8) — a ConnState, or `unknown`
- * @param {string} breakerState `readBreaker().state` (§4.7)
+ * @param {string} markerState  `marker.state` — a ConnState, or `unknown`
+ * @param {string} breakerState `readBreaker().state`
  * @param {boolean} coldStart   `marker.cold_start_until` is still in the future
  * @returns {{glyph: string, label: string}}
  */
@@ -150,7 +150,7 @@ function resolveDisplay(markerState, breakerState, coldStart) {
  */
 const NEVER_WARMING = new Set(['auth_failed', 'unconfigured']);
 
-/** §4.7: the ConnState union is closed — anything else has no glyph and is not a verdict. */
+/** The ConnState union is closed — anything else has no glyph and is not a verdict. */
 function isConnState(v) {
   return typeof v === 'string' && /** @type {readonly string[]} */ (CONN_STATES).includes(v);
 }
@@ -163,7 +163,7 @@ function isConnState(v) {
  * Which `status/<run_id>.json` is this session's.
  *
  * The session map is tried first for two reasons. It is *correct* where a bare derivation
- * is not: after a `/clear` the run is `cc-<slug>-<hash>-c1` (§4.3) while a fresh derivation
+ * is not: after a `/clear` the run is `cc-<slug>-<hash>-c1` while a fresh derivation
  * still answers `cc-<slug>-<hash>`, whose 12-hour-TTL marker is still on disk — the status
  * line would happily render the pre-clear run's numbers. And it is *cheap*: `deriveRunId`
  * shells out to `git rev-parse --show-toplevel` inside a repo, which is a process spawn on
@@ -183,7 +183,7 @@ function resolveRunId(cfg, payload) {
   try {
     return String(deriveRunId(cfg, {}) ?? '');
   } catch {
-    // `static` with no pin is a config error (§4.3). It is a real one, but a status line is
+    // `static` with no pin is a config error. It is a real one, but a status line is
     // not where a user should learn about it — `session-start.mjs` says so out loud.
     return '';
   }
@@ -221,7 +221,7 @@ function mappedRunId(cfg, payload) {
  * The whole status line, or `''`.
  *
  * `''` — not a placeholder, not an error — is the answer for every empty state: the widget
- * turned off (§10), a fresh install with no data dir, a data dir with no marker yet, and a
+ * turned off, a fresh install with no data dir, a data dir with no marker yet, and a
  * marker truncated by a SIGKILL mid-rename (`readMarker` degrades a corrupt file to the
  * §4.8 default, which is indistinguishable from "never written", which is silence).
  *
@@ -231,7 +231,7 @@ function mappedRunId(cfg, payload) {
 export function render(payload = {}) {
   const cfg = loadConfig(process.env);
 
-  // §10: `MUBIT_CC_STATUSLINE=0` or `statusLine: false` prints nothing and exits 0 — an
+  // `MUBIT_CC_STATUSLINE=0` or `statusLine: false` prints nothing and exits 0 — an
   // empty status line, not an error. Anything else makes the host draw a failed-command
   // banner on every frame, which is a worse outcome than the widget the user just disabled.
   if (cfg.statusLine === false) return '';
@@ -245,7 +245,7 @@ export function render(payload = {}) {
 
   const marker = readMarker(cfg, runId);
 
-  // §16.2: no marker at all. `readMarker` cannot say "missing" — it returns the §4.8 default
+  // No marker at all. `readMarker` cannot say "missing" — it returns the §4.8 default
   // — so the tell is that nothing has ever stamped it. `updateMarker` restamps `updated_at`
   // on every write, so `0` means no hook has run for this run yet.
   if (!(num(marker.updated_at) > 0)) return '';
@@ -254,7 +254,7 @@ export function render(payload = {}) {
   const coldStartUntil = num(marker.cold_start_until);
 
   // `coldStartUntil` is handed over even though `display` is not used: it is the documented
-  // call shape (§4.7), and passing it keeps this call honest if a future reader trusts it.
+  // call shape, and passing it keeps this call honest if a future reader trusts it.
   const breaker = readBreaker(cfg, { coldStartUntil });
 
   const { glyph, label } = resolveDisplay(
@@ -274,7 +274,7 @@ export function render(payload = {}) {
 
   const sources = num(recall.sources);
   const tokens = num(recall.tokens);
-  // §16.2 — a recall path that is permanently dead must say so somewhere the user looks.
+  // A recall path that is permanently dead must say so somewhere the user looks.
   // Until this, the worst case rendered as a green `●` beside `recall 0/0 tok`: every hook
   // firing, every call timing out, nothing injected, and no fault reported anywhere. That is
   // the failure that makes a memory plugin look useless rather than broken.
@@ -296,7 +296,7 @@ export function render(payload = {}) {
   const global = num(lessons.global);
   if (global > 0) parts.push(`lessons ${int(global)}g`);
 
-  // §16.2 — the reflect verdict, for the same reason `recall dry` is above it.
+  // The reflect verdict, for the same reason `recall dry` is above it.
   //
   // Reflect at session end is the only call that can widen a lesson past `run` scope, so a
   // reflect that fails costs the session its cross-session memory outright. It failed 12
@@ -314,13 +314,13 @@ export function render(payload = {}) {
   // user to ignore it.
   if (str(group(marker.reflect).status) === 'failed') parts.push('reflect failed');
 
-  // §10/§1.8: rung 1 is the free path at zero LLM calls and needs no label. `rung` is only
+  // Rung 1 is the free path at zero LLM calls and needs no label. `rung` is only
   // a label when it is a rung the user is *paying* for — `0` is the §4.8 default for "no
   // recall has happened yet", not a rung, and must never render as `rung 0`.
   const rung = int(num(recall.rung));
   if (rung > 1) parts.push(`rung ${rung}`);
 
-  // §10: an open breaker recovers by itself. The remaining cooldown is the difference
+  // An open breaker recovers by itself. The remaining cooldown is the difference
   // between "it comes back in 94 seconds" and "this thing is dead". A closed breaker says
   // nothing at all — noise in a per-frame widget is worse than silence.
   const paused = pausedSeconds(breaker, cfg, now);
@@ -401,14 +401,14 @@ function compact(n) {
 }
 
 /**
- * Record that the host invoked us, for the *next* `session-start` to read (§16.2 step 2).
+ * Record that the host invoked us, for the *next* `session-start` to read.
  *
  * Written at most **once per session**, not once per frame: the stamp is skipped as soon as
  * it is newer than the session-start that preceded it, which is true from the second frame
  * onward. A per-frame write would be a filesystem round trip inside a 15 ms budget, spent on
  * a fact that stopped changing after the first frame.
  *
- * Does nothing when the marker is absent. `session-start` creates it (§16.2 step 2), and
+ * Does nothing when the marker is absent. `session-start` creates it, and
  * until it has, this is a fresh install — where the contract is to touch nothing.
  *
  * @param {Record<string, any>} cfg

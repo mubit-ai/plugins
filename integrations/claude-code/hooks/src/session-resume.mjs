@@ -60,7 +60,7 @@
  * carries `{record: false}` so nothing it learns can reach the breaker.
  *
  * Constraints shared with the rest of the plugin: zero dependencies, Node >= 20 built-ins,
- * and **exit code 0, always** (§4.9).
+ * and **exit code 0, always**.
  */
 
 import { isConfigured, loadConfig } from '../../lib/config.mjs';

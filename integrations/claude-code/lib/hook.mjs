@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/hook.mjs` — the harness every hook in this plugin runs inside (§4.9).
+ * `lib/hook.mjs` — the harness every hook in this plugin runs inside.
  *
  * ---------------------------------------------------------------------------
  * Exit-code discipline is the whole point of this module
@@ -61,7 +61,7 @@ const DETACHED_ENV = 'MUBIT_CC_DETACHED';
 const TIMEOUT = 'timeout';
 
 /**
- * The three Codex events that reject `suppressOutput` (§4.9).
+ * The three Codex events that reject `suppressOutput`.
  *
  * Codex checks a hook's stdout twice: against a generated JSON Schema, and then against a set
  * of semantic rules the schema does not carry. `suppressOutput` is a declared property of
@@ -155,7 +155,7 @@ export async function runHook(name, options = {}) {
     settled = true;
     emit(forHost(value, hookEvent));
     if (payloadPath) {
-      // §4.9: "the child unlinks the file when done". Done means here — after the body
+      // "the child unlinks the file when done". Done means here — after the body
       // has run — not at read time, or a crashed child would leave nothing to debug.
       try { unlinkSync(payloadPath); } catch { /* already gone, or never ours */ }
     }
@@ -231,7 +231,7 @@ export async function runHook(name, options = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.9: fire a sibling script and forget about it.
+ * Fire a sibling script and forget about it.
  *
  * ```js
  * const child = spawn(process.execPath, [scriptPath, ...args, '--payload', payloadPath], {

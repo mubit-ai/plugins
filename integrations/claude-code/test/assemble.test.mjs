@@ -1,11 +1,11 @@
 // @ts-check
 /**
- * `lib/assemble.mjs` — client-side section assembly (§4.10, test plan §12.5).
+ * `lib/assemble.mjs` — client-side section assembly (test plan §12.5).
  *
  * Why this module exists at all: rungs 1 and 2 of the read ladder return `evidence[]`,
  * not a preassembled `context_block`. This module does what rung 3
  * (`POST /v2/control/context`) would have done server-side — for **zero LLM calls**
- * instead of two (§1.8). Every assertion below protects the property that makes that
+ * instead of two. Every assertion below protects the property that makes that
  * substitution honest: the client must render the same shape, in the same order, with
  * the same `emptyReason` vocabulary the server would have used, so downstream code is
  * rung-agnostic.
@@ -24,14 +24,14 @@ const load = () => lib('assemble.mjs');
 // Reference tables, transcribed from the guide
 // ---------------------------------------------------------------------------
 
-/** The 17 LTM entry types (§1.6). */
+/** The 17 LTM entry types. */
 const ENTRY_TYPES = [
   'fact', 'trace', 'archive_block', 'lesson', 'rule', 'handoff', 'feedback',
   'observation', 'tool_output', 'tool_input', 'reflection', 'task_result', 'log',
   'checkpoint', 'step_outcome', 'mental_model', 'workflow',
 ];
 
-/** Section keys (§1.3, `control.proto`). Nothing may be invented outside this set. */
+/** Section keys (`control.proto`). Nothing may be invented outside this set. */
 const SECTION_KEYS = [
   'mental_models', 'active_rules', 'lessons', 'archive_blocks', 'handoffs', 'feedback',
   'facts', 'observations', 'working_memory', 'traces', 'goals', 'checkpoints', 'logs',
@@ -70,7 +70,7 @@ const SECTION_FOR = {
   workflow: 'other',
 };
 
-/** Server-fixed emission order (§1.3 / §4.10, `control.proto`). */
+/** Server-fixed emission order (`control.proto`). */
 const EMISSION_ORDER = [
   'mental_models', 'active_rules', 'lessons', 'facts', 'observations',
   'working_memory', 'traces', 'goals',
@@ -116,7 +116,7 @@ test('sectionFor maps all 17 LTM entry types per the §4.10 table', async () => 
     'the set of unmapped types is a spec decision — change the table, not the test');
 });
 
-// §4.10: `working_memory` and `goal` are intent/section inputs that both collapse onto
+// `working_memory` and `goal` are intent/section inputs that both collapse onto
 // the single `working_memory` section.
 test('sectionFor collapses working_memory and goal onto working_memory', async () => {
   const { sectionFor } = await load();
@@ -124,7 +124,7 @@ test('sectionFor collapses working_memory and goal onto working_memory', async (
   assert.equal(sectionFor('goal'), 'working_memory');
 });
 
-// §4.10: the five trace-shaped types share one section, so a turn's tool traffic renders
+// The five trace-shaped types share one section, so a turn's tool traffic renders
 // as one block rather than five near-empty headings.
 test('sectionFor folds every trace-shaped type into traces', async () => {
   const { sectionFor } = await load();
@@ -133,7 +133,7 @@ test('sectionFor folds every trace-shaped type into traces', async () => {
   }
 });
 
-// §1.3: the section vocabulary is fixed by control.proto — the client may never invent a key.
+// The section vocabulary is fixed by control.proto — the client may never invent a key.
 test('sectionFor only ever returns a documented section key', async () => {
   const { sectionFor } = await load();
   for (const et of [...ENTRY_TYPES, 'working_memory', 'goal', '', 'not_a_type', 'RULE']) {
@@ -144,7 +144,7 @@ test('sectionFor only ever returns a documented section key', async () => {
   }
 });
 
-// §4.10: unknown/blank types fall through to `other` rather than throwing — this runs
+// Unknown/blank types fall through to `other` rather than throwing — this runs
 // inside a 1500 ms blocking budget and must never take the prompt down with it.
 test('sectionFor sends unknown and blank entry types to other', async () => {
   const { sectionFor } = await load();
@@ -152,7 +152,7 @@ test('sectionFor sends unknown and blank entry types to other', async () => {
   assert.equal(sectionFor(''), 'other');
 });
 
-// §4.10: "maps entry_type (or origin_entry_type when the entry came through an overlay)".
+// "maps entry_type (or origin_entry_type when the entry came through an overlay)".
 // The overlay's own type is bookkeeping; the origin is what the user needs to read.
 test('an overlay entry routes by origin_entry_type, not entry_type', async () => {
   const { assembleContext } = await load();
@@ -223,7 +223,7 @@ test('each SectionSummary carries a section key and a positive count', async () 
 // Token budget
 // ---------------------------------------------------------------------------
 
-// §4.10: budget enforcement is what keeps MUBIT_CC_RECALL_TOKENS meaningful now that the
+// Budget enforcement is what keeps MUBIT_CC_RECALL_TOKENS meaningful now that the
 // server no longer applies max_token_budget for us on rungs 1-2.
 test('a 100-token budget against 50 items renders under budget and reports drops', async () => {
   const { assembleContext, estimateTokens } = await load();
@@ -238,7 +238,7 @@ test('a 100-token budget against 50 items renders under budget and reports drops
     'dropped + rendered must account for every evidence item');
 });
 
-// §4.10: "Fill sections in the order above, items within a section by descending score."
+// "Fill sections in the order above, items within a section by descending score."
 // Section order outranks score — a low-scoring rule beats a high-scoring trace.
 test('sections fill in the fixed order before score is considered', async () => {
   const { assembleContext } = await load();
@@ -256,7 +256,7 @@ test('sections fill in the fixed order before score is considered', async () => 
   assert.ok(r.dropped > 0, 'a 120-token budget cannot hold six ~50-token items');
 });
 
-// §4.10: within a section, descending score — the best evidence survives the trim.
+// Within a section, descending score — the best evidence survives the trim.
 test('items inside a section are ordered by descending score', async () => {
   const { assembleContext } = await load();
   const ev = [
@@ -270,7 +270,7 @@ test('items inside a section are ordered by descending score', async () => {
   assert.deepEqual(r.sourceRefIds, ['ref_high', 'ref_mid', 'ref_low']);
 });
 
-// §4.10: "prefer non-is_stale entries when trimming — the server returns stale entries for
+// "prefer non-is_stale entries when trimming — the server returns stale entries for
 // transparency but marks them" (control.proto).
 test('a stale entry loses to a fresh entry of equal score', async () => {
   const { assembleContext } = await load();
@@ -324,7 +324,7 @@ test('a fresh entry outranks a stale entry of equal score even when both fit', a
 // emptyReason — the server's vocabulary, reproduced client-side
 // ---------------------------------------------------------------------------
 
-// §4.10: emptyReason reproduces the server's vocabulary so downstream code is rung-agnostic.
+// emptyReason reproduces the server's vocabulary so downstream code is rung-agnostic.
 test('empty evidence yields emptyReason "no_evidence" and an empty block', async () => {
   const { assembleContext } = await load();
   const r = assembleContext([], { tokenBudget: 1500 });
@@ -335,7 +335,7 @@ test('empty evidence yields emptyReason "no_evidence" and an empty block', async
   assert.equal(r.tokenEstimate, 0);
 });
 
-// §4.10: evidence existed but nothing fit — distinct from "there was nothing to say".
+// Evidence existed but nothing fit — distinct from "there was nothing to say".
 // prompt-recall needs the distinction to report "budget-truncated" rather than "empty".
 test('evidence that cannot fit the budget yields "budget_exhausted"', async () => {
   const { assembleContext } = await load();
@@ -348,7 +348,7 @@ test('evidence that cannot fit the budget yields "budget_exhausted"', async () =
   assert.equal(r.dropped, 3);
 });
 
-// §4.10: `""` when something rendered — the same sentinel ContextResponse.empty_reason uses.
+// `""` when something rendered — the same sentinel ContextResponse.empty_reason uses.
 test('a rendered block yields an empty emptyReason', async () => {
   const { assembleContext } = await load();
   const r = assembleContext([item(1)], { tokenBudget: 1500 });
@@ -356,7 +356,7 @@ test('a rendered block yields an empty emptyReason', async () => {
   assert.ok(r.block.length > 0);
 });
 
-// §4.10: "recency_fallback is server-only and never produced here." Emitting it client-side
+// "recency_fallback is server-only and never produced here." Emitting it client-side
 // would make the status line claim a server behaviour that never happened.
 test('recency_fallback is never produced by the client assembler', async () => {
   const { assembleContext } = await load();
@@ -376,7 +376,7 @@ test('recency_fallback is never produced by the client assembler', async () => {
 // sourceRefIds — the attribution surface
 // ---------------------------------------------------------------------------
 
-// §4.10/§5.5: sourceRefIds is what Stop attributes against. A rendered item missing from it
+// sourceRefIds is what Stop attributes against. A rendered item missing from it
 // is a memory that silently never gets reinforced — the learning loop breaks with no error.
 test('sourceRefIds contains exactly the rendered items, and nothing else', async () => {
   const { assembleContext } = await load();
@@ -414,7 +414,7 @@ test('sourceRefIds carries reference_id, never the evidence id', async () => {
 // estimateTokens
 // ---------------------------------------------------------------------------
 
-// §4.10: "~4 chars per token. Deliberately cheap — this runs inside a 1500 ms blocking
+// "~4 chars per token. Deliberately cheap — this runs inside a 1500 ms blocking
 // budget." Roughly right beats exactly right here; a real tokenizer would blow the budget.
 test('estimateTokens is monotonic in input length', async () => {
   const { estimateTokens } = await load();
@@ -578,7 +578,7 @@ test('an entry shorter than its own pointer is rendered in full', async () => {
   assert.equal(r.pointers, 0, 'a line that was not shortened was not degraded');
 });
 
-// §4.10: the server marks an entry stale for transparency, and a mark the client renders
+// The server marks an entry stale for transparency, and a mark the client renders
 // nowhere is a mark that does nothing. A pointer is still a rendered entry.
 test('a seen entry that is stale keeps its stale mark on the pointer', async () => {
   const { assembleContext } = await load();

@@ -9,7 +9,7 @@
  * breaker is consulted before dialing).
  *
  * The load-bearing property of this module is that it NEVER throws. Every hook in the
- * plugin exits 0 in every failure mode (§4.9), and that is only affordable because the
+ * plugin exits 0 in every failure mode, and that is only affordable because the
  * network layer hands back a value for every outcome — including the ones that are not
  * HTTP outcomes at all.
  */
@@ -79,10 +79,10 @@ const logText = (dataDir) => {
 };
 
 // ---------------------------------------------------------------------------
-// request() never throws — §4.2
+// request() never throws
 // ---------------------------------------------------------------------------
 
-// §4.2: the success envelope is {ok:true, status, body, ms}.
+// The success envelope is {ok:true, status, body, ms}.
 test('request: a 200 returns {ok:true, status, body, ms}', async (t) => {
   const { cfg, http } = await setup(t);
   const r = await noThrow(() => http.request(cfg, 'POST', '/v2/control/outcome',
@@ -94,7 +94,7 @@ test('request: a 200 returns {ok:true, status, body, ms}', async (t) => {
   assert.equal(r.body.success, true);
 });
 
-// §1.2 / §4.7: a 401 is a returned value, not an exception, and it is classified.
+// A 401 is a returned value, not an exception, and it is classified.
 test('request: a 401 returns {ok:false, state:"auth_failed"} without throwing', async (t) => {
   const { cfg, http } = await setup(t, {
     routes: { 'POST /v2/control/query': { status: 401, json: { error: 'unauthorized' } } },
@@ -108,7 +108,7 @@ test('request: a 401 returns {ok:false, state:"auth_failed"} without throwing', 
   assert.ok(r.error, 'a failed result carries an error string');
 });
 
-// §4.7: 5xx → server_error.
+// 5xx → server_error.
 test('request: a 500 returns {ok:false, state:"server_error"} without throwing', async (t) => {
   const { cfg, http } = await setup(t, {
     routes: { 'POST /v2/control/ingest': { status: 500, json: { error: 'boom' } } },
@@ -121,7 +121,7 @@ test('request: a 500 returns {ok:false, state:"server_error"} without throwing',
   assert.equal(r.status, 500);
 });
 
-// §4.7: an unparseable body on a JSON route is a server fault, not an unhandled
+// An unparseable body on a JSON route is a server fault, not an unhandled
 // rejection. A reverse proxy returning an HTML error page is the real-world shape.
 test('request: a non-JSON body on a JSON route returns server_error, no unhandled rejection', async (t) => {
   const { cfg, http } = await setup(t, {
@@ -134,7 +134,7 @@ test('request: a non-JSON body on a JSON route returns server_error, no unhandle
   assert.equal(r.state, 'server_error');
 });
 
-// §4.7: nothing listening. The most common state of a local Mubit.
+// Nothing listening. The most common state of a local Mubit.
 test('request: a refused connection returns {ok:false, state:"unreachable"} without throwing', async (t) => {
   const { cfg, http } = await setupDead(t);
   const r = await noThrow(() => http.request(cfg, 'POST', '/v2/control/ingest', { run_id: RUN },
@@ -235,7 +235,7 @@ test('the hinted errnos are the ones the breaker classifies', async (t) => {
   assert.ok(!hinted.includes('ENOSPC'), 'a non-network errno gets no network sentence');
 });
 
-// §4.7: a socket that is accepted and then never answered is the timeout path.
+// A socket that is accepted and then never answered is the timeout path.
 test('request: a hung socket returns {ok:false, state:"not_responding"} without throwing', async (t) => {
   const { cfg, http } = await setup(t, { routes: { 'POST /v2/control/query': { hang: true } } });
   const r = await noThrow(() => http.request(cfg, 'POST', '/v2/control/query', { run_id: RUN },
@@ -246,7 +246,7 @@ test('request: a hung socket returns {ok:false, state:"not_responding"} without 
   assert.equal(r.state, 'not_responding');
 });
 
-// §1.3: the wire contract is JSON on every route except health.
+// The wire contract is JSON on every route except health.
 test('request: sends application/json on control routes', async (t) => {
   const { server, cfg, http } = await setup(t);
   await http.request(cfg, 'POST', '/v2/control/checkpoint', { run_id: RUN });
@@ -257,7 +257,7 @@ test('request: sends application/json on control routes', async (t) => {
   assert.deepEqual(call.body, { run_id: RUN }, 'the body is sent verbatim as JSON');
 });
 
-// §4.7: http.mjs is what feeds the breaker; without this, the breaker could never open.
+// http.mjs is what feeds the breaker; without this, the breaker could never open.
 test('request: a server failure is recorded on the breaker', async (t) => {
   const { cfg, dataDir, http } = await setup(t, {
     routes: { 'POST /v2/control/ingest': { status: 500, json: { error: 'boom' } } },
@@ -274,10 +274,10 @@ test('request: a server failure is recorded on the breaker', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// health() — §1.2, §4.2, §7
+// health()
 // ---------------------------------------------------------------------------
 
-// §1.2: `GET /v2/core/health` returns the literal bare string `OK`
+// `GET /v2/core/health` returns the literal bare string `OK`
 //. JSON.parse there is a guaranteed false negative — it
 // would report every healthy server as unhealthy and the plugin would never dial again.
 test('health: reads the body as TEXT and succeeds against the literal "OK"', async (t) => {
@@ -289,7 +289,7 @@ test('health: reads the body as TEXT and succeeds against the literal "OK"', asy
   server.assertCalled('GET', '/v2/core/health', 1);
 });
 
-// §4.7 — a 2xx is necessary and not sufficient. An SSO portal, a captive portal, a proxy
+// A 2xx is necessary and not sufficient. An SSO portal, a captive portal, a proxy
 // error page and an unrelated service all answer 200; taking the status alone as healthy
 // opened the session by telling the model memory was active when nothing behind the
 // endpoint was Mubit. The route returns `OK`, so one comparison settles it.
@@ -329,7 +329,7 @@ test('health: surrounding whitespace on "OK" is still healthy', async (t) => {
   assert.equal(r.ok, true);
 });
 
-// §4.1 — the guard that makes `unconfigured` mean what it says. Before it, `urlFor`
+// The guard that makes `unconfigured` mean what it says. Before it, `urlFor`
 // handed `fetch` the bare route, `fetch` threw ERR_INVALID_URL before opening a socket, and
 // the throw was classified as a fault in a server that was never contacted.
 test('no endpoint: every call refuses without dialing and without touching the breaker', async (t) => {
@@ -354,7 +354,7 @@ test('no endpoint: every call refuses without dialing and without touching the b
   }
 });
 
-// §1.1/§7: the health result is cached for 30 s, so a SessionStart plus a status refresh
+// The health result is cached for 30 s, so a SessionStart plus a status refresh
 // do not each pay a round trip.
 test('health: the result is cached for 30s — a second call makes zero extra requests', async (t) => {
   const { server, cfg, dataDir, http } = await setup(t);
@@ -366,10 +366,10 @@ test('health: the result is cached for 30s — a second call makes zero extra re
   assert.equal(second.ok, true);
   server.assertCalled('GET', '/v2/core/health', 1);
   assert.ok(existsSync(join(dataDir, 'status', 'health.json')),
-    'the cached verdict lives at status/health.json (§7)');
+    'the cached verdict lives at status/health.json');
 });
 
-// §1.2: the readiness probe is the one call the plugin makes before the user has pasted a
+// The readiness probe is the one call the plugin makes before the user has pasted a
 // key, so it must not require the config to carry one.
 test('health: the readiness probe runs before a key is configured', async (t) => {
   const { server, cfg, http } = await setup(t, { apiKey: '' });
@@ -379,7 +379,7 @@ test('health: the readiness probe runs before a key is configured', async (t) =>
   server.assertCalled('GET', '/v2/core/health', 1);
 });
 
-// §4.2: a down instance is a returned value like everything else.
+// A down instance is a returned value like everything else.
 test('health: an unreachable endpoint returns ok:false rather than throwing', async (t) => {
   const { cfg, http } = await setupDead(t);
   const r = await noThrow(() => http.health(cfg, { timeoutMs: 1000 }), 'health(dead)');
@@ -388,10 +388,10 @@ test('health: an unreachable endpoint returns ok:false rather than throwing', as
 });
 
 // ---------------------------------------------------------------------------
-// Auth — §1.2
+// Auth
 // ---------------------------------------------------------------------------
 
-// §1.2: every /v2/control/* handler calls authenticate() first, including in local mode.
+// Every /v2/control/* handler calls authenticate() first, including in local mode.
 test('auth: every /v2/control/* request carries Authorization: Bearer <key>', async (t) => {
   const { server, cfg, http } = await setup(t);
 
@@ -405,7 +405,7 @@ test('auth: every /v2/control/* request carries Authorization: Bearer <key>', as
   }
 });
 
-// §1.2: a missing key must not produce `Authorization: Bearer ` or `Bearer undefined` —
+// A missing key must not produce `Authorization: Bearer ` or `Bearer undefined` —
 // a malformed header is a harder 401 to diagnose than an absent one.
 test('auth: a missing key sends no Authorization header at all', async (t) => {
   const { server, cfg, http } = await setup(t, { apiKey: '' });
@@ -419,10 +419,10 @@ test('auth: a missing key sends no Authorization header at all', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// Pre-flight guards — §1.1 cap, §5.2 mode literal, §4.3 "default"
+// Pre-flight guards.1 cap, §5.2 mode literal, §4.3 "default"
 // ---------------------------------------------------------------------------
 
-// §1.1: /v2/control/query has a per-route 256 KiB cap; everything
+// /v2/control/query has a per-route 256 KiB cap; everything
 // else inherits 64 MiB. Blowing it produces a 413 that looks like a server fault to the
 // breaker, so the check happens client-side and nothing is dialed.
 test('postQuery: a body over 256 KiB is rejected pre-flight and nothing is dialed', async (t) => {
@@ -453,7 +453,7 @@ test('postQuery: a body just under 256 KiB is sent', async (t) => {
   server.assertCalled('POST', '/v2/control/query', 1);
 });
 
-// §5.2: only "direct_bypass" and "direct" select the direct lane; EVERY other value
+// Only "direct_bypass" and "direct" select the direct lane; EVERY other value
 // silently falls through to the routed lane with no error. A typo therefore costs an LLM
 // call per prompt, forever,
 // invisibly. Catch it client-side.
@@ -501,7 +501,7 @@ test('postQuery: mode "agent_routed" is legal — it is rung 2, not a typo', asy
   server.assertCalled('POST', '/v2/control/query', 1);
 });
 
-// §5.2: "The field default when omitted is `agent_routed`, so omitting
+// "The field default when omitted is `agent_routed`, so omitting
 // it is the expensive case." An omitted mode is indistinguishable from a typo in cost, so
 // it gets the same treatment: the caller must state which rung it is paying for.
 test('postQuery: an omitted mode is rejected pre-flight — omission is the expensive case', async (t) => {
@@ -511,7 +511,7 @@ test('postQuery: an omitted mode is rejected pre-flight — omission is the expe
   assert.equal(server.requests.length, 0);
 });
 
-// §4.3: `"default"` is the placeholder a session carries before anything has derived a real
+// `"default"` is the placeholder a session carries before anything has derived a real
 // run id for it, so nothing sent under it can be attributed to the work that produced it.
 // request() is the last line of defence and refuses to put it on the wire at all.
 test('request: refuses any body whose run_id === "default", and dials nothing', async (t) => {
@@ -544,7 +544,7 @@ test('request: a run_id that merely contains "default" is allowed', async (t) =>
 });
 
 // ---------------------------------------------------------------------------
-// Required fields — §1.3 (a missing field is a 422, not a silent default)
+// Required fields.3 (a missing field is a 422, not a silent default)
 // ---------------------------------------------------------------------------
 
 const ingestItem = () => spoolItem();
@@ -595,7 +595,7 @@ const REJECT_ROWS = [
 ];
 
 for (const [label, call] of REJECT_ROWS) {
-  // §1.3: validate before dialing — a missing field is a 422, and a 422 looks like a
+  // Validate before dialing — a missing field is a 422, and a 422 looks like a
   // server fault to anything downstream.
   test(`required fields: ${label} (rejected pre-flight, nothing dialed)`, async (t) => {
     const { server, cfg, http } = await setup(t);
@@ -631,7 +631,7 @@ const HAPPY_ROWS = [
 ];
 
 for (const [name, path, call] of HAPPY_ROWS) {
-  // §1.1: each wrapper owns exactly one route and issues exactly one request.
+  // Each wrapper owns exactly one route and issues exactly one request.
   test(`typed wrapper: ${name} POSTs ${path} exactly once`, async (t) => {
     const { server, cfg, http } = await setup(t);
     const r = await noThrow(() => call(http, cfg), name);
@@ -651,7 +651,7 @@ test('postHandoff: an unstated action goes on the wire as "continue"', async (t)
   assert.equal(r.body.handoff_id, 'hnd_test_1', 'the id the server minted is what feedback names');
 });
 
-// §1.3: the job query takes run_id on the QUERY STRING, not the body —
+// The job query takes run_id on the QUERY STRING, not the body —
 // GET /v2/control/ingest/jobs/:job_id?run_id=<id>.
 test('getIngestJob: puts run_id on the query string, not in a body', async (t) => {
   const { server, cfg, http } = await setup(t);
@@ -665,7 +665,7 @@ test('getIngestJob: puts run_id on the query string, not in a body', async (t) =
   assert.equal(call.raw, '', 'a GET carries no body');
 });
 
-// §5.4: `intent` is set on every item the plugin writes (§1.5) — omitting it costs one LLM
+// `intent` is set on every item the plugin writes — omitting it costs one LLM
 // round trip per item server-side. The wrapper must pass it through
 // untouched rather than dropping unknown fields.
 test('postIngest: forwards item_id, content_type and intent verbatim', async (t) => {
@@ -683,10 +683,10 @@ test('postIngest: forwards item_id, content_type and intent verbatim', async (t)
 });
 
 // ---------------------------------------------------------------------------
-// Retries — §4.2 ("one, only for not_responding, only when the caller asks")
+// Retries.2 ("one, only for not_responding, only when the caller asks")
 // ---------------------------------------------------------------------------
 
-// §4.2: a 5xx is not retried. The server answered; hammering it is how a memory layer
+// A 5xx is not retried. The server answered; hammering it is how a memory layer
 // turns a blip into an outage.
 test('retry: a 500 is never retried, even with {retry:true}', async (t) => {
   const { server, cfg, http } = await setup(t, {
@@ -699,7 +699,7 @@ test('retry: a 500 is never retried, even with {retry:true}', async (t) => {
   server.assertCalled('POST', '/v2/control/ingest', 1);
 });
 
-// §4.2: blocking hooks never retry — a second 150 ms stall in front of a prompt buys
+// Blocking hooks never retry — a second 150 ms stall in front of a prompt buys
 // nothing the user wants.
 test('retry: a timeout without {retry:true} dials exactly once', async (t) => {
   const { server, cfg, http } = await setup(t, { routes: { 'POST /v2/control/query': { hang: true } } });
@@ -711,7 +711,7 @@ test('retry: a timeout without {retry:true} dials exactly once', async (t) => {
   server.assertCalled('POST', '/v2/control/query', 1);
 });
 
-// §4.2: exactly one retry, only on the timeout path, only when asked — which only
+// Exactly one retry, only on the timeout path, only when asked — which only
 // drain.mjs does, because it is detached and nobody is waiting on it.
 test('retry: a timeout with {retry:true} dials exactly twice', async (t) => {
   const { server, cfg, http } = await setup(t, { routes: { 'POST /v2/control/ingest': { hang: true } } });
@@ -737,10 +737,10 @@ test('retry: postIngest forwards {retry:true} to request()', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// The breaker gate — §4.2, §4.7
+// The breaker gate
 // ---------------------------------------------------------------------------
 
-// §4.2: "consults the breaker before dialing". An open breaker means zero syscalls, which
+// "consults the breaker before dialing". An open breaker means zero syscalls, which
 // is the entire point — a down instance must cost nothing per prompt.
 test('breaker: with the breaker open, request() short-circuits and dials nothing', async (t) => {
   const { server, cfg, http } = await setup(t, {
@@ -762,16 +762,16 @@ test('breaker: with the breaker open, request() short-circuits and dials nothing
 });
 
 // ---------------------------------------------------------------------------
-// Timeouts — §4.2 (`opts.timeoutMs ?? cfg.timeoutMs`, default 4000)
+// Timeouts.2 (`opts.timeoutMs ?? cfg.timeoutMs`, default 4000)
 // ---------------------------------------------------------------------------
 
-// §6.1: MUBIT_CC_TIMEOUT_MS default 4000.
+// MUBIT_CC_TIMEOUT_MS default 4000.
 test('timeout: cfg.timeoutMs defaults to 4000', async (t) => {
   const { cfg } = await setup(t);
   assert.equal(cfg.timeoutMs, 4000);
 });
 
-// §4.2: the config timeout actually aborts — a stalled response must not outlive it.
+// The config timeout actually aborts — a stalled response must not outlive it.
 test('timeout: cfg.timeoutMs aborts a slow response', async (t) => {
   const { cfg, http } = await setup(t, {
     routes: { 'POST /v2/control/query': { delayMs: 900, json: { ok: true } } },
@@ -788,7 +788,7 @@ test('timeout: cfg.timeoutMs aborts a slow response', async (t) => {
   assert.ok(r.ms < 600, `reported ms should reflect the abort, got ${r.ms}`);
 });
 
-// §4.2: `opts.timeoutMs ?? cfg.timeoutMs` — the recall path overrides it per call.
+// `opts.timeoutMs ?? cfg.timeoutMs` — the recall path overrides it per call.
 test('timeout: opts.timeoutMs overrides cfg.timeoutMs', async (t) => {
   const { cfg, http } = await setup(t, {
     routes: { 'POST /v2/control/query': { delayMs: 900, json: { ok: true } } },
@@ -821,7 +821,7 @@ test('timeout: a response inside the budget still succeeds', async (t) => {
 // A deadline the client chose is not a verdict about the server
 // ---------------------------------------------------------------------------
 
-// §4.7/§5.2: `session-start`'s health slice and `prompt-recall`'s budget both dial on a
+// `session-start`'s health slice and `prompt-recall`'s budget both dial on a
 // fraction of the configured timeout. Recording those aborts escalated the marker to
 // `not_responding` and, past the threshold, opened the breaker — which also suppresses the
 // capture drain. A dead recall path must not throttle capture as a side effect.

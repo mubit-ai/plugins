@@ -1,9 +1,9 @@
 // @ts-check
 /**
- * `mcp/src/egress.mjs` — the egress stage on the MCP write path (§8.3).
+ * `mcp/src/egress.mjs` — the egress stage on the MCP write path.
  *
  * Every other outbound call this plugin makes goes through `lib/http.mjs`, which checks the
- * run id (§4.3) and scrubs the body first (§7). The MCP server is the one exception: it is a
+ * run id and scrubs the body first. The MCP server is the one exception: it is a
  * vendored bundle that dials the endpoint itself, so nothing in this repo ever saw the
  * request. Four things about an MCP call were therefore outside this plugin's control.
  *

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `test/engine-floor.test.mjs` — the runtime floor guard (§11.1 engines, §11.2).
+ * `test/engine-floor.test.mjs` — the runtime floor guard (§11.1 engines).
  *
  * The failure this pins is total and silent. On a Node older than the `engines` floor the
  * bundles do not fail — they never load: no marker, no log line, no MCP activity, which reads

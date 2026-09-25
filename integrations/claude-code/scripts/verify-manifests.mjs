@@ -20,17 +20,17 @@ import { fileURLToPath } from 'node:url';
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO_ROOT = resolve(PLUGIN_ROOT, '../..');
 
-/** `.mcp.json` names the server `mubit`, so this is the prefix skills must use (§3.2). */
+/** `.mcp.json` names the server `mubit`, so this is the prefix skills must use. */
 const QUALIFIED_PREFIX = 'mcp__plugin_mubit-memory_mubit__';
 
-/** §4.7 — `CONN_STATES` in `lib/breaker.mjs`, restated rather than imported for the same
+/** `CONN_STATES` in `lib/breaker.mjs`, restated rather than imported for the same
  *  reason as the allowlist below: this script must run without the plugin runtime. Adding a
  *  state there and not here means the README can stop documenting it and nothing notices. */
 const CONN_STATES = [
   'ready', 'unreachable', 'server_error', 'auth_failed', 'not_responding', 'unconfigured',
 ];
 
-/** §8.2 — seven of the twenty-one tools; the administrative verbs are reached through `bin/admin.mjs`. */
+/** Seven of the twenty-one tools; the administrative verbs are reached through `bin/admin.mjs`. */
 const DEFAULT_ALLOWLIST = [
   'mubit_learned', 'mubit_recall', 'mubit_outcome', 'mubit_diagnose',
   'mubit_dereference', 'mubit_status', 'mubit_memory_health',
@@ -72,7 +72,7 @@ const resolvePluginPath = (s) => s
   .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, PLUGIN_ROOT)
   .replace(/\$CLAUDE_PLUGIN_ROOT\b/g, PLUGIN_ROOT);
 
-// --- every manifest parses (§3) --------------------------------------------
+// --- every manifest parses --------------------------------------------
 
 const plugin = readJson(P.plugin, '.claude-plugin/plugin.json', 'the plugin manifest');
 const hooks = readJson(P.hooks, 'hooks/hooks.json', 'the hook manifest');
@@ -81,17 +81,17 @@ const settings = readJson(P.settings, 'settings.json', 'the shipped settings');
 const pkg = readJson(P.pkg, 'package.json', 'the package manifest');
 const market = readJson(P.marketplace, '.claude-plugin/marketplace.json', 'the marketplace catalog');
 
-// --- version lockstep (§12.7) ----------------------------------------------
+// --- version lockstep ----------------------------------------------
 
 const entry = (market?.plugins ?? []).find((p) => p?.name === 'mubit-memory');
 if (plugin && market) {
   ok(plugin.name === 'mubit-memory', `plugin.json name must be "mubit-memory", got ${plugin.name}`);
-  ok(entry, 'marketplace.json has no plugin entry named "mubit-memory" (§3.5)');
+  ok(entry, 'marketplace.json has no plugin entry named "mubit-memory"');
 }
 if (plugin && pkg) {
   ok(/^\d+\.\d+\.\d+$/.test(String(plugin.version)), `plugin.json version must be semver, got ${plugin.version}`);
   ok(pkg.version === plugin.version,
-    `version drift: package.json ${pkg.version} !== plugin.json ${plugin.version} — one bump touches four files (§12.7)`);
+    `version drift: package.json ${pkg.version} !== plugin.json ${plugin.version} — one bump touches four files`);
 }
 if (plugin && entry) {
   ok(entry.version === plugin.version,
@@ -110,10 +110,10 @@ if (entry) {
     + `ships in this same repo, so an explicit {source:"github"} entry triggers a second clone and the `
     + `install fails. Got ${JSON.stringify(entry.source)}`);
   ok(typeof entry.contextCost?.value === 'number' && entry.contextCost.value > 0,
-    'marketplace entry must declare a real contextCost.value (§3.5)');
+    'marketplace entry must declare a real contextCost.value');
 }
 
-// --- hooks.json wiring (§3.2, §6.3, §11.4) ---------------------------------
+// --- hooks.json wiring ---------------------------------
 
 if (hooks) {
   const distDir = join(PLUGIN_ROOT, 'hooks', 'dist');
@@ -130,24 +130,24 @@ if (hooks) {
 
   for (const { where, entry: h } of rows) {
     ok(h.type === 'command', `${where}: hook "type" must be "command"`);
-    ok(h.command === 'node', `${where}: command must be exactly "node" — exec form, never shell form (§6.3)`);
+    ok(h.command === 'node', `${where}: command must be exactly "node" — exec form, never shell form`);
     const args = Array.isArray(h.args) ? h.args.map(String) : [];
-    ok(args.length >= 1, `${where}: exec form requires a non-empty "args" array (§6.3)`);
+    ok(args.length >= 1, `${where}: exec form requires a non-empty "args" array`);
     ok(typeof h.timeout === 'number' && h.timeout > 0 && h.timeout <= 120,
-      `${where}: "timeout" is in SECONDS (§3.2), got ${h.timeout}`);
+      `${where}: "timeout" is in SECONDS, got ${h.timeout}`);
 
     const all = [h.command, ...args].join(' ');
-    ok(!/\bnpx\b/.test(all), `${where}: uses npx — ~500ms of module resolution per hook (§11.4)`);
+    ok(!/\bnpx\b/.test(all), `${where}: uses npx — ~500ms of module resolution per hook`);
     ok(!/\b(tsx|ts-node)\b/.test(all) && !/--(loader|experimental-loader)\b/.test(all) && !/\.tsx?(\s|$)/.test(all),
-      `${where}: uses a TypeScript loader or executes TypeScript directly (§11.4)`);
+      `${where}: uses a TypeScript loader or executes TypeScript directly`);
 
     const script = args.find((a) => a.endsWith('.mjs'));
-    if (!ok(script, `${where}: no .mjs script in args — exec form must name the bundle (§3.2)`)) continue;
+    if (!ok(script, `${where}: no .mjs script in args — exec form must name the bundle`)) continue;
     const abs = resolvePluginPath(/** @type {string} */ (script));
     if (!ok(abs.startsWith(distDir + '/') || abs.startsWith(distDir + '\\'),
-      `${where}: script must live under hooks/dist/ (committed build output, §11.3), got ${script}`)) continue;
+      `${where}: script must live under hooks/dist/ (committed build output), got ${script}`)) continue;
     ok(existsSync(abs),
-      `${where}: ${script} does not exist → ${abs}\n    Build it: npm --prefix integrations/claude-code run build (§11.2)`);
+      `${where}: ${script} does not exist → ${abs}\n    Build it: npm --prefix integrations/claude-code run build`);
   }
 
   const expectedEvents = ['SessionStart', 'CwdChanged', 'UserPromptSubmit', 'PreToolUse',
@@ -165,41 +165,41 @@ if (hooks) {
   // others. The turns it would drop are the ones the hook exists to catch.
   const stopFailure = hooks.hooks?.StopFailure ?? [];
   ok(stopFailure.length === 1,
-    `StopFailure must declare exactly one group (§3.2); found ${stopFailure.length}`);
+    `StopFailure must declare exactly one group; found ${stopFailure.length}`);
   ok(['', '*', '.*', undefined].includes(stopFailure[0]?.matcher),
     'StopFailure must carry no matcher — the error taxonomy is feature-flagged, so an '
     + `enumerated list is wrong on some accounts; found ${JSON.stringify(stopFailure[0]?.matcher)}`);
 
   ok(hooks.hooks?.SessionStart?.[0]?.matcher === 'startup|resume|clear|compact|fork',
-    'SessionStart matcher must be "startup|resume|clear|compact|fork" (§3.2) — without '
+    'SessionStart matcher must be "startup|resume|clear|compact|fork" — without '
     + '"fork" the hook never runs for /fork, /branch or --fork-session');
   // Exactly ONE group, matching everything. Two groups was the old shape — a built-in tool
   // alternation plus `^mcp__.*` — and it dropped every tool the alternation had not been
   // updated for. It is one group now rather than two match-all ones because a second group
   // would fire capture.mjs twice for every tool call. What to capture is decided in
-  // capture.mjs, where the tool table already lives (§3.2).
+  // capture.mjs, where the tool table already lives.
   const postToolUse = hooks.hooks?.PostToolUse ?? [];
   ok(postToolUse.length === 1,
-    `PostToolUse must declare exactly one match-all group (§3.2); found ${postToolUse.length}`);
+    `PostToolUse must declare exactly one match-all group; found ${postToolUse.length}`);
   ok(['*', '', '.*'].includes(String(postToolUse[0]?.matcher ?? '')),
     'the PostToolUse matcher must match every tool — the host reads "", "*" and ".*" as '
-    + `match-all; found ${JSON.stringify(postToolUse[0]?.matcher)} (§3.2)`);
+    + `match-all; found ${JSON.stringify(postToolUse[0]?.matcher)}`);
 }
 
-// --- .mcp.json and settings.json (§3.3, §3.4) ------------------------------
+// --- .mcp.json and settings.json ------------------------------
 
 if (mcp) {
   const names = Object.keys(mcp.mcpServers ?? {});
   if (ok(names.length === 1 && names[0] === 'mubit',
-    `.mcp.json must declare exactly one server named "mubit" — the ${QUALIFIED_PREFIX} prefix depends on it (§3.3), got [${names}]`)) {
+    `.mcp.json must declare exactly one server named "mubit" — the ${QUALIFIED_PREFIX} prefix depends on it, got [${names}]`)) {
     const server = mcp.mcpServers.mubit;
-    ok(server.command === 'node', '.mcp.json server command must be "node" (§11.4)');
+    ok(server.command === 'node', '.mcp.json server command must be "node"');
     if (ok(Array.isArray(server.args) && server.args.length === 1,
       '.mcp.json server must use exec form with a single entry-point arg')) {
       const abs = resolvePluginPath(String(server.args[0]));
       ok(abs.endsWith(join('mcp', 'dist', 'index.js')),
-        `.mcp.json entry point must be mcp/dist/index.js (§3.3), got ${server.args[0]}`);
-      ok(existsSync(abs), `mcp/dist/index.js does not exist → ${abs} (bundled from mcp/src/launch.mjs, §11.2)`);
+        `.mcp.json entry point must be mcp/dist/index.js, got ${server.args[0]}`);
+      ok(existsSync(abs), `mcp/dist/index.js does not exist → ${abs} (bundled from mcp/src/launch.mjs)`);
     }
     // No `env` block, for two independently fatal reasons. The host already injects
     // CLAUDE_PLUGIN_ROOT / CLAUDE_PLUGIN_DATA / CLAUDE_PROJECT_DIR into a plugin's MCP
@@ -211,7 +211,7 @@ if (mcp) {
     // plugin silently loses its MCP server. Anything else the server needs is the
     // launcher's job (`mcp/src/launch.mjs`), which resolves it from config.
     ok(server.env === undefined,
-      '.mcp.json must not declare an "env" block (§3.3) — the host injects CLAUDE_PLUGIN_ROOT, '
+      '.mcp.json must not declare an "env" block — the host injects CLAUDE_PLUGIN_ROOT, '
       + 'CLAUDE_PLUGIN_DATA and CLAUDE_PROJECT_DIR itself, and re-declaring them splits the '
       + 'MCP server off into a different data dir than the hooks');
   }
@@ -219,27 +219,27 @@ if (mcp) {
 
 if (settings) {
   const sl = settings.statusLine;
-  if (ok(sl, 'settings.json must declare a "statusLine" entry (§3.4)')) {
+  if (ok(sl, 'settings.json must declare a "statusLine" entry')) {
     ok(sl.type === 'command' && sl.command === 'node',
-      'statusLine must be exec form: type "command", command "node" — never a shell string (§6.3)');
+      'statusLine must be exec form: type "command", command "node" — never a shell string');
     if (ok(Array.isArray(sl.args) && sl.args.length === 1, 'statusLine must use exec form with one arg')) {
       const abs = resolvePluginPath(String(sl.args[0]));
-      ok(abs.endsWith(join('bin', 'statusline.mjs')), `statusLine must point at bin/statusline.mjs (§3.4), got ${sl.args[0]}`);
-      ok(existsSync(abs), `bin/statusline.mjs does not exist → ${abs} (built from bin/statusline.src.mjs, §11.2)`);
+      ok(abs.endsWith(join('bin', 'statusline.mjs')), `statusLine must point at bin/statusline.mjs, got ${sl.args[0]}`);
+      ok(existsSync(abs), `bin/statusline.mjs does not exist → ${abs} (built from bin/statusline.src.mjs)`);
     }
   }
 }
 
-// --- packaging invariants (§11.1, §11.3) -----------------------------------
+// --- packaging invariants -----------------------------------
 
 if (pkg) {
   ok(Object.keys(pkg.dependencies ?? {}).length === 0,
-    `package.json "dependencies" must be empty and stay empty (§11.1) — found: ${Object.keys(pkg.dependencies ?? {})}`);
-  ok(pkg.devDependencies?.esbuild, 'esbuild must be a devDependency (§11.1)');
+    `package.json "dependencies" must be empty and stay empty — found: ${Object.keys(pkg.dependencies ?? {})}`);
+  ok(pkg.devDependencies?.esbuild, 'esbuild must be a devDependency');
   ok(pkg.devDependencies?.['@mubit-ai/mcp'],
-    '@mubit-ai/mcp must be a devDependency (§11.1) — it is bundled at build time, not resolved at runtime');
+    '@mubit-ai/mcp must be a devDependency — it is bundled at build time, not resolved at runtime');
   ok(pkg.type === 'module', 'package.json must declare "type": "module"');
-  ok(pkg.name === '@mubit-ai/claude-code-plugin', 'package name is fixed by the release guard (§13)');
+  ok(pkg.name === '@mubit-ai/claude-code-plugin', 'package name is fixed by the release guard');
 }
 
 if (existsSync(P.gitignore)) {
@@ -248,29 +248,29 @@ if (existsSync(P.gitignore)) {
   ok(lines.some((l) => /(^|\/)node_modules(\/|$)/.test(l.replace(/^!/, ''))), '.gitignore must ignore node_modules');
   const ignoresDist = lines.filter((l) => !l.startsWith('!') && /\bdist\b/.test(l));
   ok(ignoresDist.length === 0,
-    `.gitignore must NOT ignore dist — there is no install step and no build on install (§11.3). Offending: ${ignoresDist.join(' | ')}`);
+    `.gitignore must NOT ignore dist — there is no install step and no build on install. Offending: ${ignoresDist.join(' | ')}`);
 } else {
   fail(`.gitignore does not exist: ${P.gitignore}`);
 }
 
-// --- userConfig is actually read (§6.2) ------------------------------------
+// --- userConfig is actually read ------------------------------------
 
 if (plugin) {
   const declared = Object.keys(plugin.userConfig ?? {});
-  ok(declared.length > 0, 'plugin.json declares no userConfig keys (§3.1)');
+  ok(declared.length > 0, 'plugin.json declares no userConfig keys');
   if (existsSync(P.config)) {
     const src = readFileSync(P.config, 'utf8');
     const screaming = (k) => k.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
     for (const key of declared) {
       ok(new RegExp(`\\b${key}\\b`).test(src) || new RegExp(`\\b${screaming(key)}\\b`).test(src),
-        `userConfig key "${key}" is declared in plugin.json but never read in lib/config.mjs — a declared-but-unread option is a lie to the user at enable time (§12.7)`);
+        `userConfig key "${key}" is declared in plugin.json but never read in lib/config.mjs — a declared-but-unread option is a lie to the user at enable time`);
     }
   } else {
-    fail(`lib/config.mjs does not exist: ${P.config}\n    One resolution function must see every userConfig key (§4.1, §6.3).`);
+    fail(`lib/config.mjs does not exist: ${P.config}\n    One resolution function must see every userConfig key.`);
   }
 }
 
-// --- skills, agents, and the MCP allowlist (§9, §12.7) ---------------------
+// --- skills, agents, and the MCP allowlist ---------------------
 
 /** @returns {string[]} */
 function frontmatterTools(text) {
@@ -306,7 +306,7 @@ if (existsSync(P.serverBundle)) {
   ok(realTools.length > 0, 'could not parse any tool names out of mcp/dist/server.js');
   for (const name of DEFAULT_ALLOWLIST) {
     ok(realTools.includes(name),
-      `default allowlist names "${name}", which the bundled MCP server does not register (§8.2)`);
+      `default allowlist names "${name}", which the bundled MCP server does not register`);
   }
 } else {
   fail(`mcp/dist/server.js does not exist: ${P.serverBundle} — run \`npm run build\``);
@@ -355,7 +355,7 @@ for (const { file, rel } of markdown) {
 
   for (const t of frontmatterTools(text)) {
     if (!ok(t.startsWith(QUALIFIED_PREFIX),
-      `${rel}: tools entry "${t}" is not fully qualified — a plugin-provided server needs the ${QUALIFIED_PREFIX} prefix; bare mcp__<server>__<tool> matches nothing (§3.2)`)) continue;
+      `${rel}: tools entry "${t}" is not fully qualified — a plugin-provided server needs the ${QUALIFIED_PREFIX} prefix; bare mcp__<server>__<tool> matches nothing`)) continue;
     const bare = t.slice(QUALIFIED_PREFIX.length);
     if (realTools.length) {
       ok(realTools.includes(bare), `${rel}: names MCP tool "${bare}", which the bundled MCP server does not register`);
@@ -363,7 +363,7 @@ for (const { file, rel } of markdown) {
   }
 }
 
-// --- README.md, the four things it must say (§2, §13) ----------------------
+// --- README.md, the four things it must say ----------------------
 
 /**
  * The plugin's README is the only documentation a marketplace installer ever sees, and four
@@ -373,7 +373,7 @@ for (const { file, rel } of markdown) {
  *
  * The rest — every `userConfig` key, every typed connection state, the redaction guarantee —
  * exists so the README cannot fall behind the manifest it documents. A config option nobody
- * can look up is the same defect as a config option nobody reads (§6.2, checked above).
+ * can look up is the same defect as a config option nobody reads (checked above).
  */
 if (existsSync(P.readme)) {
   const readme = readFileSync(P.readme, 'utf8');
@@ -422,22 +422,22 @@ if (existsSync(P.readme)) {
 
   for (const key of Object.keys(plugin?.userConfig ?? {})) {
     ok(new RegExp(`\\b${key}\\b`).test(readme),
-      `README.md never documents the userConfig option "${key}" (§6) — the config surface is declared in `
+      `README.md never documents the userConfig option "${key}" — the config surface is declared in `
       + 'plugin.json, so a user meets it at enable time whether or not it is written down');
   }
 
-  // §4.7 — the states are typed precisely because each has a different fix. A README that
+  // The states are typed precisely because each has a different fix. A README that
   // says "connection problems" instead of naming them sends every one of them to the same
   // wrong remedy.
   for (const state of CONN_STATES) {
     ok(new RegExp(`\\b${state}\\b`).test(readme),
-      `README.md never names the connection state "${state}" (§4.7) — each state has its own `
+      `README.md never names the connection state "${state}" — each state has its own `
       + 'distinct fix, and the status line shows them by name');
   }
 
-  // §4.4 — the differentiator. "State it plainly rather than burying it in a table."
+  // The differentiator. "State it plainly rather than burying it in a table."
   ok(has('[REDACTED:'),
-    'README.md must show the literal `[REDACTED:<kind>]` placeholder (§4.4) — the redaction guarantee is '
+    'README.md must show the literal `[REDACTED:<kind>]` placeholder — the redaction guarantee is '
     + 'the plugin\'s headline differentiator and reads as marketing until the reader sees its output');
   ok(has('denylist'),
     'README.md must describe the path denylist (§4.4 stage 2) — matching captures are DROPPED, not scrubbed, '
@@ -445,10 +445,10 @@ if (existsSync(P.readme)) {
 } else {
   fail(`README.md does not exist: ${P.readme}\n`
     + '    The README covers install, configure and troubleshoot. The release guard treats it as part of the '
-    + 'release surface (§13), and it is the only documentation a marketplace installer sees.');
+    + 'release surface, and it is the only documentation a marketplace installer sees.');
 }
 
-// --- contextCost was measured, not inherited (§3.5) ------------------------
+// --- contextCost was measured, not inherited ------------------------
 
 /**
  * `marketplace.json` shipped `{"value": 2100}` as a placeholder. The number is checked
@@ -462,7 +462,7 @@ if (existsSync(P.readme)) {
 const REMEASURE = 'Re-measure: node scripts/measure-context-cost.mjs --write';
 const stamp = existsSync(P.contextCost)
   ? readJson(P.contextCost, 'scripts/context-cost.json', `the marketplace catalog. ${REMEASURE}`)
-  : (fail(`scripts/context-cost.json does not exist (§3.5) — marketplace.json declares a contextCost that `
+  : (fail(`scripts/context-cost.json does not exist — marketplace.json declares a contextCost that `
     + `nobody measured.\n    ${REMEASURE}`), null);
 
 if (stamp && entry) {
@@ -670,4 +670,4 @@ if (problems.length) {
   console.error('');
   process.exit(1);
 }
-console.log('verify-manifests: all manifest checks passed (§12.7)');
+console.log('verify-manifests: all manifest checks passed');

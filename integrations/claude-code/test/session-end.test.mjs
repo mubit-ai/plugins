@@ -9,7 +9,7 @@
  *   §7    `runs/<run_id>/flushed-<session_id>.marker`, spool keyed by run_id
  *   §12.4 session-end drains, reflects by default, then heartbeats idle
  *
- * The fact this whole file exists to protect (§1.4): Mubit extracts lessons on its own as
+ * The fact this whole file exists to protect: Mubit extracts lessons on its own as
  * it ingests, but those keep the scope they were extracted at — and a `run`-scoped lesson
  * is invisible to the next session. Widening scope is reserved for the explicit reflect
  * path, so `POST /v2/control/reflect` at SessionEnd is the ONLY call that can widen a
@@ -19,7 +19,7 @@
  * Budget 8000 ms internal / 12 s hook timeout. Runs INLINE, not detached — the process
  * is going away and a detached child may be reaped before it finishes.
  *
- * Tests pin the run id with the `static` strategy (§6.1) so `runs/<run_id>/` can be
+ * Tests pin the run id with the `static` strategy so `runs/<run_id>/` can be
  * seeded before the hook runs.
  */
 
@@ -57,7 +57,7 @@ function env(dataDir, endpoint, extra = {}) {
 
 const runDir = (dataDir) => join(dataDir, 'runs', RUN_ID);
 
-/** One file per pending ingest item — `runs/<run_id>/spool/<ts>-<rand6>.json` (§4.6). */
+/** One file per pending ingest item — `runs/<run_id>/spool/<ts>-<rand6>.json`. */
 function seedSpool(dataDir, n, tag = 'seed') {
   const dir = join(runDir(dataDir), 'spool');
   mkdirSync(dir, { recursive: true });
@@ -69,7 +69,7 @@ function seedSpool(dataDir, n, tag = 'seed') {
   }
 }
 
-/** A staged turn awaiting attribution — written by `stage-prompt` (§5.3) + `capture --stop` (§5.4). */
+/** A staged turn awaiting attribution — written by `stage-prompt` + `capture --stop`. */
 function seedPendingTurn(dataDir, promptId, recalled) {
   const dir = join(runDir(dataDir), 'turns');
   mkdirSync(dir, { recursive: true });
@@ -86,7 +86,7 @@ function seedPendingTurn(dataDir, promptId, recalled) {
 
 function readMarker(dataDir) {
   const p = join(dataDir, 'status', `${RUN_ID}.json`);
-  assert.ok(existsSync(p), `expected a status marker at status/${RUN_ID}.json (§4.8)`);
+  assert.ok(existsSync(p), `expected a status marker at status/${RUN_ID}.json`);
   return readJsonFile(p);
 }
 
@@ -123,18 +123,18 @@ test('drains the spool, then reflects, then heartbeats idle', async (t) => {
   assert.ok(iReflect < iBeat, `reflect must precede the idle heartbeat; saw: ${seq(server)}`);
 
   // The drain ignores the batch-size trigger here: three items is well under
-  // batchMaxItems (32) and they still go out (§5.7 step 2).
+  // batchMaxItems (32) and they still go out.
   const items = server.lastCall('POST', '/v2/control/ingest').body.items;
   assert.equal(items.length, 3);
   assert.equal(server.lastCall('POST', '/v2/control/ingest').body.run_id, RUN_ID);
   for (const it of items) {
-    // §1.5 — a missing intent costs one LLM round trip per item, server-side.
+    // A missing intent costs one LLM round trip per item, server-side.
     assert.ok(it.intent && it.intent !== 'unclassified', `item ${it.item_id} lost its intent`);
-    assert.ok(it.item_id && it.content_type, 'item_id and content_type are required (§1.3)');
+    assert.ok(it.item_id && it.content_type, 'item_id and content_type are required');
   }
 
   assert.equal(server.lastCall('POST', '/v2/control/agents/heartbeat').body.status, 'idle');
-  assert.equal(spoolFiles(dataDir, RUN_ID).length, 0, 'a committed batch is unlinked (§4.6)');
+  assert.equal(spoolFiles(dataDir, RUN_ID).length, 0, 'a committed batch is unlinked');
 });
 
 // §5.7 step 4 + §1.4 — THE test. Reflect is on by default because it is the only path
@@ -152,7 +152,7 @@ test('issues POST /v2/control/reflect BY DEFAULT with no opt-in env', async (t) 
   assertHookContract(r);
   server.assertCalled('POST', '/v2/control/reflect', 1);
 
-  // §5.7 — the body, verbatim. `include_step_outcomes` folds outcome signals in
+  // The body, verbatim. `include_step_outcomes` folds outcome signals in
   // (`control.proto`) — the NEGATIVE ones produce the highest-value lessons. `last_n_items`
   // bounds the evidence to the most recent items of the run, which at a session end is
   // this session.
@@ -165,7 +165,7 @@ test('issues POST /v2/control/reflect BY DEFAULT with no opt-in env', async (t) 
 });
 
 // ---------------------------------------------------------------------------
-// §5.7 step 4 — the 504 retry
+// The 504 retry
 // ---------------------------------------------------------------------------
 
 /*
@@ -223,7 +223,7 @@ test('stops after two reflect attempts when the 504 persists', async (t) => {
   const r = await runHook('session-end', fx.sessionEnd({ cwd: PROJECT_DIR }),
     { env: env(dataDir, server.url) });
 
-  // §5.7 — a failing reflect is best-effort. It costs scope promotion, never the hook.
+  // A failing reflect is best-effort. It costs scope promotion, never the hook.
   assertHookContract(r);
   assert.deepEqual(r.json, { suppressOutput: true });
   server.assertCalled('POST', '/v2/control/reflect', 2);
@@ -235,7 +235,7 @@ test('stops after two reflect attempts when the 504 persists', async (t) => {
   assert.match(String(marker.last_error ?? ''), /504/,
     'the marker keeps the reason, so the doctor skill can name it');
 
-  // The captures were already committed before reflect was attempted (§5.7): a reflect that
+  // The captures were already committed before reflect was attempted: a reflect that
   // fails twice must still not cost the session its ingest.
   server.assertCalled('POST', '/v2/control/ingest', 1);
   assert.equal(spoolFiles(dataDir, RUN_ID).length, 0);
@@ -258,7 +258,7 @@ test('does not retry reflect on 403 — an identical request cannot fix auth', a
     'a 4xx is a verdict about the request, not a dice throw — going again only doubles the cost');
 });
 
-// §5.7 — "Runs INLINE, not detached." The ingest is deliberately slow: a detached
+// "Runs INLINE, not detached." The ingest is deliberately slow: a detached
 // drain would let the hook exit first and this count would still be 0. There is no
 // `waitFor` here on purpose — that is the assertion.
 test('drains inline, not detached — the ingest lands before the process exits', async (t) => {
@@ -281,7 +281,7 @@ test('drains inline, not detached — the ingest lands before the process exits'
   assert.equal(spoolFiles(dataDir, RUN_ID).length, 0);
 });
 
-// §5.7 step 3 — a turn left `outcome_pending` by `capture --stop` is attributed before
+// A turn left `outcome_pending` by `capture --stop` is attributed before
 // reflect, so the reflection sees the outcome signals (§5.5: reference_id "global" is the
 // run-level sentinel; the real attribution lives in entry_ids[]).
 test('flushes a turn left outcome_pending, before reflecting', async (t) => {
@@ -299,7 +299,7 @@ test('flushes a turn left outcome_pending, before reflecting', async (t) => {
 
   const body = server.lastCall('POST', '/v2/control/outcome').body;
   assert.equal(body.run_id, RUN_ID);
-  assert.equal(body.reference_id, 'global', 'reference_id must be non-empty (§1.3)');
+  assert.equal(body.reference_id, 'global', 'reference_id must be non-empty');
   assert.deepEqual(body.entry_ids, ['ref_lesson_1', 'ref_rule_1']);
 
   assert.ok(idx(server, 'POST', '/v2/control/outcome') < idx(server, 'POST', '/v2/control/reflect'),
@@ -377,7 +377,7 @@ test('a correction already delivered is not posted again at session end', async 
 });
 
 // ---------------------------------------------------------------------------
-// §5.7 step 3, conditioned on evidence — one rule, shared with `drain` (§5.5 step 7)
+// §5.7 step 3, conditioned on evidence — one rule, shared with `drain`
 // ---------------------------------------------------------------------------
 
 /**
@@ -418,7 +418,7 @@ function seedMeasuredTurn(dataDir, promptId, used, over = {}) {
   }));
 }
 
-// §5.5 step 7: injected and the reply carried none of the memory's vocabulary. Recorded at
+// Injected and the reply carried none of the memory's vocabulary. Recorded at
 // exactly 0.0 with an EMPTY entry_ids[] — naming the entries here would credit precisely the
 // memories nothing showed were read.
 test('an ignored injection flushes as neutral 0.0 with no entry_ids', async (t) => {
@@ -440,7 +440,7 @@ test('an ignored injection flushes as neutral 0.0 with no entry_ids', async (t) 
     + 'signal that is mostly false negatives');
   assert.deepEqual(body.entry_ids, [],
     'a neutral record must not name the entries it could not credit');
-  assert.equal(body.reference_id, 'global', 'reference_id must still be non-empty (§1.3)');
+  assert.equal(body.reference_id, 'global', 'reference_id must still be non-empty');
   assert.ok(body.rationale.includes('memory-term-echo/v1'),
     `the rationale must name the method that decided this: ${body.rationale}`);
 });
@@ -483,7 +483,7 @@ test('a turn with no used_evidence keeps the +0.2 and the attribution', async (t
   assert.deepEqual(body.entry_ids, ['ref_lesson_1', 'ref_rule_1']);
 });
 
-// §5.5/§6.1: the neutral record is implicit attribution as much as the +0.2 is. "off" means
+// The neutral record is implicit attribution as much as the +0.2 is. "off" means
 // the hook posts nothing, "explicit" means the model owns the call — and a user who turned
 // this off did not ask to be measured either.
 for (const mode of ['off', 'explicit']) {
@@ -610,10 +610,10 @@ test('a turn that recalled nothing is not flushed at all', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// The two — and only two — reflect skip conditions (§5.7 step 4)
+// The two — and only two — reflect skip conditions
 // ---------------------------------------------------------------------------
 
-// §5.7 / §6.1 — `MUBIT_CC_REFLECT_ON_END=0` is an explicit opt-out that costs
+// `MUBIT_CC_REFLECT_ON_END=0` is an explicit opt-out that costs
 // cross-session durability. Everything else about SessionEnd still runs.
 test('skips reflect when MUBIT_CC_REFLECT_ON_END=0, but still drains and heartbeats', async (t) => {
   const server = await fakeMubit();
@@ -630,7 +630,7 @@ test('skips reflect when MUBIT_CC_REFLECT_ON_END=0, but still drains and heartbe
   server.assertCalled('POST', '/v2/control/agents/heartbeat', 1);
 });
 
-// §5.7 — nothing ingested this session means there is nothing to reflect ON; an
+// Nothing ingested this session means there is nothing to reflect ON; an
 // LLM-backed call over an empty tail is pure cost.
 /**
  * Reflection reads the server's tail of the run, so it is only meaningful over a run the
@@ -720,7 +720,7 @@ test('running session-end twice sends the ingest exactly once', async (t) => {
   assertHookContract(a);
 
   assert.ok(existsSync(join(runDir(dataDir), `flushed-${fx.SESSION_ID}.marker`)),
-    'the once-marker must be written at runs/<run_id>/flushed-<session_id>.marker (§7)');
+    'the once-marker must be written at runs/<run_id>/flushed-<session_id>.marker');
 
   // New work arrives after the flush. The second run must still short-circuit —
   // it is the marker, not an empty spool, that has to stop it.
@@ -754,7 +754,7 @@ test('drains a crashed session spool, because the spool is keyed by run_id', asy
   assert.equal(spoolFiles(dataDir, RUN_ID).length, 0);
 });
 
-// §4.8 — the marker is what the status line and the next session read.
+// The marker is what the status line and the next session read.
 test('marker gains reflect {at, lessons_stored, status} from the response', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -844,7 +844,7 @@ test('reflect reports lessons_stored without claiming cross-session durability',
   assert.deepEqual(r.json, { suppressOutput: true });
 });
 
-// §7 — sanity: SessionEnd is the pruning path (with drain), so it must not leave the
+// Sanity: SessionEnd is the pruning path (with drain), so it must not leave the
 // data dir in a shape later hooks cannot read. Cheap guard against a half-written state.
 test('leaves a readable state layout behind', async (t) => {
   const server = await fakeMubit();

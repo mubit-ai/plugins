@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/markers.mjs` — the status-line `Marker` at `status/<run_id>.json` (§4.8, §7).
+ * `lib/markers.mjs` — the status-line `Marker` at `status/<run_id>.json`.
  *
  * Network-free by construction: this is the only thing `bin/statusline.mjs`
  * reads, and the status line runs on every frame. Each hook owns one slice of
@@ -82,7 +82,7 @@ function merge(base, patch) {
 }
 
 /**
- * §4.8/§10: a missing or corrupt marker degrades to the default rather than
+ * A missing or corrupt marker degrades to the default rather than
  * taking the status line — or the hook writing it — down.
  * @param {Record<string, any>} cfg
  * @param {string} runId
@@ -100,7 +100,7 @@ export function readMarker(cfg, runId) {
 }
 
 /**
- * §4.8: a merge patch, written atomically. Hooks each own one slice of the
+ * A merge patch, written atomically. Hooks each own one slice of the
  * marker, so a write must never clobber a sibling's slice.
  * `updated_at` is owned by this function and restamped on every write.
  * @param {Record<string, any>} cfg
@@ -119,6 +119,6 @@ export function updateMarker(cfg, runId, patch = {}) {
     next.updated_at = Date.now();
     writeJsonAtomic(p, next);
   } catch {
-    // §4.9: the status line is cosmetic; never fail a hook over it.
+    // The status line is cosmetic; never fail a hook over it.
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * `hooks/src/subagent-start.mjs` — SubagentStart, blocking (§5.2, §4.3).
+ * `hooks/src/subagent-start.mjs` — SubagentStart, blocking.
  *
  * ---------------------------------------------------------------------------
  * Why this hook exists at all
@@ -43,7 +43,7 @@
  *    `transcript_path`, `cwd`, `prompt_id`, `agent_id`, `agent_type`, `hook_event_name` —
  *    and no task text at all. No `prompt`, no `description`. It does carry the *parent's*
  *    `prompt_id`, so the query is read back out of the turn `stage-prompt.mjs` staged on the
- *    parent's `UserPromptSubmit` (§5.3). No staged turn means no query, and no query means
+ *    parent's `UserPromptSubmit`. No staged turn means no query, and no query means
  *    no request: dialling on the agent type alone would search for a word the user never
  *    typed, once per spawn.
  *
@@ -130,7 +130,7 @@ import { readJson, runDir, safeSegment, writeJsonAtomic } from '../../lib/state.
  */
 const OWN_AGENTS = new Set(['mubit-recall', 'mubit-memory:mubit-recall']);
 
-/** §5.2: recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
+/** Recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
 const MAX_QUERY_CHARS = 2000;
 
 /** `prompt_id` and the run ids name files, so they are untrusted input to a path. */
@@ -167,7 +167,7 @@ await runHook('subagent-start', {
     // lazily here rather than above, so a gate nobody takes does not put a possible
     // `git rev-parse` in front of every spawn.
     if (!cfg.recall) return pinsGate(cfg, payload);
-    // §4.1: with no endpoint there is nothing to recall from. Ahead of run-id derivation,
+    // With no endpoint there is nothing to recall from. Ahead of run-id derivation,
     // which can shell out to `git rev-parse` — a fan-out of ten on an install nobody has
     // signed in to yet should not cost ten subprocesses to learn that.
     if (!isConfigured(cfg)) return SUPPRESS;
@@ -185,7 +185,7 @@ await runHook('subagent-start', {
       agentId = deriveAgentId(payload);
       subRunId = deriveSubRunId(runId, payload);
     } catch (err) {
-      // `static` with no pin, or a derivation that could only have answered "default" (§4.3).
+      // `static` with no pin, or a derivation that could only have answered "default".
       log(cfg, 'warn', `subagent-start: no usable run id (${messageOf(err)})`);
       return SUPPRESS;
     }
@@ -202,12 +202,12 @@ await runHook('subagent-start', {
     }
 
     const outcome = await recallBlock(cfg, {
-      runId,          // the PARENT run: nothing is stored under a sub-run id (§4.3).
+      runId,          // the PARENT run: nothing is stored under a sub-run id.
       agentId,        // …but the subagent's own identity, so siblings are separable.
       query,
       deadline,
       tokenBudget: CFG.subagentRecallTokenBudget,
-      // §5.2 — the same rule over the same query text the parent's own prompt gets. The
+      // The same rule over the same query text the parent's own prompt gets. The
       // staged parent turn is the only description of this subagent's task, so it is also
       // the only thing that can say the task is a handoff; a fan-out spawned off "where were
       // we?" wants the recency emphasis its parent turn got, or the parent is caught up and
@@ -351,7 +351,7 @@ function persistSubRun(cfg, o) {
         sources: (o.outcome?.refIds?.length ?? 0) || numOr(o.outcome?.sources, 0),
         tokens: numOr(o.outcome?.tokens, 0),
         // Characters are what was actually injected; the token figure is a
-        // four-chars-per-token estimate (§4.10) a later reader can re-derive from these.
+        // four-chars-per-token estimate a later reader can re-derive from these.
         chars: str(o.outcome?.block).length,
         dropped: numOr(o.outcome?.dropped, 0),
         // Always 0 while the seen-set stays out of this path. Recorded rather than assumed,
@@ -371,7 +371,7 @@ function persistSubRun(cfg, o) {
       linked: false,
     });
   } catch (err) {
-    // §4.9: an unwritable data dir costs this subagent's record, never its spawn.
+    // An unwritable data dir costs this subagent's record, never its spawn.
     log(cfg, 'warn', `subagent-start: could not record the sub-run (${messageOf(err)})`,
       { run_id: o.runId });
   }
@@ -472,7 +472,7 @@ function pinsGate(cfg, payload) {
     return pinsOnly(runId, deriveAgentId(payload),
       readPins(cfg, runId, { maxTokens: MAX_SUBAGENT_PIN_TOKENS }));
   } catch {
-    // `static` with no pin, or a derivation that could only have answered "default" (§4.3).
+    // `static` with no pin, or a derivation that could only have answered "default".
     return SUPPRESS;
   }
 }

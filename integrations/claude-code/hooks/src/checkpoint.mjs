@@ -18,7 +18,7 @@
  *
  *     mubit: checkpoint failed (server_error) — pre-compaction context not saved
  *
- * It is still exit 0 (§4.9). Blocking is not the same as failing, and a memory layer never
+ * It is still exit 0. Blocking is not the same as failing, and a memory layer never
  * gets to fail a compaction.
  *
  * ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@
  * than the server-assigned `checkpoint_id`, which is the cheaper half of the pair — the label
  * is derived here and is enough to join the two records back together.
  *
- * The **transcript is the densest secret surface the plugin ever touches** (§4.4): it holds
+ * The **transcript is the densest secret surface the plugin ever touches**: it holds
  * every command that was run and every file that was pasted. So the tail is scrubbed before
  * it is put in a request body, before it is put in a spool file, and before it is put in a
  * log line — and a scrub that throws drops the snapshot entirely rather than sending it raw.
@@ -88,7 +88,7 @@ import { clearSeen } from '../../lib/seen.mjs';
 import { appendItem } from '../../lib/spool.mjs';
 import { readJson, resolveDataDir, safeSegment, writeJsonAtomic } from '../../lib/state.mjs';
 
-/** §5.6: `--pre` runs before a compaction, `--post` after it. */
+/** `--pre` runs before a compaction, `--post` after it. */
 const MODE = process.argv.slice(2).includes('--post') ? 'post' : 'pre';
 
 /**
@@ -105,7 +105,7 @@ const PERSIST_RESERVE_MS = 250;
 /** Below this there is no point dialing at all; the socket would not finish handshaking. */
 const MIN_POST_MS = 300;
 
-/** §5.6 step 1: "the last 200 KB of message text". */
+/** "the last 200 KB of message text". */
 const SNAPSHOT_BYTES = 200 * 1024;
 
 /**
@@ -143,10 +143,10 @@ const RAW_TAIL_BYTES = 2 * 1024 * 1024;
  */
 const SUMMARY_TAIL_BYTES = 6 * 1024;
 
-/** §5.6: `claude-code-precompact-<n>`, with `<n>` following the stored history. */
+/** `claude-code-precompact-<n>`, with `<n>` following the stored history. */
 const LABEL_PREFIX = 'claude-code-precompact-';
 
-/** §7: `runs/<run_id>/checkpoints.json` keeps the last 10. */
+/** `runs/<run_id>/checkpoints.json` keeps the last 10. */
 const CHECKPOINTS_KEEP = 10;
 
 /** `item_id` is a wire value and a dedup key; keep it boring. */
@@ -194,7 +194,7 @@ async function precompact(payload, cfg, ctx) {
   try {
     runId = deriveRunId(cfg, payload);
   } catch (err) {
-    // `static` with no pin, or a derivation that could only have answered "default" (§4.3).
+    // `static` with no pin, or a derivation that could only have answered "default".
     // There is no run to anchor to, so there is nothing to say to the user that is not
     // really a plea to fix their config — and the log is where that belongs.
     log(cfg, 'warn', `checkpoint: no usable run id (${messageOf(err)}); nothing to checkpoint`);
@@ -216,7 +216,7 @@ async function precompact(payload, cfg, ctx) {
   }
 
   const history = readHistory(cfg, runId);
-  // §5.6: the counter follows the stored history so a long session's anchors stay
+  // The counter follows the stored history so a long session's anchors stay
   // distinguishable — `precompact-1` and `precompact-7` are different moments in one run.
   const label = `${LABEL_PREFIX}${history.length + 1}`;
 
@@ -258,12 +258,12 @@ async function precompact(payload, cfg, ctx) {
       status: err.status ?? 0,
       error: str(err.error).slice(0, 300),
     });
-    // §5.6: the one failure the user is shown, because it is the only one that loses data
-    // permanently. Still exit 0 (§4.9).
+    // The one failure the user is shown, because it is the only one that loses data
+    // permanently. Still exit 0.
     return { systemMessage: failedMessage(state) };
   }
 
-  // §5.6 step 4 / §7.
+  //
   const tokens = intOr(body.token_estimate, 0);
   attempt(() => persist(cfg, runId, history, {
     checkpoint_id: checkpointId,
@@ -282,7 +282,7 @@ async function precompact(payload, cfg, ctx) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.6: note which anchor the freshly compacted session belongs to, and reset the cross-turn
+ * Note which anchor the freshly compacted session belongs to, and reset the cross-turn
  * seen-set. Reads one file, unlinks one, and dials nothing — 800 ms is not a network budget,
  * and a PostCompact that waited on a socket would be a stall on the first turn after every
  * compaction.
@@ -307,7 +307,7 @@ async function precompact(payload, cfg, ctx) {
  *
  * Emits `{"suppressOutput": true}` on every path, including the one that found an anchor. See
  * the header: `PostCompact` has no `hookSpecificOutput` channel, so the only shapes available
- * here are a top-level field or silence — and `systemMessage` is reserved (§5.6) for the one
+ * here are a top-level field or silence — and `systemMessage` is reserved for the one
  * failure that loses data, not for a routine note after every compaction. The model gets the
  * re-anchor from `session-start.mjs` on the `compact` source instead.
  *
@@ -488,11 +488,11 @@ function lastMessages(raw, maxBytes) {
 
 
 // ---------------------------------------------------------------------------
-// §5.6 step 5 — the spooled anchor
+// The spooled anchor
 // ---------------------------------------------------------------------------
 
 /**
- * The `checkpoint`-intent item, on the ordinary ingest path (§5.4/§5.5). It is the reason a
+ * The `checkpoint`-intent item, on the ordinary ingest path. It is the reason a
  * failed `/v2/control/checkpoint` costs the user an id rather than the context itself.
  *
  * Its text is derived from the **already-redacted** snapshot and re-scrubbed on the way out,
@@ -518,7 +518,7 @@ function spoolSummary(cfg, runId, payload, snap, label) {
     { text: '', redactions: 0, truncated: false });
   if (!body.text.trim()) return;
 
-  // §4.5: PreCompact → `checkpoint`. §1.5: the intent is always set, or the server// pays for an LLM round trip per item to guess one.
+  // PreCompact → `checkpoint`. §1.5: the intent is always set, or the server// pays for an LLM round trip per item to guess one.
   const cls = attempt(
     () => classifyTurn('', '', { event: 'PreCompact', trigger: str(payload.trigger) }),
     { intent: 'checkpoint', importance: 'medium', contentType: 'text' });
@@ -531,7 +531,7 @@ function spoolSummary(cfg, runId, payload, snap, label) {
   const actor = attempt(() => readActor(cfg), '');
 
   appendItem(cfg, runId, {
-    // §1.3: `item_id` and `content_type` are REQUIRED — a missing one is a 422 for the whole
+    // `item_id` and `content_type` are REQUIRED — a missing one is a 422 for the whole
     // batch. Derived from (session, counter) and never from a clock, so a retried drain
     // deduplicates instead of writing a second anchor for one compaction.
     item_id: clamp(`cc-precompact-${idPart(payload.session_id) || idPart(runId) || 'anon'}-${label.slice(LABEL_PREFIX.length)}`, MAX_ID_CHARS),
@@ -567,7 +567,7 @@ function spoolSummary(cfg, runId, payload, snap, label) {
 }
 
 // ---------------------------------------------------------------------------
-// §7 — runs/<run_id>/checkpoints.json
+// Runs/<run_id>/checkpoints.json
 // ---------------------------------------------------------------------------
 
 /** @param {Record<string, any>} cfg @param {string} runId @returns {string} */
@@ -600,7 +600,7 @@ function readHistory(cfg, runId) {
 }
 
 /**
- * §7: "Last 10". The oldest are evicted, so a session that compacts thirty times does not
+ * "Last 10". The oldest are evicted, so a session that compacts thirty times does not
  * grow this file without bound, and `--post` always finds the newest at the end.
  *
  * @param {Record<string, any>} cfg
@@ -618,7 +618,7 @@ function persist(cfg, runId, history, entry) {
 
 /**
  * §5.6, verbatim: `mubit: checkpoint failed (<state>) — pre-compaction context not saved`.
- * The parenthetical is the `ConnState` (§4.7), so "it timed out" and "it rejected my key" are
+ * The parenthetical is the `ConnState`, so "it timed out" and "it rejected my key" are
  * distinguishable without opening a log.
  * @param {string} state
  * @returns {string}
@@ -628,7 +628,7 @@ function failedMessage(state) {
 }
 
 /**
- * §5.6: `mubit: checkpoint ckpt_01HZ… saved (3.4k tok) before compaction`. The id is what
+ * `mubit: checkpoint ckpt_01HZ… saved (3.4k tok) before compaction`. The id is what
  * makes the anchor findable afterwards, so it is never elided by this function.
  * @param {string} id
  * @param {number} tokens
@@ -731,7 +731,7 @@ function clamp(s, max) {
   return v.length > max ? `${v.slice(0, max)}…` : v;
 }
 
-/** §1.3: `importance` is a closed vocabulary; anything else is a 422 waiting to happen. */
+/** `importance` is a closed vocabulary; anything else is a 422 waiting to happen. */
 function importanceOr(v) {
   const s = str(v).toLowerCase();
   return ['low', 'medium', 'high', 'critical'].includes(s) ? s : 'medium';

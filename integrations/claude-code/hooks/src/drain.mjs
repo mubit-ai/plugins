@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * `hooks/src/drain.mjs` — the detached drainer (§5.5).
+ * `hooks/src/drain.mjs` — the detached drainer.
  *
  * The only thing in the write path that touches the network, and the only caller in the
  * whole plugin that ever asks `lib/http.mjs` for `{retry: true}` — it is detached and
@@ -40,7 +40,7 @@
  * exception: a drainer that *lost* the race never deletes the winner's lock.
  *
  * Constraints, shared with the rest of the plugin: zero dependencies, Node >= 20 built-ins,
- * and **exit code 0, always** (§4.9). A memory layer has no business breaking a prompt.
+ * and **exit code 0, always**. A memory layer has no business breaking a prompt.
  */
 
 import { renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -65,13 +65,13 @@ import {
   ensureDir, pruneStale, readJson, resolveDataDir, runDir, safeSegment, writeJsonAtomic,
 } from '../../lib/state.mjs';
 
-/** §5.5: "Budget 10 s soft" — nothing waits on it, but it still bounds itself. */
+/** "Budget 10 s soft" — nothing waits on it, but it still bounds itself. */
 const BUDGET_MS = 10_000;
 
 /** The hard stop, for the case the soft budget cannot be reached (a wedged socket). */
 const HARD_STOP_MS = 12_000;
 
-/** §7: `runs/<run_id>/jobs.json` keeps the last 20, for the doctor skill. */
+/** `runs/<run_id>/jobs.json` keeps the last 20, for the doctor skill. */
 const JOBS_KEEP = 20;
 
 /**
@@ -147,7 +147,7 @@ function letGo() {
   }
 }
 
-// §4.9: "This plugin never exits 2 and never exits non-zero." Not even on a bug of ours.
+// "This plugin never exits 2 and never exits non-zero." Not even on a bug of ours.
 process.on('uncaughtException', (err) => {
   try { log(cfgRef, 'error', `drain: uncaught ${messageOf(err)}`); } catch { /* nothing left */ }
   letGo();
@@ -175,7 +175,7 @@ async function main() {
 
   // Invoked two ways: with the payload on stdin (foreground, as the tests do) and with
   // `--payload <file>` (detached — a detached child's inherited stdin is not reliably
-  // readable once the parent has exited, §4.9).
+  // readable once the parent has exited).
   const payload = await readPayload(payloadPath);
 
   const cfg = loadConfig(process.env);
@@ -192,7 +192,7 @@ async function main() {
     // than making it unlikely.
     //
     // It is still checked: a run id names a directory under the data dir as well as a run,
-    // and `"default"` is the placeholder that names no project (§4.3). An unusable pin
+    // and `"default"` is the placeholder that names no project. An unusable pin
     // drains nothing — the spool waits.
     runId = usableRunId(pinnedRun);
     if (!runId) {
@@ -204,7 +204,7 @@ async function main() {
       runId = deriveRunId(cfg, payload);
     } catch (err) {
       // `static` with no pin, or a derivation that could only have answered "default".
-      // Refusing is the honest answer; the spool waits for a run id worth writing to (§4.3).
+      // Refusing is the honest answer; the spool waits for a run id worth writing to.
       log(cfg, 'error', `drain: no usable run id — ${messageOf(err)}`);
       return;
     }
@@ -213,7 +213,7 @@ async function main() {
   const agentId = deriveAgentId(payload);
   const promptId = str(outcomeArg) || turnKey(payload);
 
-  // §5.5 step 1: exactly one drainer per run.
+  // Exactly one drainer per run.
   const waitMs = correctArg ? CORRECTION_LOCK_WAIT_MS : wantsOutcome ? OUTCOME_LOCK_WAIT_MS : 0;
   const lock = await acquireConfirmed(cfg, runId, waitMs, started);
   if (!lock) {
@@ -233,7 +233,7 @@ async function main() {
   try {
     const drained = await drainSpool(cfg, runId, agentId, promptId, started);
 
-    // §5.5 step 7.
+    //
     await flushOutcome(cfg, runId, agentId, promptId, wantsOutcome);
     if (correctArg && !breakerOpen(cfg)) await sendCorrection(cfg, runId, agentId, correctArg);
 
@@ -259,7 +259,7 @@ async function main() {
   try {
     resolveActor(cfg, resolveProjectDir(cfg, payload));
   } catch {
-    // §4.9: a name is never worth a drain. The items ship either way.
+    // A name is never worth a drain. The items ship either way.
   }
 
   // The run's pinned context, refreshed at most once a minute (`lib/pins.mjs`).
@@ -283,7 +283,7 @@ async function main() {
   try {
     if (readBreaker(cfg).state === 'ready') await refreshPins(cfg, runId);
   } catch {
-    // §4.9: a pin is never worth a drain. A failed refresh leaves the previous cache alone,
+    // A pin is never worth a drain. A failed refresh leaves the previous cache alone,
     // which is the behaviour that matters — see `lib/pins.mjs`.
   }
 
@@ -293,7 +293,7 @@ async function main() {
 }
 
 // ---------------------------------------------------------------------------
-// The drain loop — §5.5 steps 2-6, 8
+// The drain loop.5 steps 2-6, 8
 // ---------------------------------------------------------------------------
 
 /**
@@ -333,7 +333,7 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
     const items = batch.map((e) => e.item).filter((it) => !!it && typeof it === 'object');
     if (items.length === 0) { commitBatch(batch); continue; }
 
-    // §5.5 step 5: ONE request for the whole batch, not one per item.
+    // ONE request for the whole batch, not one per item.
     const res = await postIngest(cfg, {
       run_id: runId,
       agent_id: agentId,
@@ -358,7 +358,7 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
     }
 
     if (isRejectedPayload(res)) {
-      // §5.5 step 6: the payload is bad, not the server. Quarantine and never retry.
+      // The payload is bad, not the server. Quarantine and never retry.
       quarantine(cfg, runId, batch, res);
       rejected += batch.length;
       continue;
@@ -382,7 +382,7 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
  * A drainer with nothing to attribute loses the race and stands down at once — that is the
  * §5.5 contract, and the cheap thing to do when another process is already sending the same
  * spool. A drainer carrying `--with-outcome` waits a little for the lock instead, because
- * `capture --stop` *always* spawns a detached drain first (§5.4 step 8), so the drain behind
+ * `capture --stop` *always* spawns a detached drain first, so the drain behind
  * it is normally the loser. Standing down immediately would mean a failed outcome post is
  * never retried before SessionEnd — the turn's credit lands nowhere, which is the one thing
  * §5.5 step 7 exists to prevent.
@@ -438,7 +438,7 @@ function sleep(ms) {
  * Is this the "the payload is bad" branch of the three-way split?
  *
  * `invalid_request` counts: it is `lib/http.mjs` refusing the batch pre-flight over a missing
- * `item_id` or `content_type` (§1.3), which is the same verdict a 422 would have carried and
+ * `item_id` or `content_type`, which is the same verdict a 422 would have carried and
  * would otherwise loop forever having never dialed.
  *
  * @param {any} res
@@ -453,7 +453,7 @@ function isRejectedPayload(res) {
 }
 
 /**
- * §5.5/§7: move the batch to `runs/<run_id>/spool/rejected/`. Quarantined, not deleted — it
+ * Move the batch to `runs/<run_id>/spool/rejected/`. Quarantined, not deleted — it
  * is evidence, it is what the user pastes into an issue, and §7 expires it after 7 days.
  *
  * @param {Record<string, any>} cfg @param {string} runId
@@ -486,7 +486,7 @@ function quarantine(cfg, runId, batch, res) {
 }
 
 /**
- * §5.5: a retryable failure costs nothing but the attempt. The spool is untouched; the only
+ * A retryable failure costs nothing but the attempt. The spool is untouched; the only
  * thing recorded is the reason, so the status line can say something true.
  * @param {Record<string, any>} cfg @param {string} runId @param {any} res
  */
@@ -501,11 +501,11 @@ function noteFailure(cfg, runId, res) {
 }
 
 // ---------------------------------------------------------------------------
-// §5.5 step 6 — what a 2xx leaves behind
+// What a 2xx leaves behind
 // ---------------------------------------------------------------------------
 
 /**
- * §7/§15.4: `runs/<run_id>/jobs.json` is an ARRAY of the last 20 accepted jobs. The doctor
+ * `runs/<run_id>/jobs.json` is an ARRAY of the last 20 accepted jobs. The doctor
  * skill polls `GET /v2/control/ingest/jobs/<job_id>` with these — an ingest that answered
  * `queued` has been accepted, not stored, and this file is the only way back to it.
  *
@@ -527,13 +527,13 @@ function recordJob(cfg, runId, body, n) {
     });
     writeJsonAtomic(p, arr.slice(-JOBS_KEEP));
   } catch {
-    // §4.9: a full or read-only data dir costs the job record, never the drain — and never
+    // A full or read-only data dir costs the job record, never the drain — and never
     // the lock, which the caller's `finally` releases regardless.
   }
 }
 
 /**
- * §4.8: the status line reads nothing but the marker, so the count of what has actually
+ * The status line reads nothing but the marker, so the count of what has actually
  * reached the wire has to land here. `pending` is restated from the spool rather than
  * decremented, so a concurrent capture cannot leave it drifting.
  *
@@ -550,11 +550,11 @@ function advanceMarker(cfg, runId, n) {
         pending: spoolStats(cfg, runId).count,
       },
     });
-  } catch { /* the status line is cosmetic (§4.9) */ }
+  } catch { /* the status line is cosmetic */ }
 }
 
 // ---------------------------------------------------------------------------
-// §5.5 step 7 — the outcome call
+// The outcome call
 // ---------------------------------------------------------------------------
 
 /**
@@ -565,7 +565,7 @@ function advanceMarker(cfg, runId, n) {
  * `idempotency_key` server-side, so a second post is a no-op rather than double reinforcement.
  *
  * Gating it on the lock as well would mean a failed outcome is almost never retried before
- * SessionEnd, because `capture --stop` *always* spawns a detached drain first (§5.4 step 8):
+ * SessionEnd, because `capture --stop` *always* spawns a detached drain first:
  * the foreground `--with-outcome` drain behind it is normally the loser, and standing down
  * would take the attribution with it. Attribution is the whole point of the turn ending.
  *
@@ -585,7 +585,7 @@ async function flushOutcome(cfg, runId, agentId, promptId, wanted) {
  * one `/v2/control/outcome`.
  *
  * **The rule itself lives in `lib/outcome.mjs`, and this hook is one of its two callers.**
- * `session-end.mjs` is the other, for turns this drain never reached (§5.7 step 3), and the
+ * `session-end.mjs` is the other, for turns this drain never reached, and the
  * two are separate esbuild entry points that cannot import one another — so the rule sat in
  * both files, and the copies disagreed for a while. `decideOutcome` answers the four-case
  * table (including "post nothing", which is a real answer here) and `outcomeRequest` addresses
@@ -737,7 +737,7 @@ function breakerOpen(cfg) {
 // ---------------------------------------------------------------------------
 
 /**
- * The hook payload, from `--payload <file>` when there is one (the detached path — §4.9
+ * The hook payload, from `--payload <file>` when there is one (the detached path
  * hands the payload over through `${CLAUDE_PLUGIN_DATA}/tmp/<uuid>.json` because a detached
  * child's inherited stdin is not reliably readable once the parent exits), otherwise stdin.
  *
@@ -750,7 +750,7 @@ function breakerOpen(cfg) {
 async function readPayload(payloadPath) {
   if (payloadPath) {
     const fromFile = readJson(payloadPath, null);
-    // §4.9: "the child unlinks the file when done."
+    // "the child unlinks the file when done."
     if (process.env.MUBIT_CC_DETACHED === '1') payloadFile = payloadPath;
     if (fromFile && typeof fromFile === 'object' && !Array.isArray(fromFile)) return fromFile;
   }

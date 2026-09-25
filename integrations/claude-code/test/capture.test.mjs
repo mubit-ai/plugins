@@ -1,7 +1,7 @@
 // @ts-check
 /**
  * `hooks/src/capture.mjs` — PostToolUse / PostToolUseFailure / Stop / StopFailure /
- * SubagentStop (§5.4).
+ * SubagentStop.
  *
  * One script, five modes by argv: none, `--failure`, `--stop`, `--stop-failure`,
  * `--subagent`.
@@ -46,7 +46,7 @@ const SCRATCH = tempDir('mubit-cc-capture-');
 
 /**
  * Preload that records the argv/env of every node process launched under this env —
- * including the detached child, which inherits `{...process.env}` (§4.9).
+ * including the detached child, which inherits `{...process.env}`.
  */
 const SPY = join(SCRATCH, 'spawn-spy.cjs');
 writeFileSync(SPY, `const fs = require('node:fs');
@@ -99,7 +99,7 @@ function holdDrainLock(dataDir) {
     JSON.stringify({ pid: process.pid, ts: Date.now() }));
 }
 
-/** The staged prompt `Stop` does not carry (§5.3). */
+/** The staged prompt `Stop` does not carry. */
 function seedTurn(dataDir, over = {}) {
   const dir = join(runDir(dataDir), 'turns');
   mkdirSync(dir, { recursive: true });
@@ -125,11 +125,11 @@ function soleItem(dataDir, runId) {
 /** §1.3 + §1.5: the fields no item may ever be missing. */
 function assertRequiredItemFields(item) {
   assert.equal(typeof item.item_id, 'string');
-  assert.ok(item.item_id.length > 0, 'item_id is REQUIRED (§1.3) — a missing one is a 422');
-  assert.equal(item.content_type, 'text', 'content_type is REQUIRED (§1.3)');
+  assert.ok(item.item_id.length > 0, 'item_id is REQUIRED — a missing one is a 422');
+  assert.equal(item.content_type, 'text', 'content_type is REQUIRED');
   assert.equal(typeof item.intent, 'string');
   assert.ok(item.intent.length > 0,
-    'intent is ALWAYS set (§1.5) — omitting it costs one server-side LLM call per item');
+    'intent is ALWAYS set — omitting it costs one server-side LLM call per item');
   assert.notEqual(item.intent, 'unclassified',
     '"unclassified" is the LLM fallback trigger, not a classification');
   assert.equal(item.source, 'agent');
@@ -185,7 +185,7 @@ async function mubit(t, routes) {
 
 // ---------------------------------------------------------------------------
 
-// §5.4 — PostToolUse writes exactly one spool file, shaped as §5.4, and dials nothing.
+// PostToolUse writes exactly one spool file, shaped as §5.4, and dials nothing.
 test('capture: PostToolUse writes exactly one correctly shaped spool item and issues zero HTTP', async (t) => {
   const dataDir = makeDataDir();
   const projectDir = makeProjectDir({ files: { 'Cargo.toml': '[package]\nname = "x"\n' } });
@@ -375,7 +375,7 @@ test('capture: with no actor known the key is absent rather than empty', async (
   assert.ok(!('actor' in meta), `expected no actor key at all, got ${JSON.stringify(meta.actor)}`);
 });
 
-// §5.4 — "item_id is stable per tool call so a retried drain deduplicates."
+// "item_id is stable per tool call so a retried drain deduplicates."
 test('capture: item_id is derived from tool_use_id and stable across invocations', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -418,7 +418,7 @@ test('capture --failure: FAILED text, intent "trace", importance "high"', async 
   assert.ok(item.text.includes('E0433'), 'the error text is the payload');
 });
 
-// §5.4 — Stop carries `last_assistant_message` but NOT the prompt, so the Q&A pair is
+// Stop carries `last_assistant_message` but NOT the prompt, so the Q&A pair is
 // assembled from the staged turn file; §4.5 classifies the pair as a `task_result`.
 test('capture --stop: task_result carrying both the staged prompt and the assistant message', async (t) => {
   const dataDir = makeDataDir();
@@ -450,7 +450,7 @@ test('capture --stop: task_result carrying both the staged prompt and the assist
   assert.ok(item.text.includes('The job stays queued until'), 'the assistant message is the other half');
   assert.ok(!item.text.includes('sub_01HZXK8Q9N7M'), 'a top-level Stop is not a subagent turn');
 
-  // §5.4 step 8 — the turn file gains the end markers without losing what was staged.
+  // The turn file gains the end markers without losing what was staged.
   const turn = readJsonFile(turnPath);
   assert.equal(typeof turn.ended_at, 'number');
   assert.equal(turn.outcome_pending, true);
@@ -459,7 +459,7 @@ test('capture --stop: task_result carrying both the staged prompt and the assist
 });
 
 // ---------------------------------------------------------------------------
-// The used-signal (§5.5) — the half of precision nothing measured
+// The used-signal — the half of precision nothing measured
 // ---------------------------------------------------------------------------
 
 /** A turn as `prompt-recall` leaves it: ids to attribute, and the terms it injected. */
@@ -474,7 +474,7 @@ function seedRecalledTurn(dataDir, terms, over = {}) {
   });
 }
 
-// §5.5: the plugin cannot see whether the model READ the injected block — only whether the
+// The plugin cannot see whether the model READ the injected block — only whether the
 // reply carries the memory's own vocabulary. So Stop records the evidence it found, not a
 // verdict: the matched terms, the size of the set it searched, and the method that produced
 // them, so a later reader knows what the number meant.
@@ -504,7 +504,7 @@ test('capture --stop: records which injected memory terms the reply echoed', asy
   assert.equal(typeof ev.at, 'number');
 });
 
-// §5.5: "injected and ignored" is the case the whole finding is about, so it is recorded
+// "injected and ignored" is the case the whole finding is about, so it is recorded
 // positively rather than by absence. §4.4: it is recorded WITHOUT the reply — the turn file
 // holds only terms that recall already staged and scrubbed, so nothing the assistant said
 // can land here.
@@ -555,7 +555,7 @@ test('capture --stop: a turn with no staged recall record gets no used-signal at
   assert.equal(staged.outcome_pending, true);
 });
 
-// §5.4 step 8 — `--stop` ALWAYS spawns a drain, and always with `--with-outcome <prompt_id>`:
+// `--stop` ALWAYS spawns a drain, and always with `--with-outcome <prompt_id>`:
 // the turn is over, so this is the moment its attribution can be recorded.
 test('capture --stop: always spawns a drain with --with-outcome <prompt_id>', async (t) => {
   const dataDir = makeDataDir();
@@ -627,7 +627,7 @@ test('capture --stop: appends exactly one redacted ledger row, carrying the deci
   assert.ok(!text.includes(SECRETS.githubToken), 'the token reached the ledger');
   assert.match(row.prompt, /ship it with/);
   assert.ok(row.prompt_redactions >= 2);
-  // §4.4: nothing from the reply is written down — not the text, not the staged terms.
+  // Nothing from the reply is written down — not the text, not the staged terms.
   assert.ok(!text.includes('The job stays queued until'), 'the reply reached the ledger');
   assert.ok(!('terms' in row.recall));
   assert.ok(!('used_evidence' in row));
@@ -848,7 +848,7 @@ test('capture --stop-failure: a batch trigger still drains, but never with --wit
   }
 });
 
-// §5.4 step 8 — plain PostToolUse spawns a drain ONLY when a trigger fires. Spawning one
+// Plain PostToolUse spawns a drain ONLY when a trigger fires. Spawning one
 // per tool call would pay node's startup twice for every tool the model touches.
 test('capture: PostToolUse spawns no drain until a batch trigger fires', async (t) => {
   const server = await mubit(t);
@@ -885,7 +885,7 @@ async function waitForSpawn(file, ms = 3000) {
   }
 }
 
-// §4.5 — a SubagentStop is attributed to the subagent's own agent_id, not the parent's.
+// A SubagentStop is attributed to the subagent's own agent_id, not the parent's.
 // The batch-level agent_id cannot carry it, so it rides on the item. And it is a handoff
 // note: the subagent's answer, addressed to the parent role for review, carrying the fields a
 // handoff created through `/v2/control/handoff` carries — so `lib/handoff.mjs` lists a
@@ -992,7 +992,7 @@ test('capture: every tool on the skip list is dropped, and its neighbours are no
 
   // `AskUserQuestion` is first on purpose: it is the closest call on the list and the one a
   // future tidy-up will reach for. Its result carries what the human chose and what they
-  // turned down — §4.5's `feedback`, and the one fact no amount of reading the codebase
+  // turned down's `feedback`, and the one fact no amount of reading the codebase
   // reproduces.
   const kept = ['AskUserQuestion', 'ReportFindings', 'CronCreate', 'CronDelete',
     'EnterWorktree', 'ExitWorktree', 'LSP', 'Workflow',
@@ -1011,7 +1011,7 @@ test('capture: every tool on the skip list is dropped, and its neighbours are no
   }
 });
 
-// §4.4 — self-reference suppression. Without it the plugin records its own traffic,
+// Self-reference suppression. Without it the plugin records its own traffic,
 // recalls it, then records the recall.
 test('capture: a self-referential tool call drops silently', async (t) => {
   const dataDir = makeDataDir();
@@ -1038,7 +1038,7 @@ test('capture: a self-referential tool call drops silently', async (t) => {
 });
 
 /**
- * §4.4 — the same suppression for the tool that reads a background task's output.
+ * The same suppression for the tool that reads a background task's output.
  *
  * `isSelfReference` named `BashOutput` and then read `input.command`, which a `BashOutput`
  * input has never carried: it identifies its subject by handle (`task_id`/`bash_id`), so the
@@ -1095,7 +1095,7 @@ test('capture: a denylisted path drops silently', async (t) => {
 
   assertHookContract(r);
   assert.deepEqual(r.json, { suppressOutput: true });
-  assert.equal(spoolFiles(dataDir, RUN_ID).length, 0, '.env is on the denylist (§4.4)');
+  assert.equal(spoolFiles(dataDir, RUN_ID).length, 0, '.env is on the denylist');
 });
 
 // ---------------------------------------------------------------------------
@@ -1243,7 +1243,7 @@ test('capture: a denylisted path inside an apply_patch body drops the item', asy
   assert.ok(!existsSync(join(runDir(dataDir), 'files.json')), 'and it reaches no index either');
 });
 
-// §5.4 — zero HTTP in EVERY mode. Capture's only outbound work is spawnDetached('drain'),
+// Zero HTTP in EVERY mode. Capture's only outbound work is spawnDetached('drain'),
 // and we hold the drain lock so that child exits before dialing anything.
 test('capture: issues zero HTTP requests in all four modes', async (t) => {
   const server = await mubit(t);
@@ -1270,7 +1270,7 @@ test('capture: issues zero HTTP requests in all four modes', async (t) => {
     `capture must issue ZERO HTTP requests in every mode; saw: ${server.summary()}`);
 });
 
-// §5.4 — "every step is individually try/caught: a redaction crash drops the item rather
+// "every step is individually try/caught: a redaction crash drops the item rather
 // than sending it unredacted." Hostile input must cost the item, never the tool call.
 test('capture: hostile tool_input drops the item rather than spooling it unredacted', async (t) => {
   const dataDir = makeDataDir();

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `hooks/src/prompt-recall.mjs` — UserPromptSubmit, blocking (§5.2, §1.8, §12.4).
+ * `hooks/src/prompt-recall.mjs` — UserPromptSubmit, blocking.
  *
  * The single most counter-intuitive fact in the whole plugin, and the one a future
  * maintainer is most likely to "simplify" away:
@@ -40,7 +40,7 @@ const DENIED = {
 
 /** Deterministic env: a pinned static run id makes every request body exactly assertable. */
 /**
- * Rung 2 is opt-in as of the rung-1-only default (§5.2): tests that exercise the fallback
+ * Rung 2 is opt-in as of the rung-1-only default: tests that exercise the fallback
  * ladder have to ask for it, exactly as an operator would.
  */
 const FALLBACK_ON = { MUBIT_CC_RECALL_FALLBACK: 'agent_routed' };
@@ -68,7 +68,7 @@ const turn = (d, promptId = PROMPT_ID) => readJsonFile(turnPath(d, promptId));
 // The regression test for the inverted ladder
 // ---------------------------------------------------------------------------
 
-// §1.8/§12.4 — THE test in this file. Under the default recallAssemble:"client" the hook
+// THE test in this file. Under the default recallAssemble:"client" the hook
 // spends exactly one zero-LLM-call request and never touches the two-LLM-call endpoint.
 // If `context` ever shows up here, every user prompt just got two LLM calls more expensive.
 test('rung 1 only: one direct_bypass query, and NO /v2/control/context at all', async (t) => {
@@ -90,7 +90,7 @@ test('rung 1 only: one direct_bypass query, and NO /v2/control/context at all', 
     'evidence_only:true skips answer synthesis — the second LLM call');
 });
 
-// §5.2: the rung-1 body, field for field. `limit`, `budget:"low"` (<500 ms tier, §1.7) and
+// The rung-1 body, field for field. `limit`, `budget:"low"` (<500 ms tier) and
 // `entry_types` are all load-bearing; omitting `mode` defaults to "agent_routed",
 // which is the expensive case with no error.
 /**
@@ -213,8 +213,8 @@ test('rung 1 request body matches §5.2 exactly', async (t) => {
   assert.ok(Array.isArray(body.env_tags), 'env_tags exists on a /v2/control/query body but not on a /v2/control/context one');
   assert.ok(body.env_tags.includes('tool:claude-code'));
   assert.ok(body.env_tags.includes('ci:test'), 'MUBIT_CC_ENV_TAGS extras are appended verbatim');
-  assert.ok(body.env_tags.length <= 8, 'env_tags is capped at 8 (§4.1)');
-  // §5.2 — the fusion weights, chosen client-side. The fixture prompt is a diagnosis
+  assert.ok(body.env_tags.length <= 8, 'env_tags is capped at 8');
+  // The fusion weights, chosen client-side. The fixture prompt is a diagnosis
   // ("why is the ingest job stuck in queued?"), not a handoff, so the default `auto` rule
   // resolves it to `relevance`. A `freshness` here would mean the rule fires on ordinary
   // questions, which is the one way this feature makes recall worse rather than better.
@@ -295,7 +295,7 @@ test('auto: a budget big enough to fund the lane asks for it', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// §5.2 — `rank_by`, the freshness dial
+// `rank_by`, the freshness dial
 // ---------------------------------------------------------------------------
 
 // The bug: "where were we?" is answered by whatever is most *similar* to those three words.
@@ -431,7 +431,7 @@ test('env_tags follow the prompt\'s directory, not the launch one', async (t) =>
     'the launch repo is not where this prompt happened');
 });
 
-// §5.2: "query truncates to 2000 chars — recall quality does not improve past that and a
+// "query truncates to 2000 chars — recall quality does not improve past that and a
 // 40 KB pasted stack trace is a slow query." /v2/control/query also has a 256 KiB cap.
 test('the query is truncated to 2000 characters', async (t) => {
   const server = await fakeMubit();
@@ -452,7 +452,7 @@ test('the query is truncated to 2000 characters', async (t) => {
 // The policy ladder: 403 → rung 2, cached
 // ---------------------------------------------------------------------------
 
-// §1.8/§5.2: a 403 on rung 1 is a policy verdict, not a failure. Descend one rung (1 LLM
+// A 403 on rung 1 is a policy verdict, not a failure. Descend one rung (1 LLM
 // call), and never to rung 3 (2 LLM calls).
 test('403 permission_denied on rung 1 falls to rung 2, byte-identical but for the mode', async (t) => {
   const server = await fakeMubit({
@@ -475,7 +475,7 @@ test('403 permission_denied on rung 1 falls to rung 2, byte-identical but for th
     'rung 2 is byte-identical to rung 1 except for the mode string');
 });
 
-// §5.2/§7: the denial is an instance-level policy fact with a 24 h TTL. Re-probing
+// The denial is an instance-level policy fact with a 24 h TTL. Re-probing
 // direct_bypass on every prompt burns a round trip forever.
 test('a rung-1 denial is cached to policy/<endpoint_hash>.json with a 24h TTL', async (t) => {
   const server = await fakeMubit({
@@ -497,7 +497,7 @@ test('a rung-1 denial is cached to policy/<endpoint_hash>.json with a 24h TTL', 
   assert.ok(v.observed_at >= before && v.observed_at <= Date.now() + 1000);
 });
 
-// §5.2: on the NEXT prompt, rung 1 is not probed at all. This is the whole point of
+// On the NEXT prompt, rung 1 is not probed at all. This is the whole point of
 // caching the verdict — one wasted round trip per day, not one per prompt.
 test('a cached denial routes the next prompt straight to rung 2', async (t) => {
   const server = await fakeMubit({
@@ -521,7 +521,7 @@ test('a cached denial routes the next prompt straight to rung 2', async (t) => {
     'rung 1 must not be re-probed while the verdict is valid');
 });
 
-// §5.2: "A 'granted' verdict is not cached: rung 1 succeeding is self-evident and
+// "A 'granted' verdict is not cached: rung 1 succeeding is self-evident and
 // caching it would only add a stale-state failure mode."
 test('a successful rung 1 writes nothing to policy/', async (t) => {
   const server = await fakeMubit();
@@ -535,7 +535,7 @@ test('a successful rung 1 writes nothing to policy/', async (t) => {
     'grants are never cached — only denials are');
 });
 
-// §5.2: an operator who flips the instance's direct-search policy back on gets the free
+// An operator who flips the instance's direct-search policy back on gets the free
 // path back within a day, with no reinstall.
 test('an expired denial re-probes rung 1 exactly once', async (t) => {
   const server = await fakeMubit({
@@ -566,7 +566,7 @@ test('an expired denial re-probes rung 1 exactly once', async (t) => {
     'the expired verdict must be re-probed, and the free rung reclaimed');
 });
 
-// §5.2/§7: "Keyed by endpoint hash so a local and a hosted instance hold independent
+// "Keyed by endpoint hash so a local and a hosted instance hold independent
 // verdicts." One instance disabling direct_bypass must not tax the other.
 test('policy verdicts are per endpoint, not global', async (t) => {
   const denying = await fakeMubit({ 'POST /v2/control/query': [DENIED, { json: queryResponse() }] });
@@ -589,7 +589,7 @@ test('policy verdicts are per endpoint, not global', async (t) => {
     'the denial belongs to the first endpoint only');
 });
 
-// §5.2: "Only a 401/403 on a rung the plugin did not deliberately probe means auth is
+// "Only a 401/403 on a rung the plugin did not deliberately probe means auth is
 // broken." A 401 is auth_failed — not a policy denial, never cached, and no rung-2 retry.
 test('401 on rung 1 is auth_failed, never a cached policy verdict', async (t) => {
   const server = await fakeMubit({
@@ -611,7 +611,7 @@ test('401 on rung 1 is auth_failed, never a cached policy verdict', async (t) =>
 // Rung-independence of the rendered block
 // ---------------------------------------------------------------------------
 
-// §5.2/§4.10: "additionalContext renders identically whichever rung served it — that is the
+// "additionalContext renders identically whichever rung served it — that is the
 // point of lib/assemble.mjs mirroring the server's section order and vocabulary."
 test('rungs 1 and 2 render byte-identical additionalContext for the same evidence', async (t) => {
   const a = await fakeMubit();
@@ -673,7 +673,7 @@ test('a cached denial issues no request at all by default', async (t) => {
   server.assertCalled('POST', '/v2/control/query', 0);
 });
 
-// A policy denial is not a transport fault (§5.2), so it must not colour the status line
+// A policy denial is not a transport fault, so it must not colour the status line
 // with a failure state — but it must be distinguishable from "the store had nothing".
 test('a policy denial records a reason without claiming a connection fault', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/query': [DENIED, { json: queryResponse() }] });
@@ -741,7 +741,7 @@ test('a failed recall counts toward the dry streak', async (t) => {
 // Rung 3 — opt-in only
 // ---------------------------------------------------------------------------
 
-// §1.8/§5.2: rung 3 costs two LLM calls per prompt and exists only because an operator
+// Rung 3 costs two LLM calls per prompt and exists only because an operator
 // explicitly accepted that cost for the server-assembled context_block.
 test('recallAssemble:"server" issues rung 3 with the documented sections body', async (t) => {
   const server = await fakeMubit();
@@ -773,7 +773,7 @@ test('recallAssemble:"server" issues rung 3 with the documented sections body', 
   assert.equal(body.query, PROMPT);
 });
 
-// §5.2 step 5: "Rung 3 → use the server's context_block and section_summaries as-is."
+// "Rung 3 → use the server's context_block and section_summaries as-is."
 // Re-assembling what you already paid two LLM calls for would be pure waste.
 test('rung 3 injects the server context_block verbatim', async (t) => {
   const server = await fakeMubit();
@@ -795,7 +795,7 @@ test('rung 3 injects the server context_block verbatim', async (t) => {
 // Skip conditions — zero HTTP, every time
 // ---------------------------------------------------------------------------
 
-// §5.2 step 0: recall disabled means no dialing at all, not "dial and discard".
+// Recall disabled means no dialing at all, not "dial and discard".
 test('MUBIT_CC_RECALL=0 issues zero HTTP requests', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -808,7 +808,7 @@ test('MUBIT_CC_RECALL=0 issues zero HTTP requests', async (t) => {
   assert.equal(server.requests.length, 0, `saw: ${server.summary()}`);
 });
 
-// §5.2 step 0: a prompt under 8 chars ("ok", "yes", "go on") carries no retrievable intent.
+// A prompt under 8 chars ("ok", "yes", "go on") carries no retrievable intent.
 test('a prompt shorter than 8 characters issues zero HTTP requests', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -821,7 +821,7 @@ test('a prompt shorter than 8 characters issues zero HTTP requests', async (t) =
   assert.equal(server.requests.length, 0, `saw: ${server.summary()}`);
 });
 
-// §5.2 step 0: a slash command is addressed to the harness, not the model — recalling
+// A slash command is addressed to the harness, not the model — recalling
 // against "/mubit-memory:recall …" would inject memory into a memory command.
 test('a prompt starting with "/" issues zero HTTP requests', async (t) => {
   const server = await fakeMubit();
@@ -835,7 +835,7 @@ test('a prompt starting with "/" issues zero HTTP requests', async (t) => {
   assert.equal(server.requests.length, 0, `saw: ${server.summary()}`);
 });
 
-// §5.2 step 0 / §4.7: an open breaker short-circuits before dialing. A blocking hook
+// An open breaker short-circuits before dialing. A blocking hook
 // in front of every prompt must not pay a connect timeout to a server known to be down.
 test('an open breaker issues zero HTTP requests', async (t) => {
   const server = await fakeMubit({
@@ -857,7 +857,7 @@ test('an open breaker issues zero HTTP requests', async (t) => {
     `breaker open must short-circuit without dialing; saw: ${server.summary()}`);
 });
 
-// §5.2 step 3: rung 2 costs an LLM call and the whole path is bounded at 1500 ms.
+// Rung 2 costs an LLM call and the whole path is bounded at 1500 ms.
 // Starting a 1-LLM-call request with 300 ms left buys nothing but a visible stall.
 test('rung 2 is skipped when less than 500 ms of budget remains', async (t) => {
   const server = await fakeMubit({
@@ -880,7 +880,7 @@ test('rung 2 is skipped when less than 500 ms of budget remains', async (t) => {
 // stdout contract
 // ---------------------------------------------------------------------------
 
-// §5.2: "Injecting 'I found nothing' wastes tokens and teaches the model to distrust the
+// "Injecting 'I found nothing' wastes tokens and teaches the model to distrust the
 // channel." Exactly {"suppressOutput": true} — no additionalContext, no systemMessage.
 test('an empty result emits exactly {"suppressOutput": true}', async (t) => {
   const server = await fakeMubit({
@@ -919,7 +919,7 @@ test('a non-empty result emits additionalContext plus a systemMessage receipt', 
 // Marker
 // ---------------------------------------------------------------------------
 
-// §4.8/§5.2 step 7: the marker records which rung served, so a user paying for rung 2 or 3
+// The marker records which rung served, so a user paying for rung 2 or 3
 // can see it in the status line instead of discovering it on an invoice.
 test('the marker records which rung served', async (t) => {
   const free = await fakeMubit();
@@ -948,7 +948,7 @@ test('the marker records which rung served', async (t) => {
 // The staged turn — the denominator of any precision number
 // ---------------------------------------------------------------------------
 
-// §5.2 step 6 / §5.5: the marker is last-write-wins per RUN, so a 40-prompt session leaves
+// The marker is last-write-wins per RUN, so a 40-prompt session leaves
 // exactly one record of what recall cost. Everything the hook already computed — the rung,
 // the tokens, what the budget dropped — has to land on the TURN, or the plugin can report
 // what an injection cost only for whichever prompt happened to be last.
@@ -975,7 +975,7 @@ test('the staged turn records what the injection cost, not only what it named', 
   assert.ok(rec.at >= before && rec.at <= Date.now() + 1000, `recall.at was ${rec.at}`);
 });
 
-// §5.5: the Stop-side used-signal can only look for the memory's OWN vocabulary in the
+// The Stop-side used-signal can only look for the memory's OWN vocabulary in the
 // reply. A term the user already typed proves nothing — the model would have echoed it
 // with no memory at all — so the prompt's words are subtracted here, where the prompt is
 // in hand, rather than left to be re-derived at Stop.
@@ -996,7 +996,7 @@ test('the staged terms are what the memory added, not what the prompt already sa
   assert.ok(!terms.includes('queued'), `"queued" came from the user, not the memory: ${terms.join(', ')}`);
 });
 
-// §5.2: an empty recall injects nothing, and the turn still records that — "injected
+// An empty recall injects nothing, and the turn still records that — "injected
 // nothing" and "injected and was ignored" are different facts, and the empty record is
 // what keeps them apart downstream.
 test('an empty recall still stages the cost record, with no terms to match against', async (t) => {
@@ -1016,7 +1016,7 @@ test('an empty recall still stages the cost record, with no terms to match again
   assert.deepEqual(staged.recall.terms, []);
 });
 
-// §4.4: the turn file is a new place for a secret to land. Evidence content is not
+// The turn file is a new place for a secret to land. Evidence content is not
 // necessarily this plugin's own redacted capture — another client, or `mubit_remember`,
 // can put anything in the store — so what recall stages goes through the same scrub as
 // anything else the plugin writes down.
@@ -1046,7 +1046,7 @@ test('a secret inside recalled evidence never reaches the staged terms', async (
 });
 
 // ---------------------------------------------------------------------------
-// The cross-turn seen-set — §5.2 step 6, `lib/seen.mjs`
+// The cross-turn seen-set, `lib/seen.mjs`
 // ---------------------------------------------------------------------------
 
 /*
@@ -1203,7 +1203,7 @@ test('a block containing pointers says what a pointer is', async (t) => {
     'the model has to be told that a pointer line is a reference, not a shortened memory');
 });
 
-// §6.1: the opt-out. `full` is the behaviour of every release before this one.
+// The opt-out. `full` is the behaviour of every release before this one.
 test('recallRepeatMode "full" pays full price on every prompt', async (t) => {
   const server = await fakeMubit({
     'POST /v2/control/query': { json: queryResponse({ evidence: STICKY_EVIDENCE() }) },
@@ -1242,7 +1242,7 @@ test('the staged turn records how many entries were degraded', async (t) => {
     'all three entries were already shown, so all three are pointed at');
 });
 
-// §4.9: a recall that never reached the model must not claim it did. Marking on failure
+// A recall that never reached the model must not claim it did. Marking on failure
 // would make the NEXT prompt point at a memory that was never injected at all.
 test('a failed recall marks nothing as seen', async (t) => {
   const server = await fakeMubit({

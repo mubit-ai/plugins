@@ -120,7 +120,7 @@ const HOST = 'claude-code';
 /** The host's transcript root. Overridable so a test never reads the real one. */
 export const TRANSCRIPT_ROOT_ENV = 'MUBIT_CC_TRANSCRIPT_ROOT';
 
-/** §7: `import/<hash>.json`, one cursor per transcript file. */
+/** `import/<hash>.json`, one cursor per transcript file. */
 export const CURSOR_DIR = 'import';
 
 /** Bumped only if the cursor shape changes; an unknown version reads as no cursor. */

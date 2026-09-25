@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/recall.mjs` — the read ladder, as one call (§1.8, §5.2 steps 1-4).
+ * `lib/recall.mjs` — the read ladder, as one call (§5.2 steps 1-4).
  *
  * ---------------------------------------------------------------------------
  * The ladder, and why it looks inverted
@@ -70,7 +70,7 @@
  * `lib/http.mjs` not to record what it learns. Its own docblock says why.
  *
  * Discipline shared with the rest of `lib/`: zero dependencies, Node >= 20 built-ins only,
- * no import outside `lib/`, and nothing here throws (§4.9).
+ * no import outside `lib/`, and nothing here throws.
  */
 
 import { createHash } from 'node:crypto';
@@ -84,7 +84,7 @@ import { log } from './log.mjs';
 import { recordRules } from './rules.mjs';
 import { readJson, resolveDataDir, writeJsonAtomic } from './state.mjs';
 
-/** §5.2 step 3: rung 2 costs an LLM call; do not start one that cannot land. */
+/** Rung 2 costs an LLM call; do not start one that cannot land. */
 const RUNG2_MIN_BUDGET_MS = 500;
 
 /** §5.2 rung-1 body, verbatim. */
@@ -92,7 +92,7 @@ const ENTRY_TYPES = Object.freeze(['mental_model', 'rule', 'lesson', 'fact', 'tr
 const QUERY_LIMIT = 8;
 
 /**
- * §5.2 — the budget below which rung 1 opts OUT of the server's cross-run lesson overlay.
+ * The budget below which rung 1 opts OUT of the server's cross-run lesson overlay.
  *
  * `entry_types` above contains `lesson`, and that alone puts the query on a second retrieval
  * lane: alongside the run-scoped search, the server runs an unscoped one to surface lessons
@@ -116,7 +116,7 @@ const QUERY_LIMIT = 8;
 const CROSS_RUN_MIN_BUDGET_MS = 3000;
 
 /**
- * §5.2: the `rank_by` modes the server actually has. Anything else — `auto` included — is
+ * The `rank_by` modes the server actually has. Anything else — `auto` included — is
  * left off the wire entirely.
  *
  * `rank_by` selects how the server weights semantic, lexical and recency scores:
@@ -232,7 +232,7 @@ const RESUME_TIMEOUT_MS = 20_000;
 /** §6.1 `resumeTokenBudget`, used when a config could not be resolved. */
 const RESUME_TOKEN_BUDGET = 1000;
 
-/** §5.2/§7: the policy verdict file, keyed by endpoint hash — the same scheme as the breaker. */
+/** The policy verdict file, keyed by endpoint hash — the same scheme as the breaker. */
 const POLICY_TTL_MS = 86_400_000;
 const ENDPOINT_HASH_LEN = 12;
 
@@ -286,7 +286,7 @@ export async function recallBlock(cfg, o) {
       ? await rungThree(cfg, o)
       : await ladder(cfg, o);
   } catch (err) {
-    // §4.9: `lib/http.mjs` is total, so reaching here means a programming error rather than
+    // `lib/http.mjs` is total, so reaching here means a programming error rather than
     // a network one. It still may not take the prompt down with it.
     log(cfg, 'warn', `recall: the ladder threw (${messageOf(err)})`, { run_id: o?.runId });
     return failure('server_error', messageOf(err), 0);
@@ -333,7 +333,7 @@ async function ladder(cfg, o) {
     // Omitted rather than sent when it resolves to nothing: absent IS `relevance`
     // server-side, so there is no shape of request this spread cannot express.
     ...(rankBy ? { rank_by: rankBy } : {}),
-    // §5.2: opting out of the cross-run lesson overlay, and the ONLY field here that is sent
+    // Opting out of the cross-run lesson overlay, and the ONLY field here that is sent
     // to make the request cheaper rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
     //
     // Omitted rather than sent as `false` when the overlay is wanted: absent IS `false`
@@ -358,7 +358,7 @@ async function ladder(cfg, o) {
       return fromEvidence(cfg, res.body, 1, o);
     }
     if (res.status === 403) {
-      // §5.2: a policy verdict, not a fault. `lib/http.mjs` has already declined to
+      // A policy verdict, not a fault. `lib/http.mjs` has already declined to
       // record it with the breaker; all that is left is to remember it and decide.
       cachePolicyDenial(cfg);
       if (cfg.recallFallback !== 'agent_routed') {
@@ -376,7 +376,7 @@ async function ladder(cfg, o) {
         { run_id: o.runId });
       denied = true;
     } else {
-      // §5.2: "Any other failure → give up; this is a transport/server problem, not policy."
+      // "Any other failure → give up; this is a transport/server problem, not policy."
       // A 401 lands here, deliberately: spending an LLM call on rung 2 with a broken key
       // buys a second 401.
       return failure(res.state, res.error, 1);
@@ -472,7 +472,7 @@ async function rungThree(cfg, o) {
  * nothing is waiting. Rung 3 costs two LLM calls, and an agent-routed call is slow enough
  * that no blocking budget could hold one.
  *
- * Never throws and never rejects — every failure is already a shape in `Outcome` (§4.9).
+ * Never throws and never rejects — every failure is already a shape in `Outcome`.
  *
  * @param {Record<string, any>} cfg
  * @param {{runId: string, agentId: string, tokenBudget?: number}} o
@@ -555,7 +555,7 @@ function fromContext(responseBody, rung) {
 /**
  * Rungs 1-2 answer with `evidence[]`; `lib/assemble.mjs` renders it into the same shape,
  * in the same order, with the same `emptyReason` vocabulary rung 3 would have produced
- * (§4.10). That is what makes `additionalContext` rung-agnostic.
+ *. That is what makes `additionalContext` rung-agnostic.
  *
  * It is also where the rule store is filled. The `rule`-typed entries in this same
  * `evidence[]` are written to `runs/<run_id>/rules.json` for `hooks/src/pre-tool.mjs` to read
@@ -597,7 +597,7 @@ function fromEvidence(cfg, responseBody, rung, o) {
     dropped: a.dropped,
     pointers: a.pointers,
     emptyReason: a.emptyReason,
-    // §4.10/§5.5: a degraded entry is still in here. Dropping a repeat would break
+    // A degraded entry is still in here. Dropping a repeat would break
     // attribution for exactly the memories that are helping most.
     refIds: a.sourceRefIds,
     entries: a.entries,
@@ -677,7 +677,7 @@ function failure(state, error, rung) {
 }
 
 // ---------------------------------------------------------------------------
-// §5.2/§7 — the policy-verdict cache
+// The policy-verdict cache
 // ---------------------------------------------------------------------------
 
 /**
@@ -724,7 +724,7 @@ function cachePolicyDenial(cfg) {
 }
 
 /**
- * A verdict the server has just contradicted. Grants are never *stored* (§5.2), but an old
+ * A verdict the server has just contradicted. Grants are never *stored*, but an old
  * denial that has been disproved is removed rather than left to confuse the doctor skill.
  * @param {Record<string, any>} cfg
  * @returns {void}

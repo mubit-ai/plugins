@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * `hooks/src/session-end.mjs` — SessionEnd (§5.7).
+ * `hooks/src/session-end.mjs` — SessionEnd.
  *
  * ---------------------------------------------------------------------------
  * Why the reflect call at the end of this file is not optional
@@ -9,7 +9,7 @@
  * Mubit extracts lessons on its own as it ingests, but those keep the scope they were
  * extracted at, and a `run`-scoped lesson is invisible to the next session. Widening scope is
  * reserved for the explicit reflect path. So **`POST /v2/control/reflect` here is the only
- * thing in the entire system that lets a lesson outlive the run that produced it** (§1.4). It
+ * thing in the entire system that lets a lesson outlive the run that produced it**. It
  * is required, not optional, and `MUBIT_CC_REFLECT_ON_END=0` is an opt-out that knowingly
  * costs cross-session durability.
  *
@@ -76,7 +76,7 @@
  *     recorded at the bottom, so a flush killed in between leaves nothing behind and the
  *     next attempt picks the session up instead of standing down in front of undone work.
  *     `claimOnce` returns **true when it fails to write** — proceeding on marker failure is
- *     deliberate (§4.6): losing a session's captures is worse than sending them twice, and
+ *     deliberate: losing a session's captures is worse than sending them twice, and
  *     the batch carries the same `idempotency_key` whichever drainer sends it.
  *   - `acquireFlushLease` — is one flushing *right now*. That is exactly the question the
  *     split above cannot answer, and it has to be answered separately because reflect is not
@@ -84,7 +84,7 @@
  *     marker, so a killed holder blocks nobody: it is taken from a dead pid at once, and from
  *     a live one past its TTL.
  *
- * Best-effort throughout, and exit 0 always (§4.9). Anything still spooled is picked up by
+ * Best-effort throughout, and exit 0 always. Anything still spooled is picked up by
  * the next session's first drain — the spool is keyed by `run_id`, not by session, so a
  * crashed session's captures survive.
  */
@@ -147,10 +147,10 @@ const CODEX_INLINE = !DETACHED && host() === 'codex';
 const HARNESS_BUDGET_MS = DETACHED ? 58_000 : (CODEX_INLINE ? 2500 : 7200);
 const BUDGET_MS = DETACHED ? 55_000 : (CODEX_INLINE ? 2300 : 6800);
 
-/** §5.7 step 2: "until empty or 3500 ms elapse" — or as much of that as the clamp allows. */
+/** "until empty or 3500 ms elapse" — or as much of that as the clamp allows. */
 const DRAIN_MS = CODEX_INLINE ? 1100 : 3500;
 /**
- * §5.7 step 4: the reflect is LLM-backed, so it gets the largest single slice — and inside a
+ * The reflect is LLM-backed, so it gets the largest single slice — and inside a
  * detached child that slice is what the extra headroom above is *for*. 4000 ms is not enough:
  * the first `--print` session ever to reach this call recorded `POST /v2/control/reflect:
  * aborted after 4000ms`. The inline value is left exactly where it was, because there the
@@ -189,13 +189,13 @@ const HEARTBEAT_MS = CODEX_INLINE ? 300 : 1000;
 /** Bounds the reflection to the most recent items of the run (`control.proto`). */
 const REFLECT_LAST_N = 200;
 
-/** §7: `runs/<run_id>/jobs.json` keeps the last 20, for the doctor skill. */
+/** `runs/<run_id>/jobs.json` keeps the last 20, for the doctor skill. */
 const JOBS_KEEP = 20;
 
 /** A dead session is not worth an unbounded scan of a six-hour turn directory. */
 const MAX_TURN_FLUSH = 10;
 
-/** The one stdout this hook ever produces (§5.7). */
+/** The one stdout this hook ever produces. */
 const SUPPRESS = Object.freeze({ suppressOutput: true });
 
 await runHook('session-end', {
@@ -213,7 +213,7 @@ await runHook('session-end', {
       runId = deriveRunId(cfg, payload);
       agentId = deriveAgentId(payload);
     } catch (err) {
-      // `static` with no pin, or a derivation that could only have answered "default" (§4.3).
+      // `static` with no pin, or a derivation that could only have answered "default".
       // The spool waits for a run id worth writing to; nothing here is lost.
       log(cfg, 'warn', `session-end: no usable run id (${messageOf(err)})`);
       return SUPPRESS;
@@ -256,7 +256,7 @@ await runHook('session-end', {
     }
 
     try {
-      // §5.7 step 2 — inline, ignoring the batch-size trigger. Commits BEFORE anything below
+      // Inline, ignoring the batch-size trigger. Commits BEFORE anything below
       // can fail: a lost reflect costs scope promotion, never the captures themselves.
       const drained = await drainInline(cfg, {
         runId,
@@ -265,7 +265,7 @@ await runHook('session-end', {
         deadline: Math.min(deadline - (REFLECT_MS / 2), Date.now() + DRAIN_MS),
       });
 
-      // §5.7 step 3 — a turn `capture --stop` left pending, attributed before reflect so the
+      // A turn `capture --stop` left pending, attributed before reflect so the
       // reflection sees the outcome signals it folds in.
       const flushed = await flushOutcomes(cfg, {
         runId, agentId, budget: () => budgetFor(OUTCOME_MS, REFLECT_MS / 2),
@@ -273,7 +273,7 @@ await runHook('session-end', {
         sessionId, agentId, budget: () => budgetFor(OUTCOME_MS, REFLECT_MS / 2),
       });
 
-      // §5.7 step 4 — REQUIRED (§1.4), and skipped only on the documented conditions.
+      // REQUIRED, and skipped only on the documented conditions.
       const marker = readMarker(cfg, runId);
       const priorIngested = numOr(marker.captured?.ingested, 0);
       // The MCP server's writes, which no term above can see: they leave a different process
@@ -297,7 +297,7 @@ await runHook('session-end', {
         pending,
       });
 
-      // §5.7 step 5 — the agent is not gone, it is idle; re-registering it next session is
+      // The agent is not gone, it is idle; re-registering it next session is
       // noise the control plane reconciles.
       const beatBudget = budgetFor(HEARTBEAT_MS);
       if (beatBudget > 0) {
@@ -306,7 +306,7 @@ await runHook('session-end', {
         if (!res.ok) log(cfg, 'info', `session-end: idle heartbeat failed (${res.state})`, { run_id: runId });
       }
 
-      // §5.7 step 6 — the marker is what the status line and the next session read.
+      // The marker is what the status line and the next session read.
       updateMarker(cfg, runId, {
         mode: cfg.mode,
         captured: { pending: spoolStats(cfg, runId).count },
@@ -344,7 +344,7 @@ await runHook('session-end', {
 /**
  * Stash the payload, stamp the marker, spawn, and report whether the child owns the flush.
  *
- * `spawnDetached` (§4.9) is re-used rather than reinvented: `detached: true`, `stdio:
+ * `spawnDetached` is re-used rather than reinvented: `detached: true`, `stdio:
  * 'ignore'`, `unref()`, and the payload handed over by file because a detached child's
  * inherited stdin is not reliably readable once the parent exits — and the parent exits
  * within milliseconds, which is the entire point. `'session-end'` resolves as a sibling of
@@ -392,7 +392,7 @@ function handOff(cfg, payload, runId) {
 }
 
 // ---------------------------------------------------------------------------
-// §5.7 step 2 — the inline drain
+// The inline drain
 // ---------------------------------------------------------------------------
 
 /**
@@ -402,7 +402,7 @@ function handOff(cfg, payload, runId) {
  *
  * A failure stops the loop and leaves every spool file exactly where it is. Quarantine of a
  * genuinely bad payload is deliberately NOT duplicated here: `drain.mjs` owns the three-way
- * error split (§5.5), and the next session's first drain applies it. A second copy of that
+ * error split, and the next session's first drain applies it. A second copy of that
  * logic in a hook nobody is waiting on is how the two drift apart.
  *
  * It reports *how* it ended, not just how much it sent. "The spool is not empty" has two
@@ -469,7 +469,7 @@ async function drainInline(cfg, o) {
         break;
       }
 
-      // §5.5 step 6: `status: "queued"` means accepted, not durable — nothing here waits on
+      // `status: "queued"` means accepted, not durable — nothing here waits on
       // the job; `runs/<run_id>/jobs.json` is how the doctor skill gets back to it.
       commitBatch(batch);
       sent += batch.length;
@@ -498,7 +498,7 @@ async function drainInline(cfg, o) {
 }
 
 /**
- * §7/§15.4: an ingest that answered `queued` has been accepted, not stored; this array is
+ * An ingest that answered `queued` has been accepted, not stored; this array is
  * the only way back to the job.
  * @param {Record<string, any>} cfg @param {string} runId @param {any} body @param {number} n
  */
@@ -518,19 +518,19 @@ function recordJob(cfg, runId, body, n) {
     });
     writeJsonAtomic(p, arr.slice(-JOBS_KEEP));
   } catch {
-    // §4.9: a full or read-only data dir costs the job record, never the flush.
+    // A full or read-only data dir costs the job record, never the flush.
   }
 }
 
 // ---------------------------------------------------------------------------
-// §5.7 step 3 — outcomes left pending
+// Outcomes left pending
 // ---------------------------------------------------------------------------
 
 /**
  * A turn that `capture --stop` marked `outcome_pending` but whose drain never got to
  * attribute it — the drainer stood down, the endpoint was down, the session ended first.
  *
- * **The rule is `lib/outcome.mjs`'s, not this hook's.** `drain.mjs` (§5.5 step 7) is its other
+ * **The rule is `lib/outcome.mjs`'s, not this hook's.** `drain.mjs` is its other
  * caller, and because the two hooks never fire for the same turn, a disagreement between them
  * is invisible: it shows up only as a run whose outcome series mixes two definitions of the
  * same measurement. That is exactly what happened while this function kept its own copy — it
@@ -548,7 +548,7 @@ function recordJob(cfg, runId, body, n) {
  * @returns {Promise<number>} how many outcomes were accepted
  */
 async function flushOutcomes(cfg, o) {
-  // §6.1: "off" disables implicit attribution entirely, and "explicit" hands the call to the
+  // "off" disables implicit attribution entirely, and "explicit" hands the call to the
   // model through `mubit_outcome` — firing one here as well would dilute the model's
   // deliberate judgement with an automatic 0.2.
   if (!implicitOutcomesEnabled(cfg)) return 0;
@@ -672,12 +672,12 @@ async function flushCorrections(cfg, o) {
 }
 
 // ---------------------------------------------------------------------------
-// §5.7 step 4 — the reflect
+// The reflect
 // ---------------------------------------------------------------------------
 
 /**
  * `POST /v2/control/reflect`, the only call that can widen a lesson's scope past `run`
- * (§1.4). Skipped on exactly two conditions, both documented: `MUBIT_CC_REFLECT_ON_END=0`,
+ *. Skipped on exactly two conditions, both documented: `MUBIT_CC_REFLECT_ON_END=0`,
  * and nothing having been ingested — an LLM-backed call over an empty tail is pure cost.
  *
  * A failure is logged and recorded as `reflect: failed`, never surfaced as a blocking error.

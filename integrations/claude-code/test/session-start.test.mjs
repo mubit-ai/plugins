@@ -53,14 +53,14 @@ function seedSessionRecord(dataDir, sessionId, over = {}) {
   return rec;
 }
 
-/** §7: `runs/<run_id>/checkpoints.json` — what `checkpoint --pre` leaves behind. */
+/** `runs/<run_id>/checkpoints.json` — what `checkpoint --pre` leaves behind. */
 function seedCheckpoints(dataDir, runId, entries) {
   const dir = join(dataDir, 'runs', runId);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'checkpoints.json'), JSON.stringify(entries));
 }
 
-/** The single status marker (§4.8). `status/health.json` is the health cache, not a marker. */
+/** The single status marker. `status/health.json` is the health cache, not a marker. */
 function readMarker(dataDir) {
   const dir = join(dataDir, 'status');
   const files = readdirSync(dir).filter((f) => f.endsWith('.json') && f !== 'health.json');
@@ -97,14 +97,14 @@ test('startup calls health -> register -> the activity feed, in that order', asy
     'POST /v2/control/activity',
   ]);
 
-  // §1.2 — health is allowlisted and returns the plain string `OK`. A hook that
+  // Health is allowlisted and returns the plain string `OK`. A hook that
   // JSON.parses it would treat a healthy server as down, so the two calls that
   // follow are themselves the proof it was read as text.
   const reg = server.lastCall('POST', '/v2/control/agents/register');
-  assert.match(String(reg.headers.authorization ?? ''), /mbt_test/, 'must send the API key (§1.2)');
+  assert.match(String(reg.headers.authorization ?? ''), /mbt_test/, 'must send the API key');
 });
 
-// §5.1 — the RegisterAgent body, verbatim.
+// The RegisterAgent body, verbatim.
 test('register body carries run_id, agent_id, role, status and capabilities', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -118,10 +118,10 @@ test('register body carries run_id, agent_id, role, status and capabilities', as
   assert.equal(body.role, 'worker');
   assert.equal(body.status, 'active');
   assert.deepEqual(body.capabilities, ['code', 'shell', 'edit', 'search']);
-  // §1.3 — run_id and agent_id are mandatory on the register request body.
+  // run_id and agent_id are mandatory on the register request body.
   assert.match(body.run_id, /^cc-/);
   assert.equal(body.agent_id, 'claude-code');
-  // §4.3 — `"default"` is the bundled server's placeholder, and it identifies nothing: a
+  // `"default"` is the bundled server's placeholder, and it identifies nothing: a
   // run id has to name one project on one machine. No strategy may ever emit it.
   assert.notEqual(body.run_id, 'default');
 });
@@ -173,7 +173,7 @@ test('stdout is a SessionStart steer block plus a one-line systemMessage', async
   const ctx = out.additionalContext;
   assert.ok(ctx.includes(runId), `additionalContext must name the run, got:\n${ctx}`);
   assert.match(ctx, /hosted/, 'additionalContext must name the mode');
-  // §5.1 — the "when to search" guidance is the MCP server's `instructions`, which Claude
+  // The "when to search" guidance is the MCP server's `instructions`, which Claude
   // Code loads into the system prompt of every session (`mcp/src/instructions.mjs`, asserted
   // by mcp-instructions.test.mjs). This block fires on every startup, resume, clear and
   // compaction — the most frequent injection the plugin makes — so on this host it carries the
@@ -235,7 +235,7 @@ test('the lesson ids are kept on the marker for the first turn to credit', async
 });
 
 
-// §4.7 — the grace window starts here, so failures in the first seconds after
+// The grace window starts here, so failures in the first seconds after
 // still starting up do not tell the user their memory is broken.
 test('marker.cold_start_until = now + coldStartGraceMs', async (t) => {
   const server = await fakeMubit();
@@ -255,7 +255,7 @@ test('marker.cold_start_until = now + coldStartGraceMs', async (t) => {
     `cold_start_until ${marker.cold_start_until} > ${after + 20000}`);
 });
 
-// §4.7 — the window is a property of the *endpoint*, not of the session. Re-arming it on
+// The window is a property of the *endpoint*, not of the session. Re-arming it on
 // entry meant it was open at the instant every probe failed, on every session, forever: the
 // grace could never expire, so `◍ warming` masked every real fault permanently and no other
 // failure state was reachable through the hook that runs first.
@@ -299,7 +299,7 @@ test('a new endpoint arms its own window; returning to the old one does not re-a
     'returning to an endpoint already seen re-armed its window instead of reusing the record');
 });
 
-// §4.1 — the state that used to be reported as `server_error`: `urlFor` handed `fetch` a
+// The state that used to be reported as `server_error`: `urlFor` handed `fetch` a
 // bare route, `fetch` threw ERR_INVALID_URL before opening a socket, and `classifyError`
 // had no branch for it. The user was then sent to the README row that says the client
 // cannot fix it, for the one problem only the client can fix.
@@ -325,7 +325,7 @@ test('no endpoint reports unconfigured, dials nothing, and names the fix', async
 });
 
 // ---------------------------------------------------------------------------
-// §4.3 — the `source` table
+// The `source` table
 // ---------------------------------------------------------------------------
 
 // §4.3 `startup`: derive fresh, write the session map, RegisterAgent.
@@ -399,7 +399,7 @@ test('source=compact reuses the parent session record run', async (t) => {
   assert.deepEqual(outgoingRunIds(server), [MAPPED_RUN]);
 });
 
-// §5.6 — the post-compaction re-anchor is delivered HERE, not by `checkpoint --post`.
+// The post-compaction re-anchor is delivered HERE, not by `checkpoint --post`.
 // `PostCompact` is not a `hookSpecificOutput.hookEventName` Claude Code accepts (see
 // `test/hook-output.test.mjs`), so anything that hook injected was discarded whole. This is
 // the only hook that both runs after a compaction and has an accepted event name.
@@ -447,7 +447,7 @@ test('source=startup does not re-anchor, even with a stored checkpoint', async (
     'a startup session was not compacted; there is nothing to re-anchor');
 });
 
-// §5.6 — with nothing stored there is nothing to anchor to. `--pre` never ran for this run,
+// With nothing stored there is nothing to anchor to. `--pre` never ran for this run,
 // its call failed, or §7's sweep took the file. Saying "checkpoint undefined holds your
 // context" is strictly worse than silence.
 test('source=compact with no stored checkpoint steers normally and names no anchor', async (t) => {
@@ -507,7 +507,7 @@ test('source=fork reuses the parent run and heartbeats instead of registering', 
     'deriving a fresh run id here would cut the fork off from the parent conversation\'s '
     + 'captured turns, which is the memory the user branched in order to keep');
 
-  // §4.8 — `status/<run_id>.json` is what `bin/statusline.mjs` renders and what every later
+  // `status/<run_id>.json` is what `bin/statusline.mjs` renders and what every later
   // hook in this session reads back. Without it a forked session shows no memory state at all.
   const markers = readdirSync(join(dataDir, 'status')).filter((f) => f !== 'health.json');
   assert.deepEqual(markers, [`${MAPPED_RUN}.json`],
@@ -579,10 +579,10 @@ test('an unmapped fork session id still lands on the run its parent derived', as
 });
 
 // ---------------------------------------------------------------------------
-// Degraded paths — §5.1 "Failure", §4.9 "never blocks"
+// Degraded paths "Failure", §4.9 "never blocks"
 // ---------------------------------------------------------------------------
 
-// §5.1 step 4: health not ok -> skip register and lessons, but STILL steer, so the
+// Health not ok -> skip register and lessons, but STILL steer, so the
 // model knows memory is offline instead of inventing recall it never received.
 /**
  * The gap health cannot close. Health reports whether the instance is reachable, not whether
@@ -673,7 +673,7 @@ test('unreachable endpoint emits the exact offline systemMessage and exits 0', a
   assert.match(r.json.hookSpecificOutput.additionalContext, /offline|unreachable/i);
 });
 
-// §5.1 step 1 — with both halves off there is nothing to say and nobody to say it to.
+// With both halves off there is nothing to say and nobody to say it to.
 test('capture and recall both disabled emits {} with zero HTTP', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -688,7 +688,7 @@ test('capture and recall both disabled emits {} with zero HTTP', async (t) => {
   assert.equal(server.requests.length, 0, `expected no HTTP, saw: ${seq(server).join(', ')}`);
 });
 
-// §5.1 step 4 — health is the GATE, and a gate that is starved fails the whole hook, not one
+// Health is the GATE, and a gate that is starved fails the whole hook, not one
 // section. With the sub-budget pinned at 400 ms a cold or loaded instance that answered
 // correctly in 700 ms read as `not_responding`: every session then opened by telling the model
 // memory was offline and recall was unavailable, while recall itself worked normally. The

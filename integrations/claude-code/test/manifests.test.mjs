@@ -40,16 +40,16 @@ const P = {
   agents: join(PLUGIN_ROOT, 'agents'),
 };
 
-/** The plugin's own MCP server prefix. `.mcp.json` names the server `mubit` (§3.3). */
+/** The plugin's own MCP server prefix. `.mcp.json` names the server `mubit`. */
 const QUALIFIED_PREFIX = 'mcp__plugin_mubit-memory_mubit__';
 
-/** §8.2 — seven of the twenty-one tools; the administrative verbs are reached through `bin/admin.mjs`. */
+/** Seven of the twenty-one tools; the administrative verbs are reached through `bin/admin.mjs`. */
 const DEFAULT_ALLOWLIST = [
   'mubit_learned', 'mubit_recall', 'mubit_outcome', 'mubit_diagnose',
   'mubit_dereference', 'mubit_status', 'mubit_memory_health',
 ];
 
-/** §6.2 — every key the plugin promises to honour at enable time. */
+/** Every key the plugin promises to honour at enable time. */
 const USER_CONFIG_KEYS = [
   'endpoint', 'apiKey', 'userId', 'runStrategy', 'capture', 'recall', 'redact',
   'recallTokenBudget', 'recallAssemble', 'reflectOnEnd', 'outcomeMode', 'statusLine',
@@ -165,17 +165,17 @@ function markdownWithTools() {
  */
 function realToolNames() {
   const src = readText(P.serverBundle, 'mcp/dist/server.js',
-    'This is the bundled MCP server (§1.9); the plugin allowlist is checked against what it registers.');
+    'This is the bundled MCP server; the plugin allowlist is checked against what it registers.');
   const names = [...src.matchAll(/name:\s*"(mubit_[a-z_0-9]+)"/g)].map((m) => m[1]);
   assert.ok(names.length > 0, 'could not parse any tool names out of mcp/dist/server.js');
   return names;
 }
 
 // ---------------------------------------------------------------------------
-// §12.7 — every manifest parses
+// Every manifest parses
 // ---------------------------------------------------------------------------
 
-// §3 — all five plugin manifests plus the repo-root catalog must exist and parse.
+// All five plugin manifests plus the repo-root catalog must exist and parse.
 // A manifest that does not parse is not a degraded plugin; it is an uninstallable one.
 test('every manifest exists and parses as JSON', () => {
   readJson(P.plugin, '.claude-plugin/plugin.json', 'The plugin manifest: identity, version and the components the host loads.');
@@ -187,7 +187,7 @@ test('every manifest exists and parses as JSON', () => {
     'Repo-root marketplace catalog. This is what `/plugin marketplace add mubit-ai/plugins` reads.');
 });
 
-// §3.1/§3.5 — identity is duplicated across manifests; it must agree.
+// Identity is duplicated across manifests; it must agree.
 test('plugin identity agrees across plugin.json and the marketplace entry', () => {
   const plugin = readJson(P.plugin, '.claude-plugin/plugin.json', 'the plugin manifest');
   const market = readJson(P.marketplace, '.claude-plugin/marketplace.json', 'the marketplace catalog');
@@ -198,7 +198,7 @@ test('plugin identity agrees across plugin.json and the marketplace entry', () =
   assert.ok(entry, 'marketplace.json has no plugin entry named "mubit-memory"');
 });
 
-// §12.7 — one bump touches four files (plugin.json, package.json, marketplace.json,
+// One bump touches four files (plugin.json, package.json, marketplace.json,
 // and — at release time — the sibling JS packages). Drift here ships a plugin whose
 // reported version is a lie.
 test('version lockstep: plugin.json === package.json === marketplace.json entry', () => {
@@ -210,17 +210,17 @@ test('version lockstep: plugin.json === package.json === marketplace.json entry'
 
   assert.match(String(plugin.version), /^\d+\.\d+\.\d+$/, 'plugin.json version must be semver');
   assert.equal(pkg.version, plugin.version,
-    `package.json version ${pkg.version} !== plugin.json version ${plugin.version} — one bump touches four files (§12.7); automate it or it will drift`);
+    `package.json version ${pkg.version} !== plugin.json version ${plugin.version} — one bump touches four files; automate it or it will drift`);
   assert.equal(entry.version, plugin.version,
     `marketplace.json entry version ${entry.version} !== plugin.json version ${plugin.version}`);
 });
 
 // ---------------------------------------------------------------------------
-// §12.7 — hooks.json wiring
+// hooks.json wiring
 // ---------------------------------------------------------------------------
 
-// §12.7 — a hook whose bundle is missing is a silently dead event. `dist/` is a
-// committed artifact (§11.3), so "it exists in the repo" is the whole install check.
+// A hook whose bundle is missing is a silently dead event. `dist/` is a
+// committed artifact, so "it exists in the repo" is the whole install check.
 test('every hooks.json command/args path exists under hooks/dist/', () => {
   const hooks = readJson(P.hooks, 'hooks/hooks.json', 'the hook registration manifest');
   const distDir = join(PLUGIN_ROOT, 'hooks', 'dist');
@@ -229,16 +229,16 @@ test('every hooks.json command/args path exists under hooks/dist/', () => {
 
   for (const { where, entry } of entries) {
     const script = (entry.args ?? []).find((a) => typeof a === 'string' && a.endsWith('.mjs'));
-    assert.ok(script, `${where}: no .mjs script found in args — exec form must name the bundle in args (§3.2)`);
+    assert.ok(script, `${where}: no .mjs script found in args — exec form must name the bundle in args`);
     const abs = resolvePluginPath(script);
     assert.ok(abs.startsWith(distDir + '/') || abs.startsWith(distDir + '\\'),
-      `${where}: script must live under hooks/dist/ (committed build output, §11.3), got ${script}`);
+      `${where}: script must live under hooks/dist/ (committed build output), got ${script}`);
     assert.ok(existsSync(abs),
-      `${where}: ${script} does not exist yet → ${abs}\n  Build it: npm --prefix integrations/claude-code run build (§11.2). dist/ is committed (§11.3).`);
+      `${where}: ${script} does not exist yet → ${abs}\n  Build it: npm --prefix integrations/claude-code run build. dist/ is committed.`);
   }
 });
 
-// §6.3 — shell-form hook commands cannot interpolate `${user_config.*}`; Claude Code
+// Shell-form hook commands cannot interpolate `${user_config.*}`; Claude Code
 // blocks it as an injection guard. Exec form also means no shell to fork and no quoting
 // to get wrong.
 test('every hooks.json command uses exec form (command + args), never shell form', () => {
@@ -247,18 +247,18 @@ test('every hooks.json command uses exec form (command + args), never shell form
     assert.equal(entry.type, 'command', `${where}: hook "type" must be "command"`);
     assert.equal(typeof entry.command, 'string', `${where}: "command" must be a string`);
     assert.ok(!/\s/.test(entry.command),
-      `${where}: "command" contains whitespace (${JSON.stringify(entry.command)}) — that is shell form; use command + args (§6.3)`);
+      `${where}: "command" contains whitespace (${JSON.stringify(entry.command)}) — that is shell form; use command + args`);
     assert.equal(entry.command, 'node',
-      `${where}: command must be exactly "node" (§3.2), got ${JSON.stringify(entry.command)}`);
+      `${where}: command must be exactly "node", got ${JSON.stringify(entry.command)}`);
     assert.ok(Array.isArray(entry.args) && entry.args.length >= 1,
-      `${where}: exec form requires a non-empty "args" array (§6.3)`);
+      `${where}: exec form requires a non-empty "args" array`);
     const all = [entry.command, ...entry.args].join(' ');
     assert.ok(!/[|;&`]|\$\(/.test(all.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, '')),
       `${where}: shell metacharacters in an exec-form command: ${all}`);
   }
 });
 
-// §3.2 — all thirteen registrations, with the exact events, ordering, matchers, extra args,
+// All thirteen registrations, with the exact events, ordering, matchers, extra args,
 // `if` filters and timeouts. `timeout` is in SECONDS; a millisecond value here silently
 // gives every hook a ~3ms budget.
 test('hooks.json declares all ten registrations with the right events, args and timeouts', () => {
@@ -339,7 +339,7 @@ test('hooks.json declares all ten registrations with the right events, args and 
   }
 });
 
-// §3.2 — SessionStart is matched on source; without the matcher the hook fires on
+// SessionStart is matched on source; without the matcher the hook fires on
 // sources it has no handling for.
 //
 // `fork` is the fifth source (`--fork-session`, `/fork`, `/branch`). Before Claude Code
@@ -354,12 +354,12 @@ test('hooks.json SessionStart matches startup|resume|clear|compact|fork', () => 
   const groups = hooks.hooks?.SessionStart ?? [];
   assert.equal(groups.length, 1, 'SessionStart should declare exactly one matcher group');
   assert.equal(groups[0].matcher, 'startup|resume|clear|compact|fork',
-    'SessionStart matcher must be "startup|resume|clear|compact|fork" (§3.2) — dropping '
+    'SessionStart matcher must be "startup|resume|clear|compact|fork" — dropping '
     + '"fork" leaves /fork and /branch sessions with no run id, no marker and no memory');
 });
 
 /**
- * §3.2 — `StopFailure` carries NO matcher, and that is a correctness requirement, not a
+ * `StopFailure` carries NO matcher, and that is a correctness requirement, not a
  * shortcut.
  *
  * Its matcher filters on the payload's `error`, whose vocabulary is ten values —
@@ -424,7 +424,7 @@ test('hooks.json PreToolUse is narrowed by both a tool matcher and an if pattern
 });
 
 /**
- * §3.2 — PostToolUse is ONE group, and it matches every tool.
+ * PostToolUse is ONE group, and it matches every tool.
  *
  * It used to be two: an anchored allowlist of eleven built-in names, and `^mcp__.*`. Both
  * halves of that were wrong.
@@ -445,7 +445,7 @@ test('hooks.json PreToolUse is narrowed by both a tool matcher and an if pattern
  *    match both and fire capture twice for a single tool call. So it is exactly one.
  *
  * The group deliberately also matches this plugin's own MCP tools; capture drops those in
- * code (§4.4), because a negative lookahead in a manifest is untestable.
+ * code, because a negative lookahead in a manifest is untestable.
  */
 test('hooks.json PostToolUse declares exactly one match-all group', () => {
   const hooks = readJson(P.hooks, 'hooks/hooks.json', 'the hook registration manifest');
@@ -475,25 +475,25 @@ function matchesAll(matcher, toolName) {
   try { return new RegExp(String(matcher)).test(toolName); } catch { return false; }
 }
 
-// §11.4 — `npx` costs ~500ms of module resolution per invocation, paid on every
+// `npx` costs ~500ms of module resolution per invocation, paid on every
 // PostToolUse. A fifty-tool session would burn 25 seconds of process overhead for zero
 // work. A TS loader (tsx/ts-node) has the same shape of cost.
 test('no hooks.json command uses npx or a TypeScript loader', () => {
   const hooks = readJson(P.hooks, 'hooks/hooks.json', 'the hook registration manifest');
   for (const { where, entry } of hookEntries(hooks)) {
     const all = [entry.command, ...(entry.args ?? [])].join(' ');
-    assert.ok(!/\bnpx\b/.test(all), `${where}: uses npx — ~500ms of resolution per hook (§11.4): ${all}`);
-    assert.ok(!/\b(tsx|ts-node)\b/.test(all), `${where}: uses a TypeScript loader (§11.4): ${all}`);
-    assert.ok(!/--(loader|experimental-loader)\b/.test(all), `${where}: registers a loader hook (§11.4): ${all}`);
-    assert.ok(!/\.tsx?(\s|$)/.test(all), `${where}: executes TypeScript directly (§11.4): ${all}`);
+    assert.ok(!/\bnpx\b/.test(all), `${where}: uses npx — ~500ms of resolution per hook: ${all}`);
+    assert.ok(!/\b(tsx|ts-node)\b/.test(all), `${where}: uses a TypeScript loader: ${all}`);
+    assert.ok(!/--(loader|experimental-loader)\b/.test(all), `${where}: registers a loader hook: ${all}`);
+    assert.ok(!/\.tsx?(\s|$)/.test(all), `${where}: executes TypeScript directly: ${all}`);
   }
 });
 
 // ---------------------------------------------------------------------------
-// §3.3 / §3.4 — the other two plugin manifests
+// The other two plugin manifests
 // ---------------------------------------------------------------------------
 
-// §3.3 — the server name is load-bearing: the fully qualified tool prefix that skills
+// The server name is load-bearing: the fully qualified tool prefix that skills
 // and hook matchers use is `mcp__plugin_mubit-memory_<server-name>__`.
 test('.mcp.json registers one server named "mubit" pointing at mcp/dist/index.js', () => {
   const mcp = readJson(P.mcp, '.mcp.json', 'the MCP server registration');
@@ -502,14 +502,14 @@ test('.mcp.json registers one server named "mubit" pointing at mcp/dist/index.js
     `.mcp.json must declare exactly one server named "mubit" — the ${QUALIFIED_PREFIX} prefix depends on it (§3.2 matcher note)`);
 
   const server = mcp.mcpServers.mubit;
-  assert.equal(server.command, 'node', '.mcp.json server command must be "node" (§11.4)');
+  assert.equal(server.command, 'node', '.mcp.json server command must be "node"');
   assert.ok(Array.isArray(server.args) && server.args.length === 1,
     '.mcp.json server must use exec form with a single entry-point arg');
   const abs = resolvePluginPath(String(server.args[0]));
   assert.ok(abs.endsWith(join('mcp', 'dist', 'index.js')),
-    `.mcp.json entry point must be mcp/dist/index.js (§3.3), got ${server.args[0]}`);
+    `.mcp.json entry point must be mcp/dist/index.js, got ${server.args[0]}`);
   assert.ok(existsSync(abs),
-    `mcp/dist/index.js does not exist yet → ${abs}\n  It is the bundled mcp/src/launch.mjs (§8.3, §11.2); dist/ is committed (§11.3).`);
+    `mcp/dist/index.js does not exist yet → ${abs}\n  It is the bundled mcp/src/launch.mjs; dist/ is committed.`);
 });
 
 // ---------------------------------------------------------------------------
@@ -561,46 +561,46 @@ test('every file Claude Code needs at runtime is tracked by git, not merely pres
   }
 });
 
-// §3.4 — the shipped statusLine registration. Whether a plugin may own the status line
-// is unverified (§16.2), but if we ship the registration it must point at a real file.
+// The shipped statusLine registration. Whether a plugin may own the status line
+// is unverified, but if we ship the registration it must point at a real file.
 test('settings.json registers the status line in exec form at bin/statusline.mjs', () => {
   const settings = readJson(P.settings, 'settings.json', 'the plugin settings');
   const sl = settings.statusLine;
-  assert.ok(sl, 'settings.json must declare a "statusLine" entry (§3.4)');
+  assert.ok(sl, 'settings.json must declare a "statusLine" entry');
   assert.equal(sl.type, 'command', 'statusLine.type must be "command"');
-  assert.equal(sl.command, 'node', 'statusLine.command must be "node" — never a shell string (§6.3)');
+  assert.equal(sl.command, 'node', 'statusLine.command must be "node" — never a shell string');
   assert.ok(Array.isArray(sl.args) && sl.args.length === 1, 'statusLine must use exec form with one arg');
   const abs = resolvePluginPath(String(sl.args[0]));
   assert.ok(abs.endsWith(join('bin', 'statusline.mjs')),
-    `statusLine must point at bin/statusline.mjs (§3.4), got ${sl.args[0]}`);
+    `statusLine must point at bin/statusline.mjs, got ${sl.args[0]}`);
   assert.ok(existsSync(abs),
-    `bin/statusline.mjs does not exist yet → ${abs}\n  Built from bin/statusline.src.mjs (§11.2) and committed (§11.3).`);
+    `bin/statusline.mjs does not exist yet → ${abs}\n  Built from bin/statusline.src.mjs and committed.`);
 });
 
 // ---------------------------------------------------------------------------
-// §12.7 — userConfig, tool prefixes, allowlist
+// userConfig, tool prefixes, allowlist
 // ---------------------------------------------------------------------------
 
-// §6.2 — the enable-time prompt is a promise. A declared-but-unread option is a lie to
+// The enable-time prompt is a promise. A declared-but-unread option is a lie to
 // the user, and an undeclared-but-read one is a setting they can never reach.
 test('every userConfig key declared in plugin.json is read somewhere in lib/config.mjs', () => {
   const plugin = readJson(P.plugin, '.claude-plugin/plugin.json', 'the plugin manifest');
   const src = readText(P.config, 'lib/config.mjs',
-    'One resolution function sees every userConfig key (§4.1, §6.3).');
+    'One resolution function sees every userConfig key.');
 
   const declared = Object.keys(plugin.userConfig ?? {});
-  assert.ok(declared.length > 0, 'plugin.json declares no userConfig keys (§3.1)');
+  assert.ok(declared.length > 0, 'plugin.json declares no userConfig keys');
 
   for (const key of USER_CONFIG_KEYS) {
     assert.ok(declared.includes(key),
-      `plugin.json userConfig is missing the documented key "${key}" (§6.2)`);
+      `plugin.json userConfig is missing the documented key "${key}"`);
   }
 
   const screaming = (k) => k.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
   for (const key of declared) {
     const seen = new RegExp(`\\b${key}\\b`).test(src) || new RegExp(`\\b${screaming(key)}\\b`).test(src);
     assert.ok(seen,
-      `userConfig key "${key}" is declared in plugin.json but never read in lib/config.mjs — a declared-but-unread option is a lie to the user at enable time (§12.7)`);
+      `userConfig key "${key}" is declared in plugin.json but never read in lib/config.mjs — a declared-but-unread option is a lie to the user at enable time`);
   }
 });
 
@@ -616,26 +616,26 @@ test('every tools: entry in a skill or agent uses the fully qualified plugin pre
     assert.ok(tools !== null, `${rel}: no YAML frontmatter block`);
     for (const t of tools) {
       assert.ok(t.startsWith(QUALIFIED_PREFIX),
-        `${rel}: tools entry "${t}" is not fully qualified — a plugin-provided server needs the ${QUALIFIED_PREFIX} prefix; bare mcp__<server>__<tool> matches nothing (§3.2)`);
+        `${rel}: tools entry "${t}" is not fully qualified — a plugin-provided server needs the ${QUALIFIED_PREFIX} prefix; bare mcp__<server>__<tool> matches nothing`);
     }
   }
 });
 
-// §12.7 — catches the class of bug where a renamed MCP tool silently drops out of the
+// Catches the class of bug where a renamed MCP tool silently drops out of the
 // allowlist and the skill referencing it stops working.
 test('every tool in the default allowlist exists in the bundled MCP server', () => {
   const real = realToolNames();
   assert.equal(real.length, 21,
-    `expected the bundled MCP server to register 21 tools (§1.9), parsed ${real.length}: ${real.join(', ')}`);
+    `expected the bundled MCP server to register 21 tools, parsed ${real.length}: ${real.join(', ')}`);
 
   for (const name of DEFAULT_ALLOWLIST) {
     assert.ok(real.includes(name),
       `default allowlist names "${name}", which the bundled server does not register. Real tools: ${real.join(', ')}`);
   }
-  assert.equal(DEFAULT_ALLOWLIST.length, 7, 'the curated default allowlist is seven of twenty-one (§8.2)');
+  assert.equal(DEFAULT_ALLOWLIST.length, 7, 'the curated default allowlist is seven of twenty-one');
 });
 
-// §12.7 — same check, one level down: a tool named in a skill must exist in the server.
+// Same check, one level down: a tool named in a skill must exist in the server.
 test('every tool named by a skill or agent exists in the bundled MCP server', () => {
   const real = new Set(realToolNames());
   for (const { file, rel } of markdownWithTools()) {
@@ -648,10 +648,10 @@ test('every tool named by a skill or agent exists in the bundled MCP server', ()
 });
 
 // ---------------------------------------------------------------------------
-// §11 — packaging invariants
+// Packaging invariants
 // ---------------------------------------------------------------------------
 
-// §11.1/§11.4 — a runtime dependency reintroduces module resolution into the hot path,
+// A runtime dependency reintroduces module resolution into the hot path,
 // which is exactly the cost that rules out npx. `@mubit-ai/mcp` is bundled at build time,
 // not resolved at runtime, so it is a devDependency.
 test('package.json has zero runtime dependencies, with esbuild and @mubit-ai/mcp as devDependencies', () => {
@@ -659,18 +659,18 @@ test('package.json has zero runtime dependencies, with esbuild and @mubit-ai/mcp
 
   const deps = pkg.dependencies ?? {};
   assert.deepEqual(Object.keys(deps), [],
-    `package.json "dependencies" must be empty and stay empty (§11.1) — found: ${Object.keys(deps).join(', ')}`);
+    `package.json "dependencies" must be empty and stay empty — found: ${Object.keys(deps).join(', ')}`);
 
   const dev = pkg.devDependencies ?? {};
-  assert.ok(dev.esbuild, 'esbuild must be a devDependency (§11.1) — it produces the committed bundles');
+  assert.ok(dev.esbuild, 'esbuild must be a devDependency — it produces the committed bundles');
   assert.ok(dev['@mubit-ai/mcp'],
-    '@mubit-ai/mcp must be a devDependency (§11.1) — it is bundled into mcp/dist/server.js at build time, not resolved at runtime');
+    '@mubit-ai/mcp must be a devDependency — it is bundled into mcp/dist/server.js at build time, not resolved at runtime');
 
   assert.equal(pkg.type, 'module', 'package.json must declare "type": "module"');
-  assert.equal(pkg.name, '@mubit-ai/claude-code-plugin', 'package name is fixed by the release guard (§13)');
+  assert.equal(pkg.name, '@mubit-ai/claude-code-plugin', 'package name is fixed by the release guard');
 });
 
-// §11.3 — Claude Code fetches the marketplace source.path from GitHub with no install
+// Claude Code fetches the marketplace source.path from GitHub with no install
 // step and no build. Whatever is in the repo is what runs; ignoring dist/ ships nothing.
 test('.gitignore ignores node_modules but does NOT ignore dist', () => {
   const raw = readText(P.gitignore, '.gitignore',
@@ -682,15 +682,15 @@ test('.gitignore ignores node_modules but does NOT ignore dist', () => {
 
   const ignoresDist = lines.filter((l) => !l.startsWith('!') && /\bdist\b/.test(l));
   assert.deepEqual(ignoresDist, [],
-    `.gitignore must NOT ignore dist — there is no install step and no build on install (§11.3). Offending lines: ${ignoresDist.join(' | ')}`);
+    `.gitignore must NOT ignore dist — there is no install step and no build on install. Offending lines: ${ignoresDist.join(' | ')}`);
 });
 
-// §3.5 — the catalog entry is how the plugin is discovered and fetched. A wrong path
+// The catalog entry is how the plugin is discovered and fetched. A wrong path
 // installs an empty plugin; a missing contextCost hides the always-loaded surface.
 test('marketplace.json source points at integrations/claude-code and declares contextCost', () => {
   const market = readJson(P.marketplace, '.claude-plugin/marketplace.json', 'the marketplace catalog');
   const entry = (market.plugins ?? []).find((p) => p.name === 'mubit-memory');
-  assert.ok(entry, 'marketplace.json has no "mubit-memory" entry (§3.5)');
+  assert.ok(entry, 'marketplace.json has no "mubit-memory" entry');
 
   // §3.5 originally specified {source:"github", repo:"...", path:"..."}. That form is
   // schema-valid and it costs an extra clone: the plugin ships in the *same* repo as this
@@ -702,15 +702,15 @@ test('marketplace.json source points at integrations/claude-code and declares co
   // one alike.
   // Verified 2026-08-13 by installing for real from a local directory marketplace, both forms.
   assert.equal(entry.source, './integrations/claude-code',
-    'marketplace.json source must be the marketplace-relative string "./integrations/claude-code" (§3.5)');
+    'marketplace.json source must be the marketplace-relative string "./integrations/claude-code"');
 
-  assert.ok(entry.contextCost, 'marketplace entry must declare contextCost (§3.5) — ten MCP tool schemas plus six skill descriptions');
+  assert.ok(entry.contextCost, 'marketplace entry must declare contextCost — ten MCP tool schemas plus six skill descriptions');
   assert.equal(typeof entry.contextCost.value, 'number', 'contextCost.value must be a number');
   assert.ok(entry.contextCost.value > 0, 'contextCost.value must be a real estimate, not 0');
 });
 
 // ---------------------------------------------------------------------------
-// §8.2 — the one list, written down five times
+// The one list, written down five times
 // ---------------------------------------------------------------------------
 
 /**

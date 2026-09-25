@@ -276,7 +276,7 @@ test('precedence: the built-in default is the floor', async () => {
   assert.equal(cfg.runStrategy, 'per-directory');
 });
 
-// §4.1/§12.1: a malformed project file cannot take the plugin down.
+// A malformed project file cannot take the plugin down.
 test('precedence: a corrupt .mubit-cc.json falls through to the default', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -291,7 +291,7 @@ test('precedence: a corrupt .mubit-cc.json falls through to the default', async 
 // §6.3 optionValue — both spellings, in the documented order
 // ===========================================================================
 
-// §6.3: the host's exact env-name transform is undocumented, so both spellings
+// The host's exact env-name transform is undocumented, so both spellings
 // are pinned. This is the cheap insurance that keeps the keychain key readable.
 test('optionValue(): reads CLAUDE_PLUGIN_OPTION_API_KEY', async () => {
   const config = await lib('config.mjs');
@@ -299,14 +299,14 @@ test('optionValue(): reads CLAUDE_PLUGIN_OPTION_API_KEY', async () => {
   assert.equal(config.optionValue('apiKey', env), 'mbt_screaming_k_s');
 });
 
-// §6.3: the verbatim-key spelling is checked too.
+// The verbatim-key spelling is checked too.
 test('optionValue(): reads CLAUDE_PLUGIN_OPTION_apiKey verbatim', async () => {
   const config = await lib('config.mjs');
   const env = { CLAUDE_PLUGIN_OPTION_apiKey: 'mbt_verbatim_k_s' };
   assert.equal(config.optionValue('apiKey', env), 'mbt_verbatim_k_s');
 });
 
-// §6.3: "…in that order" — SCREAMING_SNAKE first.
+// "…in that order" — SCREAMING_SNAKE first.
 test('optionValue(): SCREAMING_SNAKE wins when both spellings are present', async () => {
   const config = await lib('config.mjs');
   const env = {
@@ -316,13 +316,13 @@ test('optionValue(): SCREAMING_SNAKE wins when both spellings are present', asyn
   assert.equal(config.optionValue('apiKey', env), 'mbt_screaming_k_s');
 });
 
-// §6.3: an unset option is `undefined`, not `""` — blank is a meaningful value.
+// An unset option is `undefined`, not `""` — blank is a meaningful value.
 test('optionValue(): returns undefined when neither spelling is set', async () => {
   const config = await lib('config.mjs');
   assert.equal(config.optionValue('apiKey', {}), undefined);
 });
 
-// §6.3: both spellings reach the resolved Config, not just the raw reader.
+// Both spellings reach the resolved Config, not just the raw reader.
 test('optionValue(): both spellings resolve into Config.apiKey', async () => {
   const config = await lib('config.mjs');
   const projectDir = makeProjectDir();
@@ -409,7 +409,7 @@ test('the endpoint is used verbatim, whatever host it names', async () => {
 // §1.2 authHeaders
 // ===========================================================================
 
-// §1.2: header is `Authorization: Bearer <key>`; §12.1 depends on it being
+// Header is `Authorization: Bearer <key>`; §12.1 depends on it being
 // absent (not empty) when no key is configured, so a 401 is unambiguous.
 test('authHeaders(): {} when there is no key', async () => {
   const config = await lib('config.mjs');
@@ -428,7 +428,7 @@ test('authHeaders(): Bearer <key> when there is one', async () => {
 // §4.1 envTags — Mubit's TYPE:NAME[:VERSION] form
 // ===========================================================================
 
-/** §4.1: language is detected from lockfiles at the project root. */
+/** Language is detected from lockfiles at the project root. */
 const LANG_ROWS = [
   { file: 'Cargo.toml', body: '[package]\nname = "my-crate"\n', tag: 'lang:rust' },
   { file: 'package.json', body: '{"name":"x","version":"0.0.0"}', tag: 'lang:node' },
@@ -436,7 +436,7 @@ const LANG_ROWS = [
 ];
 
 for (const row of LANG_ROWS) {
-  // §4.1: <lockfile> → lang:<x>.
+  // <lockfile> → lang:<x>.
   test(`envTags(): ${row.file} at the project root emits ${row.tag}`, async () => {
     const config = await lib('config.mjs');
     const dataDir = makeDataDir();
@@ -447,7 +447,7 @@ for (const row of LANG_ROWS) {
   });
 }
 
-// §4.1: the always-on identity tag, plus the TYPE:NAME[:VERSION] grammar.
+// The always-on identity tag, plus the TYPE:NAME[:VERSION] grammar.
 test('envTags(): always carries tool:<host> first and repo:<slug>, in TYPE:NAME form', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -462,7 +462,7 @@ test('envTags(): always carries tool:<host> first and repo:<slug>, in TYPE:NAME 
   }
 });
 
-// §4.1: the identity tag names the host that wrote the item. The Codex plugin's boot declares
+// The identity tag names the host that wrote the item. The Codex plugin's boot declares
 // `MUBIT_CC_HOST=codex`; a Codex capture tagged `tool:claude-code` made the two hosts'
 // histories indistinguishable on the wire, while an *imported* Codex rollout said `tool:codex`.
 test('envTags(): under Codex the identity tag is tool:codex, and tool:claude-code is absent', async () => {
@@ -477,7 +477,7 @@ test('envTags(): under Codex the identity tag is tool:codex, and tool:claude-cod
     `a Codex item must not also claim tool:claude-code: [${tags.join(', ')}]`);
 });
 
-// §4.1: branch:<name> comes from the checked-out branch.
+// Branch:<name> comes from the checked-out branch.
 test('envTags(): emits branch:<name> in a git project', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -487,7 +487,7 @@ test('envTags(): emits branch:<name> in a git project', async () => {
   assert.ok(tags.includes('branch:wip'), `expected branch:wip in [${tags.join(', ')}]`);
 });
 
-// §4.1: "extras from MUBIT_CC_ENV_TAGS appended verbatim".
+// "extras from MUBIT_CC_ENV_TAGS appended verbatim".
 test('envTags(): appends MUBIT_CC_ENV_TAGS extras verbatim', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -499,7 +499,7 @@ test('envTags(): appends MUBIT_CC_ENV_TAGS extras verbatim', async () => {
   assert.ok(tags.includes('service:ingest:v2'), `missing service:ingest:v2 in [${tags.join(', ')}]`);
 });
 
-// §4.1: "Cap at 8" — env_tags ride on every ingested item, so the cap is a
+// "Cap at 8" — env_tags ride on every ingested item, so the cap is a
 // payload-size guarantee, not a style rule.
 test('envTags(): caps at 8 tags', async () => {
   const config = await lib('config.mjs');
@@ -569,7 +569,7 @@ const USER_CONFIG_ROWS = [
 ];
 
 for (const row of USER_CONFIG_ROWS) {
-  // §6.2: userConfig "<key>" maps to <env> and lands on Config.<field>.
+  // userConfig "<key>" maps to <env> and lands on Config.<field>.
   test(`userConfig: ${row.key} → ${row.env} → Config.${row.field}`, async () => {
     const config = await lib('config.mjs');
     const projectDir = makeProjectDir();
@@ -589,7 +589,7 @@ for (const row of USER_CONFIG_ROWS) {
 // §6.1 defaults and §4.1 immutability
 // ===========================================================================
 
-// §6.1: the default table, verbatim. These numbers are the plugin's cost and
+// The default table, verbatim. These numbers are the plugin's cost and
 // latency contract; drifting one silently changes what a user pays per prompt.
 test('loadConfig(): the §6.1 defaults, exactly', async () => {
   const config = await lib('config.mjs');
@@ -612,10 +612,10 @@ test('loadConfig(): the §6.1 defaults, exactly', async () => {
   assert.equal(cfg.recallBudgetMs, 1500);
   assert.equal(cfg.recallTokenBudget, 1500);
   assert.equal(cfg.recallAssemble, 'client');
-  // §5.2: a memory already injected this run is repeated as a one-line pointer rather than
+  // A memory already injected this run is repeated as a one-line pointer rather than
   // in full. `full` is the pre-seen-set behaviour and costs up to 1500 tokens every prompt.
   assert.equal(cfg.recallRepeatMode, 'pointer');
-  // §5.2: `auto` decides per prompt — a handoff question ("where were we?") is ranked by
+  // `auto` decides per prompt — a handoff question ("where were we?") is ranked by
   // recency, everything else by similarity. Defaulting to `relevance` would keep the bug;
   // defaulting to `freshness` would rank every ordinary question by recency, which is the
   // same mistake pointed the other way.
@@ -643,7 +643,7 @@ test('loadConfig(): the §6.1 defaults, exactly', async () => {
   // calls once per session, at the one moment the model knows least about what it is walking
   // into. A session that has none of it is the status quo this feature exists to end.
   assert.equal(cfg.resumeBlock, true);
-  // §6.1 — environment-only. Lower than `recallTokenBudget` because the two are spent in the
+  // Environment-only. Lower than `recallTokenBudget` because the two are spent in the
   // same message on the first prompt of a session.
   assert.equal(cfg.resumeTokenBudget, 1000);
   assert.equal(cfg.maxParamBytes, 4096);
@@ -665,7 +665,7 @@ test('loadConfig(): the §6.1 defaults, exactly', async () => {
   assert.ok(Array.isArray(cfg.denyGlobs), 'denyGlobs must be an array');
 });
 
-// §4.1: "Config is a frozen object" — one hook must not be able to mutate the
+// "Config is a frozen object" — one hook must not be able to mutate the
 // config another module already read.
 test('loadConfig(): the Config object is frozen', async () => {
   const config = await lib('config.mjs');
@@ -677,8 +677,8 @@ test('loadConfig(): the Config object is frozen', async () => {
   assert.equal(Object.isFrozen(cfg.breaker), true, 'the nested breaker block must be frozen too');
 });
 
-// §6.1: MUBIT_CC_CAPTURE_DENY extras join the built-in denylist rather than
-// replacing it — §4.4's denylist is a floor.
+// MUBIT_CC_CAPTURE_DENY extras join the built-in denylist rather than
+// replacing it's denylist is a floor.
 test('loadConfig(): MUBIT_CC_CAPTURE_DENY extras are appended to denyGlobs', async () => {
   const config = await lib('config.mjs');
   const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
@@ -692,7 +692,7 @@ test('loadConfig(): MUBIT_CC_CAPTURE_DENY extras are appended to denyGlobs', asy
 // §7 config.json — cached resolved config, 300 s TTL, keyed by an input hash
 // ===========================================================================
 
-// §4.1/§7: the cache exists so PostToolUse does not re-`git rev-parse` per tool call.
+// The cache exists so PostToolUse does not re-`git rev-parse` per tool call.
 test('loadConfig(): caches the resolved config to config.json', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -701,11 +701,11 @@ test('loadConfig(): caches the resolved config to config.json', async () => {
   load(config, envOf(dataDir, projectDir));
 
   const p = join(dataDir, 'config.json');
-  assert.equal(existsSync(p), true, 'the resolved config must be cached at config.json (§7)');
+  assert.equal(existsSync(p), true, 'the resolved config must be cached at config.json');
   assert.equal(typeof readJsonFile(p), 'object');
 });
 
-// §4.1: "The cache key hashes the inputs, so an env change invalidates
+// "The cache key hashes the inputs, so an env change invalidates
 // immediately." A stale cached endpoint would point every hook at the wrong
 // instance for up to 300 s.
 test('loadConfig(): an env change invalidates the cache immediately', async () => {
@@ -725,7 +725,7 @@ test('loadConfig(): an env change invalidates the cache immediately', async () =
   assert.equal(second.mode, 'hosted');
 });
 
-// §4.1: the same applies to a userConfig change — the user toggled an option
+// The same applies to a userConfig change — the user toggled an option
 // and expects the next hook to honour it.
 test('loadConfig(): a userConfig change invalidates the cache immediately', async () => {
   const config = await lib('config.mjs');
@@ -741,7 +741,7 @@ test('loadConfig(): a userConfig change invalidates the cache immediately', asyn
   assert.equal(second.capture, false, 'a stale cached config was served');
 });
 
-// §7: 300 s TTL — a cache older than that is recomputed, not served.
+// 300 s TTL — a cache older than that is recomputed, not served.
 test('loadConfig(): a config.json older than the 300 s TTL is not served', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -764,7 +764,7 @@ test('loadConfig(): a config.json older than the 300 s TTL is not served', async
   assert.ok(statSync(p).mtimeMs > agedMtime, 'the expired cache was not refreshed');
 });
 
-// §7/§12.1: a corrupt cache is a bad day, not an outage.
+// A corrupt cache is a bad day, not an outage.
 test('loadConfig(): a corrupt config.json is ignored', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();

@@ -144,7 +144,7 @@ test('filling in instructions leaves the rest of the protocol untouched', async 
   }
 });
 
-// §3.5 — instructions load before the model does anything, on every session, so they are
+// Instructions load before the model does anything, on every session, so they are
 // always-loaded surface exactly as the tool schemas are. A number measured before this field
 // existed understates what the plugin costs.
 test('context-cost.json bills for the instructions', async () => {
@@ -154,7 +154,7 @@ test('context-cost.json bills for the instructions', async () => {
 
   assert.ok(billed, 'context-cost.json has no `breakdown.serverInstructions`, so the declared '
     + 'contextCost omits a block of text every session loads before the model does anything '
-    + '(§3.5).\n  Re-measure: node scripts/measure-context-cost.mjs --write');
+    + '.\n  Re-measure: node scripts/measure-context-cost.mjs --write');
   assert.equal(billed.chars, INSTRUCTIONS.length,
     `context-cost.json bills ${billed.chars} characters of instructions against the ${INSTRUCTIONS.length} `
     + 'the launcher ships — the declared budget describes a text that is no longer the one '
@@ -234,7 +234,7 @@ test('a frame the guard cannot read is never rewritten', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// §8.2 — keeping the string in step with the set it describes
+// Keeping the string in step with the set it describes
 // ---------------------------------------------------------------------------
 //
 // `f3534e5` promoted `mubit_strategies`, `mubit_checkpoint` and `mubit_memory_health` out of

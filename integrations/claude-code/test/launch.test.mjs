@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `mcp/src/launch.mjs` — the MCP entry point (§8.3, and §8.1 for the upstream allowlist patch).
+ * `mcp/src/launch.mjs` — the MCP entry point (and §8.1 for the upstream allowlist patch).
  *
  * The launcher is bundled to `mcp/dist/index.js`, which is the `.mcp.json` entry point.
  * It exists for one reason: the MCP server reads its configuration from `process.env` at
@@ -26,7 +26,7 @@ import { join } from 'node:path';
 
 import { PLUGIN_ROOT, REPO_ROOT, makeDataDir, makeProjectDir, tempDir, baseEnv, lib, mod } from './helpers/harness.mjs';
 
-/** §8.2 — the curated set, in the guide's order. */
+/** The curated set, in the guide's order. */
 const DEFAULT_ALLOWLIST = [
   'mubit_learned', 'mubit_recall', 'mubit_outcome', 'mubit_diagnose',
   'mubit_dereference', 'mubit_status', 'mubit_memory_health',
@@ -36,7 +36,7 @@ const DEFAULT_ALLOWLIST = [
 // Child-process scaffolding
 // ---------------------------------------------------------------------------
 
-/** Prefer the source entry; fall back to the committed bundle (§11.2, §11.3). */
+/** Prefer the source entry; fall back to the committed bundle. */
 function launcherScript() {
   const src = join(PLUGIN_ROOT, 'mcp', 'src', 'launch.mjs');
   const dist = join(PLUGIN_ROOT, 'mcp', 'dist', 'index.js');
@@ -118,7 +118,7 @@ async function runLauncher(o = {}) {
     dataDir,
     projectDir,
     extra: {
-      // What `.mcp.json` (§3.3) actually hands the launcher.
+      // What `.mcp.json` actually hands the launcher.
       MUBIT_CC_PROJECT_DIR: projectDir,
       MUBIT_CC_PLUGIN_ROOT: PLUGIN_ROOT,
       MUBIT_TEST_LAUNCH: launch,
@@ -151,7 +151,7 @@ async function runLauncher(o = {}) {
   };
 }
 
-/** The run id the hooks would derive for the same directory (§4.3). */
+/** The run id the hooks would derive for the same directory. */
 async function hookDerivedRunId(env) {
   const { loadConfig } = await lib('config.mjs');
   const { deriveRunId } = await lib('runid.mjs');
@@ -159,10 +159,10 @@ async function hookDerivedRunId(env) {
 }
 
 // ---------------------------------------------------------------------------
-// §8.3 / §4.3 — the headline fix
+// The headline fix
 // ---------------------------------------------------------------------------
 
-// §4.3 — "The single most important rule here": MUBIT_DEFAULT_SESSION_ID must never
+// "The single most important rule here": MUBIT_DEFAULT_SESSION_ID must never
 // reach the server as the literal "default". A leaked/ambient "default" in the parent
 // environment is the realistic way this regresses, so it is seeded here on purpose.
 test('never leaves MUBIT_DEFAULT_SESSION_ID as the literal "default"', async () => {
@@ -172,23 +172,23 @@ test('never leaves MUBIT_DEFAULT_SESSION_ID as the literal "default"', async () 
   assert.notEqual(r.envAtImport.MUBIT_DEFAULT_SESSION_ID, 'default',
     'MUBIT_DEFAULT_SESSION_ID was still "default" when the server was imported — that is the ' +
     'bundled server\'s placeholder, and it identifies nothing: a run id has to name one ' +
-    'project on one machine (§4.3)');
+    'project on one machine');
   assert.ok((r.envAtImport.MUBIT_DEFAULT_SESSION_ID ?? '').length > 0,
     'MUBIT_DEFAULT_SESSION_ID must be set to a derived run id, not blanked');
 });
 
-// §8.3 step 2 — MCP verbs and hook captures must land in ONE run, which means the
+// MCP verbs and hook captures must land in ONE run, which means the
 // launcher derives the run id with the same strategy the hooks use.
 test('sets MUBIT_DEFAULT_SESSION_ID to the run id the hooks derive for the same directory', async () => {
   const r = await runLauncher({ extra: { MUBIT_DEFAULT_SESSION_ID: 'default' } });
   const expected = await hookDerivedRunId(r.env);
   assert.equal(r.envAtImport.MUBIT_DEFAULT_SESSION_ID, expected,
     'the launcher must derive the run id with the same strategy as lib/runid.mjs so MCP-tool ' +
-    'writes and hook captures share a run (§8.3)');
+    'writes and hook captures share a run');
 });
 
 // ---------------------------------------------------------------------------
-// §4.3 — the session map belongs to the hooks, and the launcher has to read it
+// The session map belongs to the hooks, and the launcher has to read it
 // ---------------------------------------------------------------------------
 
 /** A synthetic host session id, in the shape the CLI actually hands out. */
@@ -213,7 +213,7 @@ function seedSessionMap(dataDir, sessionId, record) {
 // the hooks wrote instead of deriving past it.
 //
 // It matters because the mapped run is not always the derived one. `/clear` appends
-// `-c<n>` (§4.3), so a launcher that derives fresh pins the server to the unsuffixed run
+// `-c<n>`, so a launcher that derives fresh pins the server to the unsuffixed run
 // while every hook in the same session writes to the suffixed one: `/mubit-memory:remember`
 // then saves into a run that pre-prompt recall never reads. That divergence is observable
 // on a live session today — `mubit_status` reports the bare run id while the hooks report
@@ -237,7 +237,7 @@ test('reuses the run the hooks mapped for this session, /clear suffix and all', 
   assert.ok(r.importedServer, `the launcher never imported ./server.js. stderr:\n${r.stderr}`);
   assert.equal(r.envAtImport.MUBIT_DEFAULT_SESSION_ID, cleared,
     'the launcher derived past the session map, so MCP-tool writes land in the unsuffixed '
-    + 'run while every hook in the same session writes to the cleared one (§4.3)');
+    + 'run while every hook in the same session writes to the cleared one');
 });
 
 // The startup race: MCP servers and the SessionStart hook both start at session start, and
@@ -248,7 +248,7 @@ test('derives fresh when the session has no mapping yet', async () => {
   const expected = await hookDerivedRunId(r.env);
   assert.equal(r.envAtImport.MUBIT_DEFAULT_SESSION_ID, expected,
     'with no record to read, the launcher must still answer with the run id the hooks '
-    + 'derive for this directory (§8.3)');
+    + 'derive for this directory');
 });
 
 // The hooks own this file. They are the only thing that ever sees `SessionStart.source`,
@@ -277,10 +277,10 @@ test('leaves the session map exactly as the hooks wrote it', async () => {
   assert.equal(readFileSync(file, 'utf8'), before,
     'the launcher rewrote the session map. Only the hooks see the source that decides what a '
     + 'new run is; the launcher reading and then overwriting turns a `/clear` into a race '
-    + '(§4.3)');
+    + '');
 });
 
-// §8.3 step 3 — the server reads env at MODULE scope. Setting any of these after the
+// The server reads env at MODULE scope. Setting any of these after the
 // import is indistinguishable from not setting them at all.
 test('sets every server env var BEFORE importing the server', async () => {
   const r = await runLauncher({
@@ -297,16 +297,16 @@ test('sets every server env var BEFORE importing the server', async () => {
   assert.equal(e.MUBIT_API_KEY, 'mbt_test_0123456789abcdef_deadbeefcafebabe0123456789abcdef',
     'MUBIT_API_KEY must be set before the import');
   assert.equal(e.MUBIT_DEFAULT_USER_ID, 'eldar',
-    'MUBIT_DEFAULT_USER_ID must carry cfg.userId into the server before the import (§8.3)');
+    'MUBIT_DEFAULT_USER_ID must carry cfg.userId into the server before the import');
   assert.ok((e.MUBIT_DEFAULT_SESSION_ID ?? '').length > 0, 'MUBIT_DEFAULT_SESSION_ID must be set before the import');
   assert.ok((e.MUBIT_MCP_TOOLS ?? '').length > 0, 'MUBIT_MCP_TOOLS must be set before the import (§8.1 reads it at module scope)');
 });
 
 // ---------------------------------------------------------------------------
-// §8.3 — per-conversation cannot be honoured here
+// Per-conversation cannot be honoured here
 // ---------------------------------------------------------------------------
 
-// §8.3 — an MCP server starts once per session and is never handed a hook payload, so
+// An MCP server starts once per session and is never handed a hook payload, so
 // there is no `session_id` to key `per-conversation` on. Falling back silently would
 // split hook captures from MCP-tool writes with no way for the user to find out.
 test('per-conversation falls back to per-directory and says so on stderr', async () => {
@@ -317,30 +317,30 @@ test('per-conversation falls back to per-directory and says so on stderr', async
 
   const perDirectory = await hookDerivedRunId({ ...r.env, MUBIT_CC_RUN_STRATEGY: 'per-directory' });
   assert.equal(r.envAtImport.MUBIT_DEFAULT_SESSION_ID, perDirectory,
-    'with no session_id available the launcher must fall back to the per-directory run id (§8.3)');
+    'with no session_id available the launcher must fall back to the per-directory run id');
 
   assert.match(r.stderr, /per-conversation/i,
-    'the fallback must be logged — a silent fallback splits hook captures from MCP-tool writes (§8.3)');
+    'the fallback must be logged — a silent fallback splits hook captures from MCP-tool writes');
   assert.match(r.stderr, /per-directory/i,
-    'the warning must name what it fell back to, so the README guidance is actionable (§8.3)');
+    'the warning must name what it fell back to, so the README guidance is actionable');
 });
 
 // ---------------------------------------------------------------------------
-// §8.2 — the allowlist the launcher hands to the server
+// The allowlist the launcher hands to the server
 // ---------------------------------------------------------------------------
 
-// §8.2 — blank config means the curated set, not "all 21". The whole point of the
-// allowlist is bounding the always-loaded context cost of the tool schemas (§3.5).
+// Blank config means the curated set, not "all 21". The whole point of the
+// allowlist is bounding the always-loaded context cost of the tool schemas.
 test('MUBIT_MCP_TOOLS defaults to the curated set when mcpTools is blank', async () => {
   const r = await runLauncher({ extra: { MUBIT_MCP_TOOLS: '', CLAUDE_PLUGIN_OPTION_MCP_TOOLS: '' } });
   assert.ok(r.importedServer, `the launcher never imported ./server.js. stderr:\n${r.stderr}`);
 
   const got = String(r.envAtImport.MUBIT_MCP_TOOLS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   assert.deepEqual([...got].sort(), [...DEFAULT_ALLOWLIST].sort(),
-    `MUBIT_MCP_TOOLS must default to the curated ${DEFAULT_ALLOWLIST.length} (§8.2), got: ${got.join(', ') || '(empty)'}`);
+    `MUBIT_MCP_TOOLS must default to the curated ${DEFAULT_ALLOWLIST.length}, got: ${got.join(', ') || '(empty)'}`);
 });
 
-// §8.2 — "Users restore any of them with mcpTools / MUBIT_MCP_TOOLS." A user-supplied
+// "Users restore any of them with mcpTools / MUBIT_MCP_TOOLS." A user-supplied
 // list must pass through verbatim, not be unioned with the default.
 test('MUBIT_MCP_TOOLS honours a user-supplied allowlist verbatim', async () => {
   const r = await runLauncher({ extra: { MUBIT_MCP_TOOLS: 'mubit_recall, mubit_handoff' } });
@@ -348,10 +348,10 @@ test('MUBIT_MCP_TOOLS honours a user-supplied allowlist verbatim', async () => {
 
   const got = String(r.envAtImport.MUBIT_MCP_TOOLS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   assert.deepEqual(got, ['mubit_recall', 'mubit_handoff'],
-    `a user-supplied allowlist must pass through unchanged (§8.2), got: ${got.join(', ')}`);
+    `a user-supplied allowlist must pass through unchanged, got: ${got.join(', ')}`);
 });
 
-// §8.3 — the launcher itself is not a place to spend startup time or emit protocol
+// The launcher itself is not a place to spend startup time or emit protocol
 // noise: stdout on a stdio MCP server is the protocol channel.
 test('the launcher writes nothing to stdout — stdout is the MCP protocol channel', async () => {
   const r = await runLauncher();
@@ -360,7 +360,7 @@ test('the launcher writes nothing to stdout — stdout is the MCP protocol chann
 });
 
 // ---------------------------------------------------------------------------
-// §8.1 — the backwards-compatibility half of the upstream patch
+// The backwards-compatibility half of the upstream patch
 // ---------------------------------------------------------------------------
 //
 // NOTE: these MIRROR tests that properly belong in `@mubit-ai/mcp`'s own suite, where the
@@ -391,25 +391,25 @@ function applyAllowlist(names, rawEnvValue) {
   return names.filter((n) => !allow || allow.has(n));
 }
 
-// §8.1 — the half that matters to every existing consumer: an UNSET allowlist must keep
+// The half that matters to every existing consumer: an UNSET allowlist must keep
 // registering all 21 tools. A regression here silently removes tools from every non-plugin
 // user of @mubit-ai/mcp.
 test('[mirror of @mubit-ai/mcp tools suite] unset MUBIT_MCP_TOOLS registers all 21 tools', () => {
   const names = realToolNames();
   assert.equal(names.length, 21,
-    `the bundled MCP server should register 21 tools (§1.9), parsed ${names.length}: ${names.join(', ')}`);
+    `the bundled MCP server should register 21 tools, parsed ${names.length}: ${names.join(', ')}`);
   assert.equal(applyAllowlist(names, undefined).length, 21, 'unset allowlist must register every tool');
   assert.equal(applyAllowlist(names, '').length, 21, 'empty allowlist must register every tool');
 });
 
-// §8.1 — and the half the plugin depends on: a two-name allowlist registers exactly two.
+// And the half the plugin depends on: a two-name allowlist registers exactly two.
 test('[mirror of @mubit-ai/mcp tools suite] a two-name allowlist registers exactly two tools', () => {
   const names = realToolNames();
   const got = applyAllowlist(names, 'mubit_recall,mubit_status');
   assert.deepEqual(got, ['mubit_recall', 'mubit_status'], 'a two-name allowlist must register exactly those two');
 });
 
-// §8.2 — and the curated set must select exactly itself out of the twenty-one.
+// And the curated set must select exactly itself out of the twenty-one.
 test('[mirror of @mubit-ai/mcp tools suite] the curated default allowlist selects seven of twenty-one', () => {
   const names = realToolNames();
   const got = applyAllowlist(names, DEFAULT_ALLOWLIST.join(','));
@@ -420,7 +420,7 @@ test('[mirror of @mubit-ai/mcp tools suite] the curated default allowlist select
   }
 });
 
-// §8.1 — whether the *shipped* server honours MUBIT_MCP_TOOLS at all.
+// Whether the *shipped* server honours MUBIT_MCP_TOOLS at all.
 //
 // This replaces an assertion over `@mubit-ai/mcp`'s TypeScript source, which is not part of
 // the plugin and cannot be read from an installed copy. Enforcement is that package's own
@@ -439,7 +439,7 @@ test('the bundled server honours the allowlist, and context-cost.json says so', 
 
   assert.match(bundle, /MUBIT_MCP_TOOLS/,
     'mcp/dist/server.js does not read MUBIT_MCP_TOOLS, so the allowlist is inert and every '
-    + 'session pays for all 21 tool schemas (§8.1, §3.5).\n'
+    + 'session pays for all 21 tool schemas.\n'
     + '  It is bundled from the in-repo @mubit-ai/mcp — rebuild both:\n'
     + '    npm --prefix ../mcp ci && npm --prefix ../mcp run build\n'
     + '    npm run build');
@@ -469,7 +469,7 @@ test('the bundled server honours the allowlist, and context-cost.json says so', 
 });
 
 // ---------------------------------------------------------------------------
-// §8.3 — the egress guard, installed on the same schedule as the env
+// The egress guard, installed on the same schedule as the env
 // ---------------------------------------------------------------------------
 
 // The bundled server dials the endpoint itself: nothing in this repo sees the request, and
@@ -484,7 +484,7 @@ test('installs the egress guard BEFORE importing the server', async () => {
 
   assert.ok(r.guardAtImport,
     'globalThis.fetch carried no egress guard when the server was imported — every MCP write '
-    + 'then leaves this machine unexamined (§8.3)');
+    + 'then leaves this machine unexamined');
   assert.equal(r.guardAtImport.ceiling, 'session',
     'the default ceiling is what `mubit_learned` tells the model it writes at, and the '
     + 'narrowest scope from which a lesson has any path out of the run that wrote it');
@@ -494,7 +494,7 @@ test('installs the egress guard BEFORE importing the server', async () => {
     + 'per-run boundary the run id exists to draw');
 });
 
-// §6.2 — the ceiling is a userConfig key, so it has to travel the same path as the rest of
+// The ceiling is a userConfig key, so it has to travel the same path as the rest of
 // the config rather than being read out of the environment a second time inside the guard.
 test('carries mcpLessonScope through to the guard', async () => {
   const r = await runLauncher({ extra: { MUBIT_MCP_LESSON_SCOPE: 'global' } });
@@ -514,7 +514,7 @@ test('the guard pins to the same run id the server was given', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// §8.3 — the instructions guard, on the same schedule as everything else
+// The instructions guard, on the same schedule as everything else
 // ---------------------------------------------------------------------------
 
 // Under tool search the host loads only tool *names* and the server's `instructions` field
@@ -538,7 +538,7 @@ test('installs the instructions guard BEFORE importing the server', async () => 
   assert.ok(r.instructionsAtImport,
     'process.stdout.write carried no instructions guard when the server was imported, so the '
     + 'initialize frame goes out exactly as the bundle built it — with no `instructions` field '
-    + 'at all (§8.3)');
+    + 'at all');
   assert.ok(Number(r.instructionsAtImport.chars) > 0,
     'the instructions guard was installed with nothing to say, which is indistinguishable '
     + 'from not installing it');

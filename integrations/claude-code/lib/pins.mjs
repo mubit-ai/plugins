@@ -77,7 +77,7 @@
  * pin set still renders whole, and the essay case truncates sooner, in proportion.
  *
  * Constraints, as everywhere in `lib/`: zero dependencies, Node >= 20 built-ins only,
- * synchronous apart from the one network export, and nothing here throws (§4.9).
+ * synchronous apart from the one network export, and nothing here throws.
  */
 
 import { join } from 'node:path';
@@ -89,7 +89,7 @@ import { listVariables } from './variables.mjs';
 /** Cache format version. Bumping it invalidates every record on disk at once. */
 const CACHE_VERSION = 1;
 
-/** §7: `runs/<run_id>/pins.json`. Per run, because that is the scope a pin has. */
+/** `runs/<run_id>/pins.json`. Per run, because that is the scope a pin has. */
 const CACHE_FILE = 'pins.json';
 
 /**
@@ -216,7 +216,7 @@ export function readPins(cfg, runId, opts = {}) {
     const text = `${HEADING}\n${pins.map((pin) => `- ${pin.text}\n`).join('')}`;
     return { pins, text, tokens: estimateTokens(text), dropped, stale, at };
   } catch {
-    // §4.9: an unreadable data dir costs the pins, never the prompt.
+    // An unreadable data dir costs the pins, never the prompt.
     return blank();
   }
 }
@@ -333,7 +333,7 @@ export async function refreshPins(cfg, runId) {
     const wrote = write(cfg, runId, pins);
     return { ok: true, refreshed: wrote, pins: pins.length };
   } catch (err) {
-    // §4.9: the drainer's job is shipping memory. It never fails for want of a pin.
+    // The drainer's job is shipping memory. It never fails for want of a pin.
     return { ok: false, refreshed: false, pins: 0, error: messageOf(err) };
   }
 }
@@ -373,7 +373,7 @@ export function writePinsLocal(cfg, runId, pins) {
 // ---------------------------------------------------------------------------
 
 /**
- * §7: `runs/<run_id>/pins.json`, or `''` when the run id leaves no usable path segment.
+ * `runs/<run_id>/pins.json`, or `''` when the run id leaves no usable path segment.
  *
  * A run id can be pinned by hand in a settings file or an environment variable, so it is
  * untrusted input to a path — `lib/carry.mjs` applies the same rule for the same reason. An

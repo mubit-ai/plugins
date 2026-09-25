@@ -71,11 +71,11 @@ function retime(dataDir, itemId, ts, runId = RUN) {
 const item = (over = {}) => spoolItem(over);
 
 // ---------------------------------------------------------------------------
-// appendItem — §4.6, §7 `runs/<run_id>/spool/<ts>-<rand6>.json`
+// appendItem `runs/<run_id>/spool/<ts>-<rand6>.json`
 // ---------------------------------------------------------------------------
 
-// §7: the spool lives under the run, not the session — a crashed session's captures are
-// picked up by the next session's first drain (§5.7).
+// The spool lives under the run, not the session — a crashed session's captures are
+// picked up by the next session's first drain.
 test('appendItem: creates runs/<run_id>/spool/<ts>-<rand6>.json', async () => {
   const { cfg, dataDir, S } = await setup();
   S.appendItem(cfg, RUN, item({ item_id: 'i-1' }));
@@ -86,7 +86,7 @@ test('appendItem: creates runs/<run_id>/spool/<ts>-<rand6>.json', async () => {
     `spool file name must be <ts>-<rand6>.json, got "${files[0]}"`);
 });
 
-// §5.4: the spooled item is one element of the eventual `items[]` — the drain sends it
+// The spooled item is one element of the eventual `items[]` — the drain sends it
 // through untouched, so what lands here must already be wire-shaped.
 test('appendItem: the file is the item, verbatim and parseable', async () => {
   const { cfg, dataDir, S } = await setup();
@@ -99,7 +99,7 @@ test('appendItem: the file is the item, verbatim and parseable', async () => {
   assert.equal(got.intent, it.intent, '§1.5: intent must survive the round trip');
 });
 
-// §12.6 / §4.6 — THE property that justifies file-per-item. Eight real processes, 25 items
+// THE property that justifies file-per-item. Eight real processes, 25 items
 // each, every payload 32 KB (comfortably past PIPE_BUF, where O_APPEND stops being atomic).
 // An NDJSON log fails this test by producing interleaved, unparseable lines.
 test('appendItem: 200 concurrent appends across processes produce 200 individually parseable files', async () => {
@@ -150,10 +150,10 @@ test('appendItem: 200 concurrent appends across processes produce 200 individual
 });
 
 // ---------------------------------------------------------------------------
-// readBatch — §4.6 (oldest first, respects max, unlinks unparseable files)
+// readBatch.6 (oldest first, respects max, unlinks unparseable files)
 // ---------------------------------------------------------------------------
 
-// §4.6: oldest first. The store's episodic ordering is only as good as the drain's.
+// Oldest first. The store's episodic ordering is only as good as the drain's.
 test('readBatch: returns entries oldest first regardless of directory order', async () => {
   const { cfg, dataDir, S } = await setup();
   const now = Date.now();
@@ -167,7 +167,7 @@ test('readBatch: returns entries oldest first regardless of directory order', as
   assert.deepEqual(batch.map((e) => e.item.item_id), ['a', 'b', 'c']);
 });
 
-// §5.5: the drain sends `cfg.batchMaxItems` (default 32) per request and loops; `max` is
+// The drain sends `cfg.batchMaxItems` (default 32) per request and loops; `max` is
 // what bounds one request.
 test('readBatch: respects max and leaves the remainder on disk', async () => {
   const { cfg, dataDir, S } = await setup();
@@ -181,7 +181,7 @@ test('readBatch: respects max and leaves the remainder on disk', async () => {
   assert.equal(listSpool(dataDir).length, 5, 'readBatch is a read — nothing is unlinked yet');
 });
 
-// §4.6: `commitBatch(entries)` unlinks, so an entry must carry the path it came from.
+// `commitBatch(entries)` unlinks, so an entry must carry the path it came from.
 test('readBatch: each entry carries {path, item}', async () => {
   const { cfg, dataDir, S } = await setup();
   S.appendItem(cfg, RUN, item({ item_id: 'shape' }));
@@ -193,7 +193,7 @@ test('readBatch: each entry carries {path, item}', async () => {
   assert.equal(dirname(entry.path), spoolDir(dataDir));
 });
 
-// §4.6: a partially written file (SIGKILL mid-write) is unlinked in passing and the
+// A partially written file (SIGKILL mid-write) is unlinked in passing and the
 // batch still sends. Retrying a torn file forever is how a spool becomes unbounded.
 test('readBatch: unlinks unparseable files and still returns the good ones', async () => {
   const { cfg, dataDir, S } = await setup();
@@ -219,7 +219,7 @@ test('readBatch: an empty spool returns an empty array', async () => {
   assert.deepEqual(S.readBatch(cfg, 'cc-never-used-00000000', 32), []);
 });
 
-// §5.5/§7: `spool/rejected/` holds batches the server refused with a non-retryable 4xx.
+// `spool/rejected/` holds batches the server refused with a non-retryable 4xx.
 // Re-reading them would retry a 422 forever — the exact unbounded-spool failure.
 test('readBatch: ignores the spool/rejected/ quarantine directory', async () => {
   const { cfg, dataDir, S } = await setup();
@@ -233,10 +233,10 @@ test('readBatch: ignores the spool/rejected/ quarantine directory', async () => 
 });
 
 // ---------------------------------------------------------------------------
-// commitBatch — §4.6, §5.5 step 6 ("2xx → commitBatch")
+// commitBatch.5 step 6 ("2xx → commitBatch")
 // ---------------------------------------------------------------------------
 
-// §5.5: unlink only after a 2xx. A 5xx or a network failure leaves the files in place.
+// Unlink only after a 2xx. A 5xx or a network failure leaves the files in place.
 test('commitBatch: unlinks exactly the committed entries', async () => {
   const { cfg, dataDir, S } = await setup();
   const now = Date.now();
@@ -250,7 +250,7 @@ test('commitBatch: unlinks exactly the committed entries', async () => {
   assert.equal(S.readBatch(cfg, RUN, 10)[0].item.item_id, 'c');
 });
 
-// §4.6: a double drain is absorbed by the per-batch `idempotency_key`, so committing an
+// A double drain is absorbed by the per-batch `idempotency_key`, so committing an
 // entry twice must be a no-op, not a crash that strands the rest of the batch.
 test('commitBatch: is a no-op on an already-unlinked entry rather than throwing', async () => {
   const { cfg, dataDir, S } = await setup();
@@ -269,10 +269,10 @@ test('commitBatch: an empty batch is a no-op', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The drain lock — §4.6, §7 (`runs/<run_id>/drain.lock`, stale at 60 s)
+// The drain lock, §7 (`runs/<run_id>/drain.lock`, stale at 60 s)
 // ---------------------------------------------------------------------------
 
-// §5.5 step 1: single drainer. Two hooks can fire a detached drain within milliseconds of
+// Single drainer. Two hooks can fire a detached drain within milliseconds of
 // each other; O_EXCL is what makes "exactly one proceeds" true without a daemon.
 test('acquireDrainLock: O_EXCL — the second acquisition returns null', async () => {
   const { cfg, dataDir, S } = await setup();
@@ -305,7 +305,7 @@ test('releaseDrainLock: releasing a null lock does not throw', async () => {
   assert.doesNotThrow(() => S.releaseDrainLock(null));
 });
 
-// §7: "steal unconditionally past the TTL". The owner here is very much alive (it is this
+// "steal unconditionally past the TTL". The owner here is very much alive (it is this
 // process), and the lock is still stolen: a stuck lock silently stops ALL capture, which is
 // strictly worse than a rare double drain that the `idempotency_key` absorbs.
 test('acquireDrainLock: a lock older than 60s is stolen even when its pid is alive', async () => {
@@ -323,7 +323,7 @@ test('acquireDrainLock: a lock older than 60s is stolen even when its pid is ali
   assert.ok(Date.now() - held.ts < 5000, 'the stolen lock is re-stamped with a fresh ts');
 });
 
-// §7: "Verify the recorded `pid` is dead first where possible (`process.kill(pid, 0)`
+// "Verify the recorded `pid` is dead first where possible (`process.kill(pid, 0)`
 // throwing ESRCH)". A drainer killed with its terminal leaves a fresh-looking lock; waiting
 // out the full TTL for it would stall capture for a minute for no reason.
 test('acquireDrainLock: a fresh lock whose pid is dead is stolen via the pid check', async (t) => {
@@ -367,7 +367,7 @@ test('acquireFlushLease: a live holder is respected, and the lease is reusable a
     const held = S.acquireFlushLease(cfg, RUN, SESSION);
     assert.ok(held?.path, 'the first flush takes the lease');
     assert.ok(existsSync(join(runDir(dataDir), `flush-${SESSION}.lock`)),
-      'it lands at runs/<run_id>/flush-<session_id>.lock (§7)');
+      'it lands at runs/<run_id>/flush-<session_id>.lock');
 
     assert.equal(S.acquireFlushLease(cfg, RUN, SESSION), null,
       'a second flush of the same session must stand down while the first is live');
@@ -442,17 +442,17 @@ test('acquireFlushLease: a malformed lease is treated as orphaned', async () => 
 });
 
 // ---------------------------------------------------------------------------
-// claimOnce — §4.6 "proceed on marker failure"
+// claimOnce "proceed on marker failure"
 // ---------------------------------------------------------------------------
 
-// §5.7 step 1 / §7: `runs/<run_id>/flushed-<session_id>.marker`.
+// `runs/<run_id>/flushed-<session_id>.marker`.
 test('claimOnce: the first claim wins and the second sees EEXIST', async () => {
   const { cfg, dataDir, S } = await setup();
   const name = `flushed-${SESSION}`;
 
   assert.equal(S.claimOnce(cfg, RUN, name), true);
   assert.ok(existsSync(join(runDir(dataDir), `${name}.marker`)),
-    'the marker lands at runs/<run_id>/<name>.marker (§7)');
+    'the marker lands at runs/<run_id>/<name>.marker');
   assert.equal(S.claimOnce(cfg, RUN, name), false, 'the second claim must lose');
 });
 
@@ -463,7 +463,7 @@ test('claimOnce: markers are namespaced by name', async () => {
   assert.equal(S.claimOnce(cfg, RUN, 'flushed-session-b'), true);
 });
 
-// §4.6: "returns `true` on a non-EEXIST error — proceed on marker failure". The marker
+// "returns `true` on a non-EEXIST error — proceed on marker failure". The marker
 // prevents a *double* flush; a read-only or full ${CLAUDE_PLUGIN_DATA} must not be able to
 // prevent the flush *entirely*. Losing the batch is worse than sending it twice, and the
 // per-batch idempotency_key makes a double send a server-side no-op anyway.
@@ -483,10 +483,10 @@ test('claimOnce: returns true when the marker cannot be written at all (EACCES)'
 });
 
 // ---------------------------------------------------------------------------
-// spoolStats — §4.6, §5.3 (the drain trigger)
+// spoolStats.3 (the drain trigger)
 // ---------------------------------------------------------------------------
 
-// §5.3: `count >= batchMaxItems OR oldestMs >= batchMaxAgeMs` triggers a detached drain, so
+// `count >= batchMaxItems OR oldestMs >= batchMaxAgeMs` triggers a detached drain, so
 // an empty spool is asked about on every single prompt. It must be cheap and total.
 test('spoolStats: an empty spool returns {count: 0} without throwing', async () => {
   const { cfg, S } = await setup();
@@ -498,14 +498,14 @@ test('spoolStats: an empty spool returns {count: 0} without throwing', async () 
   assert.equal(never.count, 0);
 });
 
-// §6.1: `MUBIT_CC_BATCH_MAX_ITEMS` (32) is the count trigger.
+// `MUBIT_CC_BATCH_MAX_ITEMS` (32) is the count trigger.
 test('spoolStats: count tracks the number of pending items', async () => {
   const { cfg, S } = await setup();
   for (const id of ['a', 'b', 'c']) S.appendItem(cfg, RUN, item({ item_id: id }));
   assert.equal(S.spoolStats(cfg, RUN).count, 3);
 });
 
-// §6.1: `MUBIT_CC_BATCH_MAX_AGE_MS` (30 000) is the age trigger — without a truthful
+// `MUBIT_CC_BATCH_MAX_AGE_MS` (30 000) is the age trigger — without a truthful
 // `oldestMs`, a slow session never drains until it happens to hit 32 items.
 test('spoolStats: oldestMs grows with an artificially aged file', async () => {
   const { cfg, dataDir, S } = await setup();

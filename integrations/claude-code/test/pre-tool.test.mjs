@@ -466,7 +466,7 @@ test('recordRules reads origin_entry_type ahead of entry_type, as assemble.mjs d
   const dataDir = makeDataDir();
   const cfg = { dataDir };
 
-  // §4.10: "maps entry_type (or origin_entry_type when the entry came through an overlay)".
+  // "maps entry_type (or origin_entry_type when the entry came through an overlay)".
   // The overlay's own type is bookkeeping; the origin is the type the user's rule actually has.
   rules.recordRules(cfg, RUN_ID, [
     { reference_id: 'ref_overlay', entry_type: 'observation', origin_entry_type: 'rule',
@@ -559,7 +559,7 @@ test('every rules.mjs entry point survives a corrupt store without throwing', as
     writeRulesRaw(dataDir, body);
     assert.doesNotThrow(() => rules.readRules(cfg, RUN_ID),
       `readRules threw on a store containing ${JSON.stringify(body)}. Every caller is on a `
-      + 'hook\'s critical path; a memory layer has no business breaking a tool call (§4.9)');
+      + 'hook\'s critical path; a memory layer has no business breaking a tool call');
     assert.deepEqual(rules.readRules(cfg, RUN_ID), [],
       `a store containing ${JSON.stringify(body)} must read as no rules, not as a partial one`);
     assert.doesNotThrow(() => rules.recordRules(cfg, RUN_ID, [

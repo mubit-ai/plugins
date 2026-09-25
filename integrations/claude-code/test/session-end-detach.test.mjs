@@ -29,7 +29,7 @@
  * inline when the hand-off itself cannot happen. The inline body is exercised verbatim by
  * `session-end.test.mjs`, which pins `MUBIT_CC_SESSION_END_DETACH=0` for exactly that reason.
  *
- * Tests pin the run id with the `static` strategy (§6.1) so `runs/<run_id>/` can be seeded
+ * Tests pin the run id with the `static` strategy so `runs/<run_id>/` can be seeded
  * before the hook runs, and so the marker can be read at a known path afterwards.
  */
 
@@ -76,7 +76,7 @@ function env(dataDir, endpoint, extra = {}) {
 const runDir = (dataDir) => join(dataDir, 'runs', RUN_ID);
 const markerPath = (dataDir) => join(dataDir, 'status', `${RUN_ID}.json`);
 
-/** One file per pending ingest item — `runs/<run_id>/spool/<ts>-<rand6>.json` (§4.6). */
+/** One file per pending ingest item — `runs/<run_id>/spool/<ts>-<rand6>.json`. */
 function seedSpool(dataDir, n, tag = 'seed') {
   const dir = join(runDir(dataDir), 'spool');
   mkdirSync(dir, { recursive: true });
@@ -88,7 +88,7 @@ function seedSpool(dataDir, n, tag = 'seed') {
   }
 }
 
-/** A staged turn awaiting attribution — `stage-prompt` (§5.3) plus `capture --stop` (§5.4). */
+/** A staged turn awaiting attribution — `stage-prompt` plus `capture --stop`. */
 function seedPendingTurn(dataDir, promptId, recalled) {
   const dir = join(runDir(dataDir), 'turns');
   mkdirSync(dir, { recursive: true });
@@ -105,7 +105,7 @@ function seedPendingTurn(dataDir, promptId, recalled) {
 
 function readMarker(dataDir) {
   const p = markerPath(dataDir);
-  assert.ok(existsSync(p), `expected a status marker at status/${RUN_ID}.json (§4.8)`);
+  assert.ok(existsSync(p), `expected a status marker at status/${RUN_ID}.json`);
   return readJsonFile(p);
 }
 
@@ -495,7 +495,7 @@ const TERMINAL_ROWS = [
   {
     status: 'skipped:disabled',
     spool: 1,
-    why: 'MUBIT_CC_REFLECT_ON_END=0, knowingly costing cross-session durability (§1.4)',
+    why: 'MUBIT_CC_REFLECT_ON_END=0, knowingly costing cross-session durability',
     extra: { MUBIT_CC_REFLECT_ON_END: '0' },
   },
   { status: 'skipped:not-ingested', spool: 0, why: 'an LLM-backed call over an empty tail is pure cost' },

@@ -29,7 +29,7 @@ import {
 } from './helpers/codex-fixtures.mjs';
 
 /**
- * §8.2 — the curated set. A blank allowlist means these, never "none" and never all 21.
+ * The curated set. A blank allowlist means these, never "none" and never all 21.
  *
  * The Claude Code plugin's `mcp/src/launch.mjs` is the single source of this list and both
  * plugins bundle it, so a change there reaches Codex without anyone editing this tree. The cut

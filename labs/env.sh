@@ -20,12 +20,12 @@ export CLAUDE_PLUGIN_ROOT="$LAB_REPO_ROOT/integrations/claude-code"
 export CLAUDE_PLUGIN_DATA="$LAB_ROOT/.work/data"
 export CLAUDE_PROJECT_DIR="$LAB_ROOT/.work/demo-app"
 
-# --- what the plugin itself reads (§6.1) -----------------------------------------------
+# --- what the plugin itself reads -----------------------------------------------
 export MUBIT_CC_DATA_DIR="$CLAUDE_PLUGIN_DATA"
 export MUBIT_ENDPOINT="http://127.0.0.1:${LAB_PORT:-8787}"
 export MUBIT_API_KEY="mbt_lab_0123456789abcdef0123456789abcdef"
 export MUBIT_CC_LOG_LEVEL="debug"
-# The MCP server's poisoned default. Blanked so nothing can inherit it (§4.3).
+# The MCP server's poisoned default. Blanked so nothing can inherit it.
 export MUBIT_DEFAULT_SESSION_ID=""
 
 export HOOKS="$CLAUDE_PLUGIN_ROOT/hooks/src"
