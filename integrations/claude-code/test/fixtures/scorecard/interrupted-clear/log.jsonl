@@ -1,0 +1,14 @@
+{"v":1,"at":1790000000000,"kind":"start","source":"startup","lessons":{"ref-s1":{"title":"never force-push to main","terms":["stdrefs1"],"handle":"mdf8t"}},"refs":["ref-s1"],"tokens":40}
+{"v":1,"at":1790000001000,"kind":"prompt","prompt_id":"p1","correction":false,"slash":false}
+{"v":1,"at":1790000002000,"kind":"shown","prompt_id":"p1","lessons":{"ref-l1":{"title":"build with make release","terms":["termrefl1"],"handle":"m7pwz","pointer":false}},"refs":["ref-l1"],"tokens":400}
+{"v":1,"at":1790000003000,"kind":"prompt","prompt_id":"p2","correction":false,"slash":false}
+{"v":1,"at":1790000004000,"kind":"shown","prompt_id":"p2","lessons":{"ref-l1":{"title":"build with make release","terms":["termrefl1"],"handle":"m7pwz","pointer":true}},"refs":["ref-l1"],"tokens":50}
+{"v":1,"at":1790000005000,"kind":"turn","prompt_id":"p2","run_id":"cc-run-3","lessons":{"ref-l1":{"used":null,"matched":[]}},"used_refs":[],"api_error":"rate_limit","ended_with_question":false}
+{"v":1,"at":1790000006000,"kind":"prompt","prompt_id":"p3","correction":false,"slash":false}
+{"v":1,"at":1790000007000,"kind":"shown","prompt_id":"p3","lessons":{"ref-l2":{"title":"use the staging bucket for uploads","terms":["termrefl2"],"handle":"mp7qu","pointer":false}},"refs":["ref-l2"],"tokens":300}
+{"v":1,"at":1790000008000,"kind":"tool","prompt_id":"p3","failed":false,"intent":"exec"}
+{"v":1,"at":1790000009000,"kind":"turn","prompt_id":"p3","run_id":"cc-run-3","lessons":{"ref-l2":{"used":true,"matched":["staging","bucket"]}},"used_refs":["ref-l2"],"ended_with_question":false}
+{"v":1,"at":1790000010000,"kind":"start","source":"clear","lessons":{"ref-s1":{"title":"never force-push to main","terms":["stdrefs1"],"handle":"mdf8t"}},"refs":["ref-s1"],"tokens":40}
+{"v":1,"at":1790000011000,"kind":"prompt","prompt_id":"p4","correction":true,"slash":false}
+{"v":1,"at":1790000012000,"kind":"shown","prompt_id":"p4","lessons":{"ref-l3":{"title":"tag releases with a v prefix","terms":["termrefl3"],"handle":"m6pjp","pointer":false}},"refs":["ref-l3"],"tokens":200}
+{"v":1,"at":1790000013000,"kind":"turn","prompt_id":"p4","run_id":"cc-run-3-c1","lessons":{"ref-s1":{"used":false,"matched":[]},"ref-l3":{"used":false,"matched":[]}},"used_refs":[],"ended_with_question":false}

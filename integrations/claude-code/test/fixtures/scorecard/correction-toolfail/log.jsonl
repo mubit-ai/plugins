@@ -1,0 +1,23 @@
+{"v":1,"at":1790000000000,"kind":"start","source":"startup","lessons":{},"refs":[],"tokens":0}
+{"v":1,"at":1790000001000,"kind":"prompt","prompt_id":"p1","correction":false,"slash":false}
+{"v":1,"at":1790000002000,"kind":"shown","prompt_id":"p1","lessons":{"ref-a":{"title":"use npm ci in CI","terms":["termrefa"],"handle":"mctdd","pointer":false},"ref-n":{"title":"prefer rg over grep","terms":["termrefn"],"handle":"mqatv","pointer":false}},"refs":["ref-a","ref-n"],"tokens":1200}
+{"v":1,"at":1790000003000,"kind":"tool","prompt_id":"p1","failed":true,"intent":"search"}
+{"v":1,"at":1790000004000,"kind":"tool","prompt_id":"p1","failed":false,"intent":"exec"}
+{"v":1,"at":1790000005000,"kind":"turn","prompt_id":"p1","run_id":"cc-run-2","lessons":{"ref-a":{"used":true,"matched":["npm","ci"]},"ref-n":{"used":false,"matched":[]}},"used_refs":["ref-a"],"ended_with_question":false}
+{"v":1,"at":1790000006000,"kind":"prompt","prompt_id":"p2","correction":true,"slash":false}
+{"v":1,"at":1790000007000,"kind":"shown","prompt_id":"p2","lessons":{"ref-n":{"title":"prefer rg over grep","terms":["termrefn"],"handle":"mqatv","pointer":true},"ref-b":{"title":"restart the dev server after env changes","terms":["termrefb"],"handle":"mwaxv","pointer":false}},"refs":["ref-n","ref-b"],"tokens":900}
+{"v":1,"at":1790000008000,"kind":"tool","prompt_id":"p2","failed":true,"intent":"exec"}
+{"v":1,"at":1790000009000,"kind":"tool","prompt_id":"p2","failed":false,"intent":"read"}
+{"v":1,"at":1790000010000,"kind":"learned","prompt_id":"p2"}
+{"v":1,"at":1790000011000,"kind":"turn","prompt_id":"p2","run_id":"cc-run-2","lessons":{"ref-n":{"used":false,"matched":[]},"ref-b":{"used":true,"matched":["restart","server"]}},"used_refs":["ref-b"],"ended_with_question":false}
+{"v":1,"at":1790000012000,"kind":"prompt","prompt_id":"p3","correction":false,"slash":false}
+{"v":1,"at":1790000013000,"kind":"shown","prompt_id":"p3","lessons":{"ref-n":{"title":"prefer rg over grep","terms":["termrefn"],"handle":"mqatv","pointer":true},"ref-c":{"title":"pin node to 20 in CI","terms":["termrefc"],"handle":"mdtrq","pointer":false},"ref-e":{"title":"use --frozen-lockfile","terms":["termrefe"],"handle":"matpq","pointer":false}},"refs":["ref-n","ref-c","ref-e"],"tokens":800}
+{"v":1,"at":1790000014000,"kind":"tool","prompt_id":"p3","failed":false,"intent":"write"}
+{"v":1,"at":1790000015000,"kind":"explicit","prompt_id":"p3","ids":["ref-c"],"outcome":"failure"}
+{"v":1,"at":1790000016000,"kind":"learned","prompt_id":"p3"}
+{"v":1,"at":1790000017000,"kind":"turn","prompt_id":"p3","run_id":"cc-run-2","lessons":{"ref-n":{"used":false,"matched":[]},"ref-c":{"used":true,"matched":["node"]},"ref-e":{"used":true,"matched":["frozen","lockfile"]}},"used_refs":["ref-e"],"ended_with_question":false}
+{"v":1,"at":1790000018000,"kind":"prompt","prompt_id":"p4","correction":false,"slash":true}
+{"v":1,"at":1790000019000,"kind":"start","source":"compact","lessons":{},"refs":[],"tokens":0}
+{"v":1,"at":1790000020000,"kind":"prompt","prompt_id":"p5","correction":false,"slash":false}
+{"v":1,"at":1790000021000,"kind":"shown","prompt_id":"p5","lessons":{"ref-n":{"title":"prefer rg over grep","terms":["termrefn"],"handle":"mqatv","pointer":true},"ref-d":{"title":"run migrations before seeding","terms":["termrefd"],"handle":"mtavv","pointer":false}},"refs":["ref-n","ref-d"],"tokens":700}
+{"v":1,"at":1790000022000,"kind":"turn","prompt_id":"p5","run_id":"cc-run-2","lessons":{"ref-n":{"used":false,"matched":[]},"ref-d":{"used":true,"matched":["migrations","seeding"]}},"used_refs":["ref-d"],"ended_with_question":false}
