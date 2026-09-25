@@ -309,6 +309,9 @@ const TTL_ROWS = [
   // is the window the dashboard's overview reads; the file is `.jsonl`, so the `.json` sweeps
   // above never saw it and without this row it would live for ever.
   { what: 'turn ledger', rel: 'runs/cc-x/ledger.jsonl', ttl: 30 * DAY },
+  // The session scorecard log is `.jsonl` and keyed by session, not run, so neither the
+  // `.json` sweeps nor the per-run loop would ever reach it.
+  { what: 'session scorecard log', rel: `scorecard/${fx.SESSION_ID}.jsonl`, ttl: 7 * DAY },
 ];
 
 for (const row of TTL_ROWS) {

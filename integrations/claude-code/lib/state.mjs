@@ -322,6 +322,12 @@ export function pruneStale(cfg = {}) {
       expire(join(root, 'import', name), 30 * DAY);
     }
 
+    // scorecard/<session_id>.jsonl — 7 d. `.jsonl` and keyed by session, so neither the
+    // `.json` sweeps nor the per-run loop below would ever reach it (`lib/scorecard-log.mjs`).
+    for (const e of dirEntries(join(root, 'scorecard'))) {
+      if (e.isFile() && e.name.endsWith('.jsonl')) expire(join(root, 'scorecard', e.name), 7 * DAY);
+    }
+
     // tmp/<uuid>.json — 1 h (detached payload handoff; the child normally unlinks it)
     for (const e of dirEntries(join(root, 'tmp'))) {
       if (e.isFile()) expire(join(root, 'tmp', e.name), 1 * HOUR);
