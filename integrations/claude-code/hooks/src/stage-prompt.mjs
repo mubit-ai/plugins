@@ -195,6 +195,9 @@ function scorePrompt(cfg, payload) {
     const slash = prompt.trim().startsWith('/');
 
     const rows = readScoreRows(cfg, sessionId, { tailBytes: LOG_TAIL_BYTES });
+    // A message queued while Claude works arrives under the running turn's prompt_id: it joins
+    // that turn, so it is neither a new prompt nor a correction of the turn before.
+    if (rows.some((r) => r.kind === 'prompt' && r.prompt_id === promptId)) return;
     /** @type {Record<string, any>|null} */
     let prev = null;
     let afterClear = false;

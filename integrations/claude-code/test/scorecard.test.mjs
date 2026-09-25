@@ -62,15 +62,18 @@ const T = (id, used, over = {}) => ({
 const TOOL = (id, intent, failed) => ({ kind: 'tool', prompt_id: id, intent, failed });
 const EX = (id, ids, outcome) => ({ kind: 'explicit', prompt_id: id, ids, outcome });
 
-test('scorecard: an explicit partial counts as worked, an explicit neutral as not used', async () => {
+test('scorecard: an explicit partial counts as worked; a neutral names the lesson as used and leaves the verdict to the other rules', async () => {
   const S = await lib('scorecard.mjs');
   const rows = [
-    P('p1'), SH('p1', { a: lesson('A'), b: lesson('B') }),
-    T('p1', { a: false, b: true }), EX('p1', ['a'], 'partial'), EX('p1', ['b'], 'neutral'),
+    P('p1'), SH('p1', { a: lesson('A'), b: lesson('B'), c: lesson('C') }),
+    T('p1', { a: false, b: false, c: true }),
+    EX('p1', ['a'], 'partial'), EX('p1', ['b'], 'neutral'), EX('p1', ['c'], 'neutral'),
   ];
   const s = S.foldScorecard(rows, 'p1');
-  assert.deepEqual(s.lessons, { shown: 2, used: 1, notUsed: 1, unknown: 0, worked: 1, failed: 0, waiting: 0 });
-  assert.deepEqual(s.thisTurn.lessons.map((l) => l.explicit), ['partial', 'neutral']);
+  assert.deepEqual(s.lessons, { shown: 3, used: 3, notUsed: 0, unknown: 0, worked: 1, failed: 0, waiting: 2 });
+  assert.deepEqual(s.thisTurn.lessons.map((l) => l.explicit), ['partial', 'neutral', 'neutral']);
+  const corrected = S.foldScorecard([...rows, P('p2', { correction: true })], 'p2');
+  assert.deepEqual([corrected.lessons.worked, corrected.lessons.failed], [1, 2]);
 });
 
 test('scorecard: the last explicit verdict for a lesson in a turn wins', async () => {

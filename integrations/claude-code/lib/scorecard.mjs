@@ -5,7 +5,8 @@
  *
  * Units: a turn is one non-slash prompt and Claude's reply; lessons are distinct
  * `entry_type: lesson` entries. Per lesson and turn the state is used, not used or unknown;
- * a used lesson's verdict is, first match wins: Claude's explicit `mubit_outcome` verdict,
+ * a used lesson's verdict is, first match wins: Claude's explicit `mubit_outcome` verdict
+ * (success/partial worked, failure failed; neutral only marks it used),
  * a correction in the next prompt, a failed last non-read-only tool call, a next prompt
  * existing (worked), otherwise waiting. Counts always add up:
  * shown = used + notUsed + unknown and used = worked + failed + waiting.
@@ -160,7 +161,8 @@ export function foldScorecard(rows, currentPromptId) {
       let verdict = '';
       if (ex === 'success' || ex === 'partial') { state = 'used'; verdict = 'worked'; }
       else if (ex === 'failure') { state = 'used'; verdict = 'failed'; }
-      else if (ex === 'neutral') state = 'not';
+      // Naming a lesson counts as using it; a neutral verdict leaves the outcome to rules 2–5.
+      else if (ex === 'neutral') state = 'used';
       if (state === 'used' && !verdict) verdict = settle(id, next);
 
       const entry = byLesson.get(ref) ?? { title: '', times: 0, states: [], verdicts: [] };

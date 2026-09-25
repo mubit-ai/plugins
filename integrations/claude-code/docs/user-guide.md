@@ -300,7 +300,8 @@ exactly one row, so the rows always add up to the total.
 A used lesson gets a verdict for the turn it was used in. The first rule that applies wins:
 
 1. **Claude's own verdict** through `mubit_outcome`: success or partial means worked, failure
-   means failed.
+   means failed. A `neutral` verdict counts the lesson as used and leaves the verdict to the
+   rules below.
 2. **Your next prompt corrects Claude** — "no, that's wrong", "still failing", "revert
    that" — means failed. A correction never counts across `/clear` or for a slash command, and
    a bare "no" answering a question Claude asked is an answer, not a correction.

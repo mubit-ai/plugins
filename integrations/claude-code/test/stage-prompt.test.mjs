@@ -451,6 +451,25 @@ test('stage-prompt: this prompt\'s own turn row is not the previous turn', async
   assert.equal(logRows(dataDir).at(-1).correction, false);
 });
 
+// Observed live (Claude Code 2.1.282): a message typed while Claude is working is delivered
+// into the running turn under the SAME prompt_id. It joins that turn; it is not a new prompt,
+// and it can never correct the turn before it.
+test('stage-prompt: a message queued into the running turn adds no prompt row and is never a correction', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  holdDrainLock(dataDir);
+  seedLog(dataDir, [
+    { kind: 'prompt', prompt_id: PREV, correction: false, slash: false },
+    prevTurn(),
+    { kind: 'prompt', prompt_id: PROMPT_ID, correction: false, slash: false },
+  ]);
+  const { env, file } = withSpy(staticEnv(dataDir, server));
+  assertHookContract(await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), { env }));
+  assert.deepEqual(logRows(dataDir).filter((r) => r.kind === 'prompt').map((r) => r.prompt_id), [PREV, PROMPT_ID]);
+  await new Promise((res) => setTimeout(res, 250));
+  assert.equal(correctSpawns(file).length, 0);
+});
+
 test('stage-prompt: with capture off nothing is appended', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
