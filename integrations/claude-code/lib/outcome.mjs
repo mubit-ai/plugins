@@ -242,6 +242,8 @@ export function decideOutcome(turn) {
         rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure),
       };
     }
+    // A neutral "none used" record would contradict the verdicts Claude gave itself.
+    if (measured && explicitIdsOf(turn).length > 0) return { post: false, reason: 'explicit_only' };
     if (measured) {
       return {
         post: true,

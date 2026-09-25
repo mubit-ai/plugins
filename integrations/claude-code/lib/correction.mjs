@@ -51,8 +51,10 @@ export function isCorrection(prompt, opts = {}) {
       .toLowerCase();
     if (!text) return false;
 
-    if (BARE_NO.test(text)) return opts?.lastReplyEndedWithQuestion !== true;
-    if (LEADING_NO.test(text) && !POLITE_NO.test(text)) return true;
+    const asked = opts?.lastReplyEndedWithQuestion === true;
+    if (BARE_NO.test(text)) return !asked;
+    // After a question a leading "no" answers it; only a correction phrase still counts.
+    if (!asked && LEADING_NO.test(text) && !POLITE_NO.test(text)) return true;
     return PHRASES.some((re) => re.test(text));
   } catch {
     return false;

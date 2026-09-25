@@ -506,6 +506,15 @@ describe('decideOutcome — per-entry credit', () => {
     assert.deepEqual(d, { post: false, reason: 'explicit_only' });
   });
 
+  it('nothing echoed but Claude judged some entries itself → no neutral record contradicting it', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      explicit_ids: ['ref_lesson_1'],
+      used_evidence: entryEvidence({ ref_rule_1: USE(false), ref_lesson_1: USE(false) }),
+    }));
+    assert.deepEqual(d, { post: false, reason: 'explicit_only' });
+  });
+
   it('a used standing lesson is credited even when nothing was recalled this turn', async () => {
     const { decideOutcome } = await O();
     const d = decideOutcome(turn({

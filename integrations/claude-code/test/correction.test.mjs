@@ -66,6 +66,12 @@ const ROWS = [
   ['No!', false, true],
   ['no', true, false],
   ['nope', true, false],
+  // After a question, a leading "no" is an answer; only a correction phrase still counts.
+  ['no, just the code', false, true],
+  ['nope, leave the docs alone', false, true],
+  ['no, just the code', true, false],
+  ['no, that\'s wrong', true, true],
+  ['no — it still fails', true, true],
 ];
 
 for (const [prompt, expected, asked = false] of ROWS) {

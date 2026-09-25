@@ -747,7 +747,7 @@ hook, do not carry the assumption forward.
 
 `sessionScore`, default **`full`** (`off` in Codex): `full` prints the card described in
 [The session scorecard](#the-session-scorecard) under every reply that showed a lesson,
-`compact` prints its first line only, `off` prints nothing.
+`compact` prints a one-line summary instead, `off` prints nothing.
 
 `outcomeReview`, default **`stop`** (`nudge` in Codex): how hard Claude is asked to credit the
 memory it used. See [Crediting memory by id](#crediting-memory-by-id-the-outcome-review) for
