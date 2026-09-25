@@ -413,7 +413,7 @@ function entryRationale(ev, used, of, failed, toolFailure) {
   const method = str(ev.entry_method) || 'memory-term-echo/v2-entry';
   const counts = `the reply used ${used} of ${of} injected ${of === 1 ? 'memory' : 'memories'} (${method})`;
   if (used === 0) {
-    return `Claude Code ${counts}. Recorded, not penalised: this method cannot see memory the `
+    return `Claude Code turn completed; ${counts}. Recorded, not penalised: this method cannot see memory the `
       + 'model followed without quoting it.';
   }
   if (!failed) return `Claude Code turn completed; ${counts}.`;

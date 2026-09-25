@@ -540,6 +540,12 @@ describe('decideOutcome — per-entry credit', () => {
       'attempts_exhausted');
   });
 
+  it('the none-used rationale is a whole sentence', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({ used_evidence: entryEvidence({ ref_rule_1: USE(false), ref_lesson_1: USE(false) }) }));
+    assert.match(d.rationale ?? '', /^Claude Code turn completed; the reply used 0 of 2 injected memories/);
+  });
+
   it('the rationale names the per-entry method and the counts', async () => {
     const { decideOutcome } = await O();
     const d = decideOutcome(turn({
