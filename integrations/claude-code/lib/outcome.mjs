@@ -148,6 +148,9 @@ export function implicitOutcomesEnabled(cfg) {
  * | injected, the reply carried the memory's vocabulary | `success` +0.2 / `failure` -0.3, with `entry_ids` |
  * | injected, the reply carried none of it | `neutral` 0.0, with an empty `entry_ids` |
  * | injected, but the signal could not be computed | as before: `success` +0.2 / `failure` -0.3 |
+ * | per-entry data, some entries used | `success`/`failure` naming only those, minus `explicit_ids` |
+ * | per-entry data, none used but some measured | `neutral` 0.0, with an empty `entry_ids` |
+ * | per-entry data, every used entry judged by Claude | nothing (`explicit_only`) |
  *
  * **Row 1 is what makes row 4 legible.** A turn that recalled nothing is never sent with an
  * empty `recalled[]`: an outcome attributed to nothing is a wasted round trip that also
@@ -211,14 +214,47 @@ export function decideOutcome(turn) {
     return { post: false, reason: 'attempts_exhausted' };
   }
 
-  const entryIds = Array.isArray(turn.recalled)
+  const recalled = Array.isArray(turn.recalled)
     ? turn.recalled.filter((v) => typeof v === 'string' && v.trim())
     : [];
-  if (entryIds.length === 0) return { post: false, reason: 'nothing_injected' };
+  const ev = isObject(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (recalled.length === 0 && !entries) return { post: false, reason: 'nothing_injected' };
 
   // The turn file records how the turn ended, so neither hook has to re-derive it.
   const failed = str(turn.outcome).toLowerCase() === 'failure';
-  const ev = isObject(turn.used_evidence) ? turn.used_evidence : {};
+  const toolFailure = failed && str(turn.failure_reason) === 'tool_failure';
+
+  // Per-entry credit: only the entries the reply used, minus those Claude judged itself.
+  if (entries) {
+    const refs = Object.keys(entries);
+    const used = refs.filter((r) => entries[r].used === true);
+    const measured = refs.some((r) => entries[r].used === false);
+    if (used.length > 0) {
+      const explicit = new Set(explicitIdsOf(turn));
+      const ids = used.filter((r) => !explicit.has(r));
+      if (ids.length === 0) return { post: false, reason: 'explicit_only' };
+      return {
+        post: true,
+        outcome: failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
+        signal: failed ? SIGNAL_FAILURE : SIGNAL_SUCCESS,
+        entryIds: ids,
+        rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure),
+      };
+    }
+    if (measured) {
+      return {
+        post: true,
+        outcome: OUTCOME_UNUSED,
+        signal: SIGNAL_UNUSED,
+        entryIds: [],
+        rationale: entryRationale(ev, 0, refs.length, failed, toolFailure),
+      };
+    }
+    // Every entry unmeasurable: fall through to the turn-level rule.
+    if (recalled.length === 0) return { post: false, reason: 'nothing_injected' };
+  }
+
   // Strictly a boolean, never truthiness — see the docblock above.
   const unused = ev.used === false;
 
@@ -231,8 +267,51 @@ export function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : entryIds,
-    rationale: rationaleFor(ev, unused, failed, entryIds.length),
+    entryIds: unused ? [] : recalled,
+    rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure),
+  };
+}
+
+/**
+ * A correction on the next prompt: −0.3 against the entries this turn's reply used, minus
+ * those Claude gave its own verdict on. Pure, like `decideOutcome`.
+ *
+ * @param {Record<string, any>|null|undefined} turn
+ * @returns {OutcomeDecision}
+ */
+export function decideCorrection(turn) {
+  if (!isObject(turn)) return { post: false, reason: 'not_a_turn' };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: 'already_sent' };
+  if (str(turn[API_ERROR_KEY])) return { post: false, reason: 'api_failed' };
+  const ev = isObject(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (!entries) return { post: false, reason: 'nothing_used' };
+  const explicit = new Set(explicitIdsOf(turn));
+  const ids = Object.keys(entries).filter((r) => entries[r].used === true && !explicit.has(r));
+  if (ids.length === 0) return { post: false, reason: 'nothing_used' };
+  return {
+    post: true,
+    outcome: OUTCOME_FAILURE,
+    signal: SIGNAL_FAILURE,
+    entryIds: ids,
+    rationale: `The user's next prompt corrected this Claude Code turn; the reply had used `
+      + `${ids.length} ${ids.length === 1 ? 'memory' : 'memories'} (memory-term-echo/v2-entry).`,
+  };
+}
+
+/** @param {string} runId @param {string} promptId @returns {string} */
+export function correctionIdempotencyKey(runId, promptId) {
+  return `cc-correction-${str(runId)}-${str(promptId)}`;
+}
+
+/**
+ * @param {{runId: string, agentId: string, promptId: string, decision: OutcomeDecision}} o
+ * @returns {Record<string, any>}
+ */
+export function correctionRequest(o) {
+  return {
+    ...outcomeRequest(o),
+    idempotency_key: correctionIdempotencyKey(o.runId, o.promptId),
   };
 }
 
@@ -287,9 +366,10 @@ export function outcomeRequest(o) {
  *
  * @param {Record<string, any>} ev  the turn's `used_evidence`, `{}` when there is none
  * @param {boolean} unused @param {boolean} failed @param {number} n
+ * @param {boolean} [toolFailure]
  * @returns {string}
  */
-function rationaleFor(ev, unused, failed, n) {
+function rationaleFor(ev, unused, failed, n, toolFailure = false) {
   const method = str(ev.method);
   const by = method ? ` (${method})` : '';
   const counts = `${numOr(ev.matched, 0)} of ${numOr(ev.candidates, 0)} injected memory terms`;
@@ -299,14 +379,56 @@ function rationaleFor(ev, unused, failed, n) {
       + `none of their vocabulary — ${counts}${by}. Recorded, not penalised: this method `
       + 'cannot see memory the model followed without quoting it.';
   }
+  const ended = toolFailure ? 'Claude Code turn ended on a failed tool call' : 'Claude Code turn ended in failure';
   if (ev.used === true) {
     return failed
-      ? `Claude Code turn ended in failure; the reply carried ${counts}${by}.`
+      ? `${ended}; the reply carried ${counts}${by}.`
       : `Claude Code turn completed and the reply carried ${counts}${by}.`;
   }
   return failed
-    ? 'Claude Code turn ended in failure after these memories were injected.'
+    ? `${ended} after these memories were injected.`
     : 'Claude Code turn completed after these memories were injected.';
+}
+
+/**
+ * @param {Record<string, any>} ev @param {number} used @param {number} of
+ * @param {boolean} failed @param {boolean} toolFailure
+ * @returns {string}
+ */
+function entryRationale(ev, used, of, failed, toolFailure) {
+  const method = str(ev.entry_method) || 'memory-term-echo/v2-entry';
+  const counts = `the reply used ${used} of ${of} injected ${of === 1 ? 'memory' : 'memories'} (${method})`;
+  if (used === 0) {
+    return `Claude Code ${counts}. Recorded, not penalised: this method cannot see memory the `
+      + 'model followed without quoting it.';
+  }
+  if (!failed) return `Claude Code turn completed; ${counts}.`;
+  return toolFailure
+    ? `Claude Code turn ended on a failed tool call; ${counts}.`
+    : `Claude Code turn ended in failure; ${counts}.`;
+}
+
+/**
+ * `used_evidence.entries` when it is a non-empty object of `{used}` records, else null.
+ * @param {Record<string, any>} ev
+ * @returns {Record<string, {used: any}>|null}
+ */
+function entriesOf(ev) {
+  const e = ev.entries;
+  if (!isObject(e)) return null;
+  /** @type {Record<string, {used: any}>} */
+  const out = {};
+  for (const [ref, v] of Object.entries(e)) {
+    if (ref.trim() && isObject(v)) out[ref] = /** @type {any} */ (v);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** @param {Record<string, any>} turn @returns {string[]} */
+function explicitIdsOf(turn) {
+  return Array.isArray(turn.explicit_ids)
+    ? turn.explicit_ids.filter((v) => typeof v === 'string' && v.trim())
+    : [];
 }
 
 /** @param {any} v @returns {boolean} */

@@ -352,3 +352,82 @@ describe('§1.5 — every produced item carries a real intent', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// toolIntent — which tool calls change something
+// ---------------------------------------------------------------------------
+
+// The scorecard marks a turn failed when its last non-read-only tool call failed. A `grep`
+// with no match exits 1 and is not the turn failing, so read-only calls have to be told apart
+// from ones that act — including shell commands that only read.
+describe('toolIntent', () => {
+  /** [toolName, toolInput, expected] */
+  const ROWS = [
+    ['Read', { file_path: '/x' }, 'read'],
+    ['NotebookRead', {}, 'read'],
+    ['WebFetch', { url: 'https://example.com' }, 'read'],
+    ['LSP', {}, 'read'],
+    ['TaskOutput', {}, 'read'],
+    ['BashOutput', {}, 'read'],
+    ['ToolSearch', { query: 'select:Read' }, 'read'],
+    ['ListMcpResourcesTool', {}, 'read'],
+    ['ReadMcpResourceTool', {}, 'read'],
+    ['view_image', {}, 'read'],
+    ['mcp__plugin_mubit-memory_mubit__mubit_recall', { query: 'x' }, 'read'],
+    ['mcp__plugin_mubit-memory_mubit__mubit_dereference', {}, 'read'],
+    ['mcp__mubit__mubit_status', {}, 'read'],
+    ['mcp__mubit__mubit_memory_health', {}, 'read'],
+    ['mcp__mubit__mubit_diagnose', {}, 'read'],
+    ['Grep', { pattern: 'x' }, 'search'],
+    ['Glob', { pattern: '*.mjs' }, 'search'],
+    ['WebSearch', { query: 'x' }, 'search'],
+    ['web_search', {}, 'search'],
+    ['Edit', { file_path: '/x' }, 'write'],
+    ['Write', { file_path: '/x' }, 'write'],
+    ['MultiEdit', {}, 'write'],
+    ['NotebookEdit', {}, 'write'],
+    ['apply_patch', {}, 'write'],
+    ['Bash', { command: 'npm test' }, 'exec'],
+    ['Bash', { command: 'grep -rn foo lib' }, 'search'],
+    ['Bash', { command: 'rg foo | head -5' }, 'search'],
+    ['Bash', { command: 'cd /repo && git status --short' }, 'read'],
+    ['Bash', { command: 'FOO=1 git log --oneline -3' }, 'read'],
+    ['Bash', { command: 'ls -la && cat README.md | wc -l' }, 'read'],
+    ['Bash', { command: 'find . -name "*.mjs" | sort' }, 'search'],
+    ['Bash', { command: 'sed -n 1,40p lib/x.mjs' }, 'read'],
+    ['Bash', { command: 'sed -i "" s/a/b/ lib/x.mjs' }, 'exec'],
+    ['Bash', { command: 'cat a > b' }, 'exec'],
+    ['Bash', { command: 'grep x lib 2>/dev/null' }, 'search'],
+    ['Bash', { command: 'grep x lib > /dev/null 2>&1' }, 'search'],
+    ['Bash', { command: 'git commit -m x' }, 'exec'],
+    ['Bash', { command: 'git diff && npm run build' }, 'exec'],
+    ['Bash', { command: 'rm -rf dist' }, 'exec'],
+    ['Bash', { command: '' }, 'exec'],
+    ['Bash', {}, 'exec'],
+    ['shell', { command: ['ls', '-la'] }, 'read'],
+    ['exec_command', { command: 'npm ci' }, 'exec'],
+    ['write_stdin', {}, 'exec'],
+    ['KillShell', {}, 'exec'],
+    ['Task', { prompt: 'x' }, 'other'],
+    ['Skill', {}, 'other'],
+    ['AskUserQuestion', {}, 'other'],
+    ['mcp__github__create_issue', {}, 'other'],
+    ['mcp__plugin_mubit-memory_mubit__mubit_outcome', {}, 'other'],
+    ['', {}, 'other'],
+  ];
+
+  for (const [name, input, expected] of ROWS) {
+    it(`${name || '(blank)'} ${JSON.stringify(input)} → ${expected}`, async () => {
+      const { toolIntent } = await C();
+      assert.equal(toolIntent(name, input), expected);
+    });
+  }
+
+  it('never throws on hostile input', async () => {
+    const { toolIntent } = await C();
+    for (const v of [null, undefined, 42, { command: { nested: true } }, { command: 'x'.repeat(100_000) }]) {
+      assert.ok(['read', 'search', 'write', 'exec', 'other'].includes(toolIntent('Bash', v)));
+      assert.ok(['read', 'search', 'write', 'exec', 'other'].includes(toolIntent(/** @type {any} */ (v), v)));
+    }
+  });
+});

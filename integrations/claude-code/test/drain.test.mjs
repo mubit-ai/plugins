@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync,
+  existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 
@@ -884,4 +884,145 @@ test('drain: a failed ingest is not whitewashed by a successful pin refresh', as
   server.assertNotCalled('POST', '/v2/control/variables/list');
   assert.equal(readJsonFile(pinsPath(dataDir)).pins.length, 1,
     'and the pin the user set is still there, unrefreshed and still rendering');
+});
+
+// ---------------------------------------------------------------------------
+// `--correct <prompt_id>` — the user's next prompt corrected this turn
+// ---------------------------------------------------------------------------
+
+const PREV_RUN = 'cc-prev-run-0000';
+const NEXT_PROMPT = '12121212-3434-5656-7878-909090909090';
+
+/** A closed turn of `PREV_RUN` whose reply used two entries, one of which Claude judged itself. */
+function seedCorrectableTurn(dataDir, over = {}) {
+  const dir = join(dataDir, 'runs', PREV_RUN, 'turns');
+  mkdirSync(dir, { recursive: true });
+  const turn = {
+    prompt: 'fix the flaky test',
+    prompt_id: PROMPT_ID,
+    session_id: stop().session_id,
+    recalled: ['ref_rule_1', 'ref_lesson_1', 'ref_fact_1'],
+    ended_at: Date.now() - 1000,
+    outcome_pending: false,
+    outcome_sent_at: Date.now() - 900,
+    explicit_ids: ['ref_rule_1'],
+    used_evidence: {
+      method: 'memory-term-echo/v1', used: true, candidates: 9, matched: 4, terms: [],
+      entry_method: 'memory-term-echo/v2-entry',
+      entries: {
+        ref_rule_1: { used: true, matched: ['a', 'b'], candidates: 4 },
+        ref_lesson_1: { used: true, matched: ['c', 'd'], candidates: 4 },
+        ref_fact_1: { used: false, matched: [], candidates: 3 },
+      },
+    },
+    ...over,
+  };
+  writeFileSync(join(dir, `${PROMPT_ID}.json`), JSON.stringify(turn));
+  return join(dir, `${PROMPT_ID}.json`);
+}
+
+test('drain --correct: posts one failure against the used entries Claude did not judge', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  const turnFile = seedCorrectableTurn(dataDir);
+
+  const r = await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  });
+  assertHookContract(r);
+
+  server.assertCalled('POST', '/v2/control/outcome', 1);
+  const body = server.lastCall('POST', '/v2/control/outcome').body;
+  assert.equal(body.run_id, PREV_RUN);
+  assert.equal(body.reference_id, 'global');
+  assert.equal(body.outcome, 'failure');
+  assert.equal(body.signal, -0.3);
+  assert.deepEqual(body.entry_ids, ['ref_lesson_1']);
+  assert.equal(body.idempotency_key, `cc-correction-${PREV_RUN}-${PROMPT_ID}`);
+  assert.match(body.rationale, /corrected/);
+
+  const turn = readJsonFile(turnFile);
+  assert.ok(turn.correction_sent_at > 0, 'the turn records that its correction was delivered');
+  assert.equal(turn.outcome_sent_at > 0, true, 'the Stop outcome record is left as it was');
+
+  const ledger = join(dataDir, 'runs', PREV_RUN, 'ledger.jsonl');
+  const rows = readFileSync(ledger, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const row = rows.find((x) => x.kind === 'outcome' && x.correction === true);
+  assert.ok(row, `no correction row in ${JSON.stringify(rows)}`);
+  assert.equal(row.outcome, 'failure');
+  assert.equal(row.prompt_id, PROMPT_ID);
+  assert.equal(row.entry_ids_n, 1);
+});
+
+test('drain --correct: a correction already delivered is not posted again', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedCorrectableTurn(dataDir, { correction_sent_at: Date.now() - 10 });
+  assertHookContract(await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  }));
+  server.assertCalled('POST', '/v2/control/outcome', 0);
+});
+
+test('drain --correct: nothing to correct when the reply used nothing', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedCorrectableTurn(dataDir, {
+    used_evidence: { method: 'memory-term-echo/v1', used: false, entries: { ref_fact_1: { used: false, matched: [], candidates: 3 } } },
+  });
+  assertHookContract(await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  }));
+  server.assertCalled('POST', '/v2/control/outcome', 0);
+});
+
+test('drain --correct: a pruned turn file posts nothing', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  assertHookContract(await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  }));
+  server.assertCalled('POST', '/v2/control/outcome', 0);
+});
+
+test('drain --correct: outcomeMode "explicit" silences it', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedCorrectableTurn(dataDir);
+  assertHookContract(await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url, { MUBIT_CC_OUTCOME_MODE: 'explicit' }),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  }));
+  server.assertCalled('POST', '/v2/control/outcome', 0);
+});
+
+test('drain --correct: a failed post leaves the turn uncorrected', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t, {
+    'POST /v2/control/outcome': { status: 503, json: { error: 'down' } },
+  });
+  const turnFile = seedCorrectableTurn(dataDir);
+  assertHookContract(await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  }));
+  assert.equal(readJsonFile(turnFile).correction_sent_at, undefined);
+});
+
+test('drain --correct: waits for a lock another drainer is about to release', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedCorrectableTurn(dataDir);
+  const lock = join(dataDir, 'runs', PREV_RUN, 'drain.lock');
+  writeFileSync(lock, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+  setTimeout(() => { try { unlinkSync(lock); } catch { /* gone */ } }, 300);
+  assertHookContract(await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  }));
+  server.assertCalled('POST', '/v2/control/outcome', 1);
 });

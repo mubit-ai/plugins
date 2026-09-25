@@ -15,6 +15,8 @@
  *      spawn the detached drain. A new prompt arriving is exactly the moment the previous
  *      turn's captures are complete, which makes it a better trigger than a timer: it is
  *      user-paced, it costs nothing when nothing was captured, and it never fires mid-turn.
+ *   3. Append the session scorecard's `prompt` row; a correction of a previous turn that used
+ *      memory starts `drain --correct` to post a failure against it.
  *
  * **The race:** `prompt-recall` writes `recalled` into this same file on this same event, and
  * the two hooks are separate processes with no ordering guarantee. Both are specified
@@ -32,9 +34,12 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { loadConfig } from '../../lib/config.mjs';
+import { isCorrection } from '../../lib/correction.mjs';
 import { runHook, spawnDetached } from '../../lib/hook.mjs';
 import { log } from '../../lib/log.mjs';
+import { implicitOutcomesEnabled } from '../../lib/outcome.mjs';
 import { deriveRunId, turnKey } from '../../lib/runid.mjs';
+import { appendScoreRow, readScoreRows } from '../../lib/scorecard-log.mjs';
 import { spoolStats } from '../../lib/spool.mjs';
 import {
   ensureDir, readJson, resolveDataDir, runDir, safeSegment, writeJsonAtomic,
@@ -51,6 +56,9 @@ const MAX_PROMPT_BYTES = 64 * 1024;
 
 /** `prompt_id` names a file, so it is treated as untrusted input to a path. */
 const MAX_ID = 128;
+
+/** Only the end of the session log is read; the previous turn is always near it. */
+const LOG_TAIL_BYTES = 64 * 1024;
 
 await runHook('stage-prompt', {
   budgetMs: BUDGET_MS,
@@ -70,6 +78,7 @@ await runHook('stage-prompt', {
     }
 
     stageTurn(cfg, runId, payload);
+    if (cfg.capture !== false) scorePrompt(cfg, payload);
     if (cfg.capture) maybeDrain(cfg, runId, payload);
 
     return { suppressOutput: true };
@@ -162,6 +171,57 @@ function ordinalFor(dir, mine) {
     return Math.max(1, mine ? n : n + 1);
   } catch {
     return 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 1b — the session scorecard's prompt row, and the correction trigger
+// ---------------------------------------------------------------------------
+
+/**
+ * Append `{kind: 'prompt', prompt_id, correction, slash}` to the session log. A correction of
+ * a previous turn whose reply used memory spawns `drain --correct` to post −0.3 against it.
+ *
+ * @param {Record<string, any>} cfg
+ * @param {Record<string, any>} payload
+ * @returns {void}
+ */
+function scorePrompt(cfg, payload) {
+  try {
+    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : '';
+    const promptId = safeSegment(turnKey(payload), MAX_ID);
+    if (!sessionId || !promptId) return;
+    const prompt = typeof payload?.prompt === 'string' ? payload.prompt : '';
+    const slash = prompt.trim().startsWith('/');
+
+    const rows = readScoreRows(cfg, sessionId, { tailBytes: LOG_TAIL_BYTES });
+    /** @type {Record<string, any>|null} */
+    let prev = null;
+    let afterClear = false;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.kind === 'start' && r.source === 'clear') afterClear = true;
+      if (r.kind === 'turn' && typeof r.prompt_id === 'string' && r.prompt_id && r.prompt_id !== promptId) {
+        prev = r;
+        break;
+      }
+    }
+
+    const correction = !slash && !!prev && !afterClear
+      && isCorrection(prompt, { lastReplyEndedWithQuestion: prev?.ended_with_question === true });
+    appendScoreRow(cfg, sessionId, { kind: 'prompt', prompt_id: promptId, correction, slash });
+
+    if (!correction || !prev || !implicitOutcomesEnabled(cfg)) return;
+    const used = Array.isArray(prev.used_refs)
+      ? prev.used_refs.filter((v) => typeof v === 'string' && v.trim())
+      : [];
+    const prevRun = typeof prev.run_id === 'string' ? prev.run_id : '';
+    if (!used.length || !prevRun) return;
+    spawnDetached(cfg, 'drain', ['--correct', String(prev.prompt_id), '--run', prevRun],
+      writePayload(cfg, payload));
+    log(cfg, 'debug', 'stage-prompt: correction of the previous turn', { prompt_id: String(prev.prompt_id) });
+  } catch (err) {
+    log(cfg, 'warn', `stage-prompt: could not score the prompt (${messageOf(err)})`);
   }
 }
 

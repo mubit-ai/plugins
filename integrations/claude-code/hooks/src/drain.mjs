@@ -11,7 +11,9 @@
  * `session-end` or `cwd-changed`, which is what keeps the per-tool-call hot path free of
  * node's startup cost a second time. The last of those passes `--run <id>`: it drains the
  * run a session has just walked away from, and a child that re-derived would read the
- * session map that hook is in the middle of rewriting. Nothing waits on it, so everything here must be safe to abandon:
+ * session map that hook is in the middle of rewriting. `stage-prompt` also passes
+ * `--correct <prompt_id> --run <id>` when the user's prompt corrected the previous turn.
+ * Nothing waits on it, so everything here must be safe to abandon:
  * one drainer at a time, one request per batch, and a spool that is only ever unlinked
  * after a 2xx.
  *
@@ -51,7 +53,9 @@ import { appendLedger } from '../../lib/ledger.mjs';
 import { postIngest, postOutcome } from '../../lib/http.mjs';
 import { log } from '../../lib/log.mjs';
 import { readMarker, updateMarker } from '../../lib/markers.mjs';
-import { decideOutcome, implicitOutcomesEnabled, outcomeRequest } from '../../lib/outcome.mjs';
+import {
+  correctionRequest, decideCorrection, decideOutcome, implicitOutcomesEnabled, outcomeRequest,
+} from '../../lib/outcome.mjs';
 import { refreshPins } from '../../lib/pins.mjs';
 import { deriveAgentId, deriveRunId, resolveProjectDir, turnKey } from '../../lib/runid.mjs';
 import {
@@ -159,6 +163,8 @@ async function main() {
   const outcomeArg = flagValue(argv, '--with-outcome');
   const wantsOutcome = argv.includes('--with-outcome');
   const pinnedRun = flagValue(argv, '--run');
+  // `--correct <prompt_id>`: the user's next prompt corrected that turn (`stage-prompt`).
+  const correctArg = str(flagValue(argv, '--correct'));
 
   // Invoked two ways: with the payload on stdin (foreground, as the tests do) and with
   // `--payload <file>` (detached — a detached child's inherited stdin is not reliably
@@ -201,7 +207,7 @@ async function main() {
   const promptId = str(outcomeArg) || turnKey(payload);
 
   // §5.5 step 1: exactly one drainer per run.
-  const lock = await acquireConfirmed(cfg, runId, wantsOutcome, started);
+  const lock = await acquireConfirmed(cfg, runId, wantsOutcome || !!correctArg, started);
   if (!lock) {
     log(cfg, 'debug', 'drain: another drainer holds the lock; standing down', { run_id: runId });
     return;
@@ -221,6 +227,7 @@ async function main() {
 
     // §5.5 step 7.
     await flushOutcome(cfg, runId, agentId, promptId, wantsOutcome);
+    if (correctArg && !breakerOpen(cfg)) await sendCorrection(cfg, runId, agentId, correctArg);
 
     log(cfg, 'info', `drain: ${drained.sent} item(s) in ${drained.batches} batch(es)`, {
       run_id: runId, rejected: drained.rejected, ms: Date.now() - started,
@@ -631,6 +638,39 @@ async function sendOutcome(cfg, runId, agentId, promptId) {
     }
   } catch (err) {
     log(cfg, 'warn', `drain: outcome skipped — ${messageOf(err)}`, { run_id: runId });
+  }
+}
+
+/**
+ * `--correct <prompt_id>`: post one −0.3 against the entries that turn's reply used, minus the
+ * ones Claude judged itself (`decideCorrection`). Not retried: a later prompt never re-asks.
+ *
+ * @param {Record<string, any>} cfg @param {string} runId @param {string} agentId
+ * @param {string} promptId
+ */
+async function sendCorrection(cfg, runId, agentId, promptId) {
+  try {
+    if (!implicitOutcomesEnabled(cfg)) return;
+    const p = join(runDir(cfg, runId), 'turns', `${safeSegment(promptId)}.json`);
+    const turn = readJson(p, null);
+    const decision = decideCorrection(turn);
+    if (!decision.post) {
+      log(cfg, 'debug', `drain: no correction to post (${decision.reason})`, { run_id: runId, prompt_id: promptId });
+      return;
+    }
+    const res = await postOutcome(cfg, correctionRequest({ runId, agentId, promptId, decision }),
+      { timeoutMs: numOr(cfg.timeoutMs, 4000) });
+    if (!res.ok) {
+      log(cfg, 'warn', `drain: correction post failed (${res.state})`, { run_id: runId, prompt_id: promptId });
+      return;
+    }
+    // Re-read so a write that landed while the post was in flight is not clobbered.
+    const fresh = readJson(p, turn);
+    writeJsonAtomic(p, { ...(fresh && typeof fresh === 'object' ? fresh : turn), correction_sent_at: Date.now() });
+    appendLedger(resolveDataDir(cfg), runId,
+      { ...outcomeLedgerRow(runId, promptId, decision, 1), correction: true });
+  } catch (err) {
+    log(cfg, 'warn', `drain: correction skipped — ${messageOf(err)}`, { run_id: runId });
   }
 }
 

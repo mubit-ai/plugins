@@ -235,3 +235,95 @@ export function classifyTurn(prompt, lastAssistantMessage, opts = {}) {
     agentType: isSubagent && typeof o.agent_type === 'string' ? o.agent_type : '',
   };
 }
+
+// ---------------------------------------------------------------------------
+// toolIntent — does a call read, search, write or act?
+// ---------------------------------------------------------------------------
+
+const READ_TOOLS = new Set([
+  'Read', 'NotebookRead', 'WebFetch', 'LSP', 'TaskOutput', 'BashOutput', 'ToolSearch',
+  'ListMcpResourcesTool', 'ReadMcpResourceTool', 'view_image',
+]);
+const SEARCH_TOOLS = new Set(['Grep', 'Glob', 'WebSearch', 'web_search']);
+const WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch']);
+const SHELL_TOOLS = new Set(['Bash', 'shell', 'exec_command', 'write_stdin', 'KillShell']);
+const OWN_MCP_PREFIXES = ['mcp__plugin_mubit-memory_mubit__', 'mcp__mubit__'];
+const OWN_READ_TOOLS = new Set([
+  'mubit_recall', 'mubit_dereference', 'mubit_status', 'mubit_memory_health', 'mubit_diagnose',
+]);
+const SEARCH_VERBS = new Set(['grep', 'rg', 'ag', 'ack', 'find', 'fd']);
+const READ_VERBS = new Set([
+  'ls', 'cat', 'head', 'tail', 'less', 'wc', 'stat', 'file', 'which', 'type', 'echo', 'printf',
+  'pwd', 'tree', 'du', 'df', 'diff', 'cmp', 'test', '[', 'jq', 'sort', 'uniq', 'cut', 'tr', 'nl',
+  'sed', 'awk',
+]);
+const READ_GIT = new Set(['status', 'diff', 'log', 'show', 'grep', 'rev-parse', 'branch', 'ls-files', 'blame']);
+/** Longer commands are not parsed; they count as acting. */
+const MAX_SHELL_PARSE = 4096;
+
+/**
+ * What a tool call does: `read` and `search` change nothing, `write` edits files, `exec` runs
+ * something, `other` is everything else. A shell command made only of reading verbs is `read`
+ * (or `search` when it greps or finds), so a `grep` with no match is not a failed action.
+ *
+ * @param {any} toolName
+ * @param {any} toolInput
+ * @returns {'read'|'search'|'write'|'exec'|'other'}
+ */
+export function toolIntent(toolName, toolInput) {
+  try {
+    const name = typeof toolName === 'string' ? toolName.trim() : '';
+    if (!name) return 'other';
+    if (READ_TOOLS.has(name)) return 'read';
+    if (SEARCH_TOOLS.has(name)) return 'search';
+    if (WRITE_TOOLS.has(name)) return 'write';
+    if (SHELL_TOOLS.has(name)) return shellIntent(toolInput);
+    const own = OWN_MCP_PREFIXES.find((p) => name.startsWith(p));
+    if (own && OWN_READ_TOOLS.has(name.slice(own.length))) return 'read';
+    return 'other';
+  } catch {
+    return 'other';
+  }
+}
+
+/** @param {any} input @returns {'read'|'search'|'exec'} */
+function shellIntent(input) {
+  const raw = input && typeof input === 'object' ? input.command : undefined;
+  const cmd = typeof raw === 'string'
+    ? raw
+    : Array.isArray(raw) ? raw.filter((s) => typeof s === 'string').join(' ') : '';
+  if (!cmd.trim() || cmd.length > MAX_SHELL_PARSE) return 'exec';
+
+  const cleaned = cmd
+    .replace(/&>\s*\/dev\/null/g, ' ')
+    .replace(/\d*>>?\s*\/dev\/null/g, ' ')
+    .replace(/\d*>&\d+/g, ' ');
+  if (/[<>]/.test(cleaned.replace(/<<</g, ''))) return 'exec';
+
+  let search = false;
+  for (const segment of cleaned.split(/\|\||&&|;|\|/)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens.shift();
+    if (!tokens.length || tokens[0] === 'cd') continue;
+    const verb = tokens[0].split('/').pop() ?? '';
+    if (SEARCH_VERBS.has(verb)) { search = true; continue; }
+    if (verb === 'git') {
+      if (!READ_GIT.has(gitSubcommand(tokens))) return 'exec';
+      continue;
+    }
+    if (verb === 'sed' && tokens.some((t) => t === '--in-place' || /^-[a-zA-Z]*i/.test(t))) return 'exec';
+    if (!READ_VERBS.has(verb)) return 'exec';
+  }
+  return search ? 'search' : 'read';
+}
+
+/** @param {string[]} tokens `git …` @returns {string} */
+function gitSubcommand(tokens) {
+  for (let i = 1; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === '-C' || t === '-c') { i++; continue; }
+    if (t.startsWith('-')) continue;
+    return t;
+  }
+  return '';
+}
