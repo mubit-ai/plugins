@@ -85,14 +85,16 @@ Requires **Codex CLI 0.146.0 or newer**, which is where Git marketplace sources 
 codex plugin marketplace add mubit-ai/plugins
 codex plugin add mubit-memory@mubit
 
-# Register the hooks and the MCP server into your Codex config, then sign in.
+# Register the hooks and the MCP server into your Codex config.
 PLUGIN=$(ls -d ~/.codex/plugins/cache/mubit/mubit-memory/*/ | tail -1)
 node "$PLUGIN/scripts/setup.mjs" "$PLUGIN"
-node "$PLUGIN/scripts/login.mjs"
 ```
 
-`Connected to https://api.mubit.ai.` means the key is valid and stored. Then start a new Codex
-session — hooks and MCP servers are read at session start.
+Then start Codex and sign in by asking it to run `mubit-memory:auth`. It opens the Mubit
+console in your browser; sign in or sign up there, and the key is checked against your instance
+and stored where the hooks read it. Approve the command when Codex asks: without approval it
+runs with no network and cannot reach the console. Then start a new Codex session — hooks and
+MCP servers are read at session start.
 
 **Do not skip `setup.mjs`.** Codex copies a plugin's bundled `hooks.json` and never reads it,
 and a plugin-declared MCP server cannot resolve its own entry point there. So both ship as
@@ -107,7 +109,7 @@ Full walkthrough, including the sandbox and trust gotchas:
 
 ### Claude Code
 
-Two ways to install, with the same result.
+Install it either way; the sign-in afterwards is the same.
 
 **Inside Claude Code**, with `/plugin`:
 
@@ -117,34 +119,31 @@ Two ways to install, with the same result.
 /reload-plugins
 ```
 
-Then set your credentials in `/plugin` → **Mubit Memory** → **configure**, and **start a new
-session**. `/reload-plugins` registers the hooks but does not fire `SessionStart`, so until a
-new session begins the plugin has never actually run. It looks broken; it is fine.
-
-**From a terminal**, with the `claude` CLI:
+**From a terminal**, with the `claude` CLI, then start `claude`:
 
 ```bash
 claude plugin marketplace add mubit-ai/plugins
 claude plugin install mubit-memory@mubit
-
-# Sign in: opens the Mubit console in your browser and stores the key where the hooks read it.
-PLUGIN=$(ls -d ~/.claude/plugins/cache/mubit/mubit-memory/*/ | tail -1)
-node "$PLUGIN/bin/auth.mjs" --data-dir ~/.claude/plugins/data/mubit-memory-mubit
 ```
 
-`Connected to https://api.mubit.ai.` means the key is valid and stored. Then start `claude`,
-or a new session if one was already open. Keep `--data-dir` as written: the plugin has not run
-yet, so without it the key can land in a directory the hooks never read. With no browser (over
-SSH, say), issue a key in the console and sign in with it instead:
+Then sign in from inside Claude Code:
 
-```bash
-MUBIT_AUTH_KEY='mbt_…' node "$PLUGIN/bin/auth.mjs" --data-dir ~/.claude/plugins/data/mubit-memory-mubit --paste
+```text
+/mubit-memory:auth
 ```
 
-To keep the key in your OS keychain instead, as `/plugin` → **configure** does, skip the
-sign-in and pass both values at install time:
-`claude plugin install mubit-memory@mubit --config endpoint=https://api.mubit.ai --config apiKey=mbt_…`.
-The key then sits in your shell history.
+It opens the Mubit console in your browser; sign in or sign up there, and the key is checked
+against your instance and stored where the hooks read it. Where no browser can open (over SSH,
+say), it falls back to a key you issue in the console.
+
+Then **start a new session**. `/reload-plugins` registers the hooks but does not fire
+`SessionStart`, and a session opened before you signed in started without a key, so until a
+new session begins the plugin has never actually run. It looks broken; it is fine.
+
+To keep the key in your OS keychain instead, set `endpoint` and `apiKey` in `/plugin` →
+**Mubit Memory** → **configure** rather than signing in, or pass them at install time with
+`claude plugin install mubit-memory@mubit --config endpoint=https://api.mubit.ai --config apiKey=mbt_…`
+(the key then sits in your shell history).
 
 You are done when a new session opens with `Mubit memory is active` and a run id.
 
