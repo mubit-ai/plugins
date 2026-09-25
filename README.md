@@ -359,8 +359,10 @@ the default. The ones worth knowing about:
 | `recallAsync` | `false` | Never make a prompt wait on recall, at the cost of one turn of staleness. |
 | `preToolWarnings` | `false` | Show the model a stored rule just before an `rm` or `git push`. It only ever warns. |
 | `capture` / `recall` | `true` | Turn either half off. |
+| `sessionScore` | `full` | The memory scorecard printed under each reply that showed a lesson. `compact` for one line, `off` to hide it. |
+| `outcomeReview` | `stop` | Asks Claude once per turn to credit the lessons that helped or misled it. `nudge` keeps only a one-line ask. |
 
-The [Claude Code guide](integrations/claude-code/README.md#configuration) documents all 25.
+The [Claude Code guide](integrations/claude-code/README.md#configuration) documents all 27.
 
 ## When something looks wrong
 
@@ -409,7 +411,7 @@ Both hosts execute these directories as fetched, with no build step, which is wh
 ## Documentation and support
 
 - **Guides** — [Claude Code](integrations/claude-code/README.md) ·
-  [Codex CLI](integrations/codex/README.md). Install, all 25 options, and troubleshooting.
+  [Codex CLI](integrations/codex/README.md). Install, all 27 options, and troubleshooting.
 - **Reference** — [docs.mubit.ai](https://docs.mubit.ai) for the Mubit API, SDKs and console.
 - **Keys and instances** — the [Mubit console](https://console.mubit.ai).
 - **Bugs** — [open an issue](https://github.com/mubit-ai/plugins/issues). What to put in

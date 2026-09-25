@@ -417,6 +417,19 @@ command. It only ever warns — it never allows, denies or rewrites, on any path
 whether the feature is on or not, which is why `setup` leaves the registration out unless you
 pass `--with-pre-tool`.
 
+### Crediting memory, and the scorecard — mostly off here
+
+Every injected memory line now starts with a short id such as `[m7k2q]`, which `mubit_outcome`
+accepts and the plugin maps back to the entry's reference id. `MUBIT_CC_OUTCOME_REVIEW`,
+default `nudge` under Codex, adds one sentence to the memory block asking the model to credit
+what helped or misled it before finishing; `off` drops it. `stop` also has the Stop hook ask
+for a short review once per turn — the default in Claude Code, but a Stop continuation has not
+been verified under Codex.
+
+`MUBIT_CC_SESSION_SCORE`, default `off` under Codex, prints the memory scorecard under each
+reply that showed a lesson (`full` or `compact`). The
+[Claude Code guide](../../claude-code/docs/user-guide.md#the-session-scorecard) explains both.
+
 ### Quieting it temporarily
 
 ```bash

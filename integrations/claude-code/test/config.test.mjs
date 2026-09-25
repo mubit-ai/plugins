@@ -551,6 +551,9 @@ const USER_CONFIG_ROWS = [
   // a key `loadConfig` never reads.
   { key: 'sessionEndDetach', env: 'MUBIT_CC_SESSION_END_DETACH', field: 'sessionEndDetach', raw: '0', optRaw: 'false', want: false },
   { key: 'outcomeMode', env: 'MUBIT_CC_OUTCOME_MODE', field: 'outcomeMode', raw: 'explicit', want: 'explicit' },
+  // Both asserted away from their defaults, so a key `loadConfig` never reads cannot pass.
+  { key: 'sessionScore', env: 'MUBIT_CC_SESSION_SCORE', field: 'sessionScore', raw: 'compact', want: 'compact' },
+  { key: 'outcomeReview', env: 'MUBIT_CC_OUTCOME_REVIEW', field: 'outcomeReview', raw: 'nudge', want: 'nudge' },
   { key: 'statusLine', env: 'MUBIT_CC_STATUSLINE', field: 'statusLine', raw: '0', optRaw: 'false', want: false },
   { key: 'mcpTools', env: 'MUBIT_MCP_TOOLS', field: 'mcpTools', raw: 'mubit_recall,mubit_remember', want: ['mubit_recall', 'mubit_remember'] },
   { key: 'mcpLessonScope', env: 'MUBIT_MCP_LESSON_SCOPE', field: 'mcpLessonScope', raw: 'global', want: 'global' },
@@ -622,6 +625,10 @@ test('loadConfig(): the §6.1 defaults, exactly', async () => {
   // most instances do not have a problem with.
   assert.equal(cfg.recallAsync, false);
   assert.equal(cfg.outcomeMode, 'implicit');
+  // The session scorecard prints under every reply that showed a lesson, and the Stop-hook
+  // outcome review is what makes Claude credit lessons by id at all.
+  assert.equal(cfg.sessionScore, 'full');
+  assert.equal(cfg.outcomeReview, 'stop');
   assert.equal(cfg.reflectOnEnd, true);
   // On, because the hook it governs is cancelled by the host on the way out and everything
   // left inside it — the last drain and the only call that promotes a lesson — dies there.
@@ -805,4 +812,43 @@ test('loadConfig(): mcpLessonScope accepts run, session and global — and nothi
   assert.equal(org.mcpLessonScope, 'session',
     'the widest scope is not a value a client sets for itself, so it takes the default like '
     + 'any other unrecognised string');
+});
+
+// ===========================================================================
+// Host-dependent defaults: sessionScore and outcomeReview
+// ===========================================================================
+
+test('loadConfig(): under Codex the scorecard is off and the outcome review only nudges', async () => {
+  const config = await lib('config.mjs');
+  const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), { MUBIT_CC_HOST: 'codex' }));
+  assert.equal(cfg.sessionScore, 'off');
+  // A Stop-hook continuation has never been observed on Codex, so the default stays a nudge.
+  assert.equal(cfg.outcomeReview, 'nudge');
+});
+
+test('loadConfig(): an explicit sessionScore / outcomeReview still wins under Codex', async () => {
+  const config = await lib('config.mjs');
+  const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
+    MUBIT_CC_HOST: 'codex', MUBIT_CC_SESSION_SCORE: 'full', MUBIT_CC_OUTCOME_REVIEW: 'stop',
+  }));
+  assert.equal(cfg.sessionScore, 'full');
+  assert.equal(cfg.outcomeReview, 'stop');
+});
+
+test('loadConfig(): an unknown sessionScore / outcomeReview falls back to the host default', async () => {
+  const config = await lib('config.mjs');
+  const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
+    MUBIT_CC_SESSION_SCORE: 'loud', MUBIT_CC_OUTCOME_REVIEW: 'always',
+  }));
+  assert.equal(cfg.sessionScore, 'full');
+  assert.equal(cfg.outcomeReview, 'stop');
+});
+
+test('loadConfig(): sessionScore / outcomeReview are read case-insensitively from .mubit-cc.json', async () => {
+  const config = await lib('config.mjs');
+  const projectDir = makeProjectDir();
+  writeProjectConfig(projectDir, { sessionScore: 'OFF', outcomeReview: 'Off' });
+  const cfg = load(config, envOf(makeDataDir(), projectDir));
+  assert.equal(cfg.sessionScore, 'off');
+  assert.equal(cfg.outcomeReview, 'off');
 });

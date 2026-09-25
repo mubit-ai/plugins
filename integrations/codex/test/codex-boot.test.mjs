@@ -340,6 +340,28 @@ test('an explicit statusLine still wins under Codex, and the Claude Code default
     + 'and this change was supposed to be additive.');
 });
 
+test('under the Codex host, the session scorecard is off and the outcome review only nudges', async () => {
+  const dataDir = makeDataDir();
+  const projectDir = makeProjectDir();
+  const { loadConfig } = await lib('config.mjs');
+  const shared = {
+    CLAUDE_PLUGIN_DATA: dataDir, MUBIT_CC_DATA_DIR: dataDir, CLAUDE_PROJECT_DIR: projectDir,
+    MUBIT_ENDPOINT: 'https://mubit.example.com', HOME: dataDir,
+  };
+  const underCodex = loadConfig({ ...shared, MUBIT_CC_HOST: 'codex' });
+  // § A Stop-hook continuation has never been observed on Codex, so `stop` is not its default.
+  assert.equal(underCodex.sessionScore, 'off');
+  assert.equal(underCodex.outcomeReview, 'nudge');
+  const optedIn = loadConfig({
+    ...shared, MUBIT_CC_HOST: 'codex', MUBIT_CC_SESSION_SCORE: 'compact', MUBIT_CC_OUTCOME_REVIEW: 'stop',
+  });
+  assert.equal(optedIn.sessionScore, 'compact');
+  assert.equal(optedIn.outcomeReview, 'stop');
+  const claude = loadConfig({ ...shared, MUBIT_CC_HOST: undefined });
+  assert.equal(claude.sessionScore, 'full');
+  assert.equal(claude.outcomeReview, 'stop');
+});
+
 // ===========================================================================
 // Ordering — the property the whole file is named after
 // ===========================================================================
