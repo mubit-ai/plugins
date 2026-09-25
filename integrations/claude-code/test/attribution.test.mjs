@@ -34,6 +34,8 @@ const RUN_ID = 'cc-test-run-1';
 
 /** The reference ids the default `queryResponse()` fixture renders, in section order. */
 const RECALLED = ['ref_rule_1', 'ref_lesson_1', 'ref_fact_1'];
+/** Of those, the one the default `stop()` reply echoes ("stays queued until indexing completes"). */
+const ECHOED = ['ref_lesson_1'];
 /** The `id` values of the same three entries. None of these may ever reach `entry_ids`. */
 const EVIDENCE_IDS = ['e1', 'e2', 'e3'];
 
@@ -65,7 +67,7 @@ const settle = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 // The loop, end to end
 // ---------------------------------------------------------------------------
 
-test('recall → stop → drain attributes the outcome to the recalled reference_ids', async (t) => {
+test('recall → stop → drain attributes the outcome to the recalled reference_ids the reply used', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/ingest': SLOW_INGEST });
   t.after(() => server.close());
   const dir = makeDataDir();
@@ -108,9 +110,10 @@ test('recall → stop → drain attributes the outcome to the recalled reference
   assert.equal(body.agent_id, 'claude-code', 'the outcome is attributed to the role, not the session');
   assert.ok(typeof body.idempotency_key === 'string' && body.idempotency_key.length > 0);
 
-  // THE assertion. reference_id, not id.
-  assert.deepEqual(body.entry_ids, RECALLED,
-    'entry_ids must be the recalled reference_ids, in order');
+  // THE assertion. reference_id, not id — and only the entries the reply actually used: the
+  // rule and the fact were injected too, but nothing in the reply came from them.
+  assert.deepEqual(body.entry_ids, ECHOED,
+    'entry_ids must be the recalled reference_ids whose own vocabulary the reply carried');
   for (const bad of EVIDENCE_IDS) {
     assert.ok(!body.entry_ids.includes(bad),
       `entry_ids contains QueryEvidence.id "${bad}" — it must carry reference_id instead ` +
@@ -148,7 +151,7 @@ test('only the entries that survived the token budget are attributed', async (t)
   // and this test would then be asserting the budget property through a scenario that never
   // reaches it. The default `stop()` message answers a different question entirely.
   assertHookContract(await runHook('capture', stop({
-    last_assistant_message: 'Following the RULE that was recalled: nothing else fit the budget.',
+    last_assistant_message: `Following the RULE ${'r'.repeat(24)} that was recalled: nothing else fit the budget.`,
   }), { env: e, args: ['--stop'] }));
   assertHookContract(await runHook('drain', {}, { env: e, args: ['--with-outcome', PROMPT_ID] }));
   await waitFor(() => server.countOf('POST', '/v2/control/outcome') >= 1, 5000);
@@ -261,7 +264,7 @@ test('two drains for the same turn send the same idempotency_key', async (t) => 
   assert.ok(keys[0].includes(PROMPT_ID), `key must be derived from the turn id: ${keys[0]}`);
 
   for (const call of server.calls('POST', '/v2/control/outcome')) {
-    assert.deepEqual(call.body.entry_ids, RECALLED, 'every retry carries the same attribution');
+    assert.deepEqual(call.body.entry_ids, ECHOED, 'every retry carries the same attribution');
     assert.equal(call.body.reference_id, 'global');
   }
 });
@@ -284,9 +287,11 @@ test('a standing lesson injected at session start reaches entry_ids, once', asyn
   const dataDir = makeDataDir();
   const e = env(dataDir, server);
 
-  assertHookContract(await runHook('session-start', { hook_event_name: 'SessionStart', source: 'startup' }, { env: e }));
+  assertHookContract(await runHook('session-start', { hook_event_name: 'SessionStart', source: 'startup', session_id: userPromptSubmit().session_id }, { env: e }));
 
-  // Turn one: the lesson id rides along with what recall found.
+  // Turn one: the lesson id rides along with what recall found. `stage-prompt` runs beside
+  // recall on every prompt, and its prompt row is what ties the standing set to this turn.
+  assertHookContract(await runHook('stage-prompt', userPromptSubmit(), { env: e }));
   assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: e }));
   const first = readJsonFile(turnPath(dataDir));
   assert.deepEqual(first.recalled, ['les_g1', ...RECALLED],
@@ -294,18 +299,22 @@ test('a standing lesson injected at session start reaches entry_ids, once', asyn
 
   // Turn two: already credited, so it is not reinforced a second time.
   const SECOND = 'p_second_prompt';
+  assertHookContract(await runHook('stage-prompt', userPromptSubmit({ prompt_id: SECOND }), { env: e }));
   assertHookContract(await runHook('prompt-recall',
     userPromptSubmit({ prompt_id: SECOND }), { env: e }));
   assert.deepEqual(readJsonFile(turnPath(dataDir, SECOND)).recalled, RECALLED,
     'one injection is one credit, not one per prompt');
 
-  // And it travels the rest of the loop as any other id does.
-  assertHookContract(await runHook('capture', stop(), { env: e, args: ['--stop'] }));
+  // And it travels the rest of the loop as any other id does: checked against the reply on
+  // its own, and credited when the reply used it.
+  assertHookContract(await runHook('capture', stop({
+    last_assistant_message: 'Run the migration before starting the server. The job stays queued until indexing completes.',
+  }), { env: e, args: ['--stop'] }));
   assertHookContract(await runHook('drain', {}, { env: e, args: ['--with-outcome', PROMPT_ID] }));
   await waitFor(() => server.countOf('POST', '/v2/control/outcome') >= 1, 5000);
 
   const body = server.lastCall('POST', '/v2/control/outcome').body;
-  assert.deepEqual(body.entry_ids, ['les_g1', ...RECALLED]);
+  assert.deepEqual([...body.entry_ids].sort(), ['les_g1', 'ref_lesson_1']);
 });
 
 // ---------------------------------------------------------------------------
@@ -426,9 +435,10 @@ async function turnCycle(e, server, promptId) {
   return outcomeFor(server, promptId);
 }
 
-// THE test. Both landings, same evidence, same reply, one scenario — because the whole
-// point is that the two turns must be read differently.
-test('a degraded repeat lands as unmeasured, not as "the model ignored it"', async (t) => {
+// Both landings, same evidence, same reply. The turn-level v1 signal still cannot see a pointer's
+// vocabulary, but the per-entry signal checks each repeat against the text it points at — the
+// model had that text in context — so an unrelated reply is a measured "none used" on both turns.
+test('a degraded repeat is measured per entry on the text it points at', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/query': { json: STICKY() } });
   t.after(() => server.close());
   const dir = makeDataDir();
@@ -459,14 +469,14 @@ test('a degraded repeat lands as unmeasured, not as "the model ignored it"', asy
     'an ABSENT `used` is what `lib/outcome.mjs` reads as unmeasured; a `false` here would '
     + 'be read as "the model ignored it" and is the whole failure this test exists to catch');
 
-  assert.notEqual(second.outcome, 'neutral',
-    'a degraded repeat must not file a neutral. Doing so would penalise — in reach, not in '
-    + 'score — precisely the memories relevant enough to keep surfacing');
-  assert.equal(second.outcome, 'success');
-  assert.equal(second.signal, 0.2, 'row 4 keeps the pre-signal behaviour unchanged');
-  assert.deepEqual(second.entry_ids, RECALLED,
-    'the entries stay attributed: degrading how a memory is rendered must not change '
-    + 'whether it can be reinforced');
+  assert.equal(t2.used_evidence.entry_method, 'memory-term-echo/v2-entry');
+  for (const ref of RECALLED) {
+    assert.equal(t2.used_evidence.entries[ref].used, false,
+      `${ref}: a pointer is checked on the full text it points at`);
+  }
+  assert.equal(second.outcome, 'neutral', 'nothing was used, and that is now a measurement');
+  assert.deepEqual(second.entry_ids, [],
+    'a neutral names no entries: an unrelated repeat earns no reinforcement, and no penalty');
 });
 
 // The concrete mechanism behind the row above, pinned on its own so a future change to the

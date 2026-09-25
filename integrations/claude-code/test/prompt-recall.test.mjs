@@ -1910,6 +1910,17 @@ test('outcome nudge: a block with handles asks for mubit_outcome with those ids'
     + 'helped or misled you with mubit_outcome, passing those ids.'));
 });
 
+test('outcome nudge: outcomeReview off keeps the ids but drops the sentence', async (t) => {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const r = await runHook('prompt-recall', userPromptSubmit(),
+    { env: env(makeDataDir(), server, { MUBIT_CC_OUTCOME_REVIEW: 'off' }) });
+  assertHookContract(r);
+  const ctx = r.json.hookSpecificOutput.additionalContext;
+  assert.ok(!ctx.includes('mubit_outcome'), ctx);
+  assert.match(ctx, /^- \[m[a-z2-9]{4}\] /m, 'the ids stay on the lines');
+});
+
 test('outcome nudge: a server-rendered block has no handles, so it carries no nudge', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
