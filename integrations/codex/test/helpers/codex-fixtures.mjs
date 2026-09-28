@@ -390,6 +390,27 @@ export function userPromptSubmit(over = {}) {
   };
 }
 
+/**
+ * `UserPromptSubmit` for a message typed while a turn is still running.
+ *
+ * Observed in the interactive TUI on codex-cli 0.154.0: the host fires `UserPromptSubmit`
+ * again, with the **running** turn's `turn_id`, and the turn still ends in a single `Stop`.
+ * Nothing else in the payload marks it as queued — it is key-for-key a fresh prompt — so the
+ * repeated `turn_id` is the only way a hook can tell. `codex exec` cannot type mid-turn, so
+ * `observed/payloads/UserPromptSubmit.queued.json` was recorded by hand.
+ *
+ * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
+ * as that recording, `userPromptSubmit()`'s `session_id` and `turn_id`, a different `prompt`,
+ * and `over` merged last like every other builder.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function queuedPrompt(over = {}) {
+  throw new Error('not implemented: queuedPrompt() — build it from '
+    + 'test/fixtures/observed/payloads/UserPromptSubmit.queued.json');
+}
+
 /** `PreToolUse`. Codex renames its shell tool to `Bash`, with Claude Code's exact shape. */
 export function preToolUse(over = {}) {
   return {
@@ -434,6 +455,25 @@ export function postToolUse(over = {}) {
     tool_use_id: TOOL_USE_ID,
     ...over,
   };
+}
+
+/**
+ * `PostToolUse` for a call to one of the plugin's own MCP tools.
+ *
+ * Observed on codex-cli 0.154.0: `tool_name` is `mcp__mubit__<tool>`, `tool_input` is the
+ * arguments verbatim, there is a `tool_use_id`, and `tool_response` is the MCP result
+ * **object** — `{content: [{type: 'text', text}]}` — where a shell call's is a bare string. A
+ * call that is declined, or fails approval, produces no `PostToolUse` at all.
+ *
+ * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
+ * as `observed/payloads/PostToolUse.mcp.json`, the same `tool_name`, and `over` merged last.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function mcpPostToolUse(over = {}) {
+  throw new Error('not implemented: mcpPostToolUse() — build it from '
+    + 'test/fixtures/observed/payloads/PostToolUse.mcp.json');
 }
 
 /**
@@ -493,6 +533,46 @@ export function stop(over = {}) {
     last_assistant_message: 'README.md says: "hello probe repo."',
     ...over,
   };
+}
+
+/**
+ * The `Stop` that follows a `Stop` answered with `{"decision":"block","reason":…}`.
+ *
+ * Observed on codex-cli 0.154.0: the model carries on in the **same** turn. The next `Stop`
+ * has `stop_hook_active: true`, the same `turn_id`, and a `last_assistant_message` holding only
+ * the continuation. No `UserPromptSubmit` fires for the reason, and the host puts no cap on how
+ * many times a hook may block.
+ *
+ * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
+ * as `observed/payloads/Stop.continuation.json`, `stop()`'s `session_id` and `turn_id`,
+ * `stop_hook_active: true`, a `last_assistant_message` other than `stop()`'s, and `over`
+ * merged last.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function stopContinuation(over = {}) {
+  throw new Error('not implemented: stopContinuation() — build it from '
+    + 'test/fixtures/observed/payloads/Stop.continuation.json');
+}
+
+/**
+ * `Interrupt` — what the host sends when the user presses Esc mid-turn.
+ *
+ * Observed in the interactive TUI on codex-cli 0.154.0: `Stop` does not fire for an
+ * interrupted turn; `Interrupt` does, carrying the running turn's `turn_id` and no reply.
+ * `hooks.json` does not register it, which is why it is not in `CODEX_EVENTS`. `codex exec`
+ * cannot press Esc, so `observed/payloads/Interrupt.json` was recorded by hand.
+ *
+ * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
+ * as that recording, `userPromptSubmit()`'s `session_id` and `turn_id`, and `over` merged last.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function interrupt(over = {}) {
+  throw new Error('not implemented: interrupt() — build it from '
+    + 'test/fixtures/observed/payloads/Interrupt.json');
 }
 
 /**
