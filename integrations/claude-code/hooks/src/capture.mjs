@@ -1264,7 +1264,8 @@ function noteOwnTool(cfg, payload) {
 
 /** @param {any} response @returns {boolean} an MCP result the server marked as an error */
 function resultIsError(response) {
-  return isObject(response) && response.isError === true;
+  const result = typeof response === 'string' ? attempt(() => JSON.parse(response), null) : response;
+  return isObject(result) && result.isError === true;
 }
 
 /**
