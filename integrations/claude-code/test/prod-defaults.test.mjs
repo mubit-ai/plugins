@@ -29,17 +29,18 @@ const PROD_CONSOLE = 'https://console.mubit.ai';
 const PROD_ENDPOINT = 'https://api.mubit.ai';
 
 /**
- * Hostname shapes that mean "not production": the dev console, and any `*.dev.mubit.ai`
- * cluster host. The EU production hosts (`api.eu.mubit.ai`) are fine and deliberately
- * not matched — this is about environments, not regions.
+ * Every Mubit hostname a shipped artifact may name. Anything else under the domain is some
+ * other environment, and names a place a user's install must never talk to.
  *
  * Anchored on the literal, with the host prefix recovered afterwards: a leading
  * `[a-z0-9.-]*` turns quadratic over a megabytes-long base64 line, and the sourcemap
  * payloads here are exactly that.
  */
-const NON_PROD = /console\.dev\.|\.dev\.mubit\.ai/gi;
+const PROD_HOSTS = new Set(['mubit.ai', 'api.mubit.ai', 'console.mubit.ai', 'docs.mubit.ai',
+  'grpc.api.mubit.ai']);
+const MUBIT_DOMAIN = /mubit\.ai\b/gi;
 
-/** The full hostname around a NON_PROD hit, for a finding someone can read. */
+/** The full hostname around a domain hit, for a finding someone can read. */
 function hostAround(text, index) {
   let start = index;
   while (start > 0 && /[a-z0-9.-]/i.test(text[start - 1])) start -= 1;
@@ -120,8 +121,9 @@ test('no shipped artifact names a non-production cluster, sourcemaps included', 
       if (/\.(png|jpg|gif|ico|woff2?)$/.test(path)) continue;
       for (const { label, text } of scannableTexts(path)) {
         scanned += 1;
-        for (const m of text.matchAll(NON_PROD)) {
-          findings.push(`${label}: ${hostAround(text, m.index ?? 0)}`);
+        for (const m of text.matchAll(MUBIT_DOMAIN)) {
+          const host = hostAround(text, m.index ?? 0).toLowerCase().replace(/^[.-]+|[.-]+$/g, '');
+          if (!PROD_HOSTS.has(host)) findings.push(`${label}: ${host}`);
         }
       }
     }
