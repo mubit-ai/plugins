@@ -236,7 +236,7 @@ test('the injected preamble never becomes a prompt', async (t) => {
 // the case that proves the artifact a user runs, not just the shared source, skips it.
 const STOP_REVIEW = 'Before you finish: say which of the lessons in context helped.';
 
-test('Stop-hook feedback in a rollout never becomes a prompt', { todo: 'needs the #25 rebuild' }, async (t) => {
+test('Stop-hook feedback in a rollout never becomes a prompt', async (t) => {
   const { server, run } = await harness(t, {
     extra: [
       { type: 'response_item', payload: { type: 'message', id: 'msg_1', role: 'user',
@@ -297,7 +297,7 @@ test('the approval reviewer\'s thread contributes nothing, even under --all', as
   const r = await run(['--send', '--all', '--json']);
   assert.equal(r.code, 0, r.err);
   const items = server.calls('POST', '/v2/control/ingest').flatMap((c) => c.body.items);
-  // § `--all`, so scope cannot be what excluded it: the reviewer's thread is skipped for what
+  // `--all`, so scope cannot be what excluded it: the reviewer's thread is skipped for what
   //   it is, not where it ran. Its prompts are other threads' transcripts, and importing them
   //   would file every reviewed session twice under a reviewer's words.
   assert.ok(!items.some((i) => i.item_id === 'cc-exec-reviewer'),
