@@ -30,6 +30,17 @@
  * means to keep, it has to read before the remove and write back after the add. And a tools
  * table with no `[mcp_servers.mubit]` beside it fails the whole file ("invalid transport"),
  * so none is written when the registration did not land.
+ *
+ * The section after it holds two promises the approval step rests on. Every setting the user
+ * wrote is still theirs after a run, however TOML lets them write it: an `approval_mode` under
+ * a quoted key, a decision made inline or as a dotted key inside `[mcp_servers.mubit]`, a
+ * table in a CRLF file with a comment on its header, and the server's own settings such as
+ * `startup_timeout_sec`, which `codex mcp remove` deletes along with the rest of the table.
+ * And the file is always one the host loads: a failed `codex mcp add` puts back the file as
+ * it was, and a write the host refuses is undone, reported, and ends the run with exit 1.
+ * What setup prints about the two tools matches what it did ("already approved", "kept"), and
+ * the first `config.toml.before-mubit` is never overwritten by a later run. Those tests read
+ * the result through the host's own `config/read`, which parses the file the way Codex will.
  */
 
 import test from 'node:test';
@@ -798,6 +809,383 @@ test('--no-trust leaves existing approvals exactly as it found them', needsCodex
     + `user's earlier yes to the two tools and their own setting for mubit_recall alike:\n${after}`);
   const loaded = hostLoads(home);
   assert.ok(loaded.ok, `Codex cannot load the config.toml setup left:\n${loaded.said}`);
+});
+
+// ===========================================================================
+// Every user setting survives, and the file always loads
+// ===========================================================================
+
+/**
+ * The `mubit` server as the host reads it: `config/read` over `codex app-server`, the channel
+ * the trust step already drives, which answers with the parsed, effective config. An
+ * `approval_mode` written as a quoted key, a dotted key or an inline table reads the same here
+ * as one written as a table, which no line-based reading of the file can promise. `ok` is
+ * false when the host refuses the file, and `said` carries its reason.
+ *
+ * @param {string} home
+ * @returns {Promise<{ok: boolean, said: string, mubit: Record<string, any>|null}>}
+ */
+function hostView(home) {
+  return new Promise((res) => {
+    const child = spawn('codex', ['app-server'], {
+      cwd: home, env: { ...process.env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    let buf = '';
+    let settled = false;
+    /** @param {{ok: boolean, said: string, mubit: Record<string, any>|null}} v */
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      res(v);
+    };
+    const timer = setTimeout(() => done({ ok: false, said: '`codex app-server` never answered config/read', mubit: null }), 30000);
+    const send = (m) => child.stdin.write(`${JSON.stringify(m)}\n`);
+    child.stdin.on('error', () => { /* the host exited first; `done` has the answer or the timeout */ });
+    child.on('error', (e) => done({ ok: false, said: String(e), mubit: null }));
+    child.stdout.on('data', (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        let m;
+        try { m = JSON.parse(line); } catch { continue; }
+        if (m.id === 1) {
+          send({ jsonrpc: '2.0', method: 'initialized', params: {} });
+          send({ jsonrpc: '2.0', id: 2, method: 'config/read', params: {} });
+        } else if (m.id === 2) {
+          done(m.error ? { ok: false, said: String(m.error.message), mubit: null }
+            : { ok: true, said: '', mubit: m.result?.config?.mcp_servers?.mubit ?? null });
+        }
+      }
+    });
+    send({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { clientInfo: { name: 'mubit-setup-test', title: 'mubit-setup-test', version: '1' } },
+    });
+  });
+}
+
+/**
+ * One tool's `approval_mode` as the host reads it, or `null` when the host sees none.
+ *
+ * @param {{mubit: Record<string, any>|null}} view
+ * @param {string} tool
+ */
+const hostApproval = (view, tool) => view.mubit?.tools?.[tool]?.approval_mode ?? null;
+
+/** Everything setup printed, both streams. */
+const printed = (r) => `${r.stdout}\n${r.stderr}`;
+
+/**
+ * The printed lines that name `tool`.
+ *
+ * @param {string} text
+ * @param {string} tool
+ */
+const linesNaming = (text, tool) => text.split('\n').filter((l) => new RegExp(`\\b${tool}\\b`).test(l));
+
+/** `[mcp_servers.mubit]` as an earlier install left it, one key/value line per entry. */
+const OLD_SERVER_LINES = OLD_REGISTRATION.split('\n').filter(Boolean);
+
+test('an approval_mode the user wrote as a quoted key is theirs, and is not written twice', needsCodex, async () => {
+  // `"approval_mode" = "prompt"` is the same key as `approval_mode = "prompt"`; TOML only
+  // spells it differently. Appending an unquoted `approval_mode = "approve"` beside it defines
+  // the key twice, and the host refuses the whole file ("duplicate key"): Codex does not start.
+  for (const key of ['"approval_mode"', "'approval_mode'"]) {
+    const before = [
+      'model = "gpt-5.6-sol"',
+      '',
+      OLD_REGISTRATION,
+      '[mcp_servers.mubit.tools.mubit_outcome]',
+      `${key} = "prompt"`,
+      '',
+    ].join('\n');
+    const home = makeHome({ 'config.toml': before });
+    const r = await runSetup(home);
+    const after = readToml(home);
+    const seen = await hostView(home);
+    assert.ok(seen.ok,
+      `with ${key} on mubit_outcome, Codex cannot load the config.toml setup left, so it does not `
+      + `start. A second approval_mode beside the user's quoted one is a duplicate key:\n${seen.said}\n${after}`);
+    assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+    assert.equal(hostApproval(seen, 'mubit_outcome'), 'prompt',
+      `the host no longer reads the user's ${key} = "prompt" on mubit_outcome, so setup took back a `
+      + `decision the user had made:\n${after}`);
+    assert.equal(hostApproval(seen, 'mubit_learned'), APPROVAL.value,
+      `mubit_learned, which the user left unset, was not approved, so the review prompts every turn:\n${after}`);
+    const keys = tables(after)
+      .filter((t) => { const m = TOOL_HEADER.exec(t.header); return m && unquote(m[1]) === 'mubit' && unquote(m[2]) === 'mubit_outcome'; })
+      .flatMap((t) => t.body)
+      .filter((l) => /^(?:approval_mode|"approval_mode"|'approval_mode')\s*=/.test(l));
+    assert.equal(keys.length, 1,
+      `mubit_outcome carries ${keys.length} approval_mode keys after setup; the user wrote one, and `
+      + `setup must add none:\n${after}`);
+  }
+});
+
+test('a config.toml the host will not load is never left behind: setup puts it back, says so, and exits 1', needsCodex, async () => {
+  // The last-resort guard. Setup edits the user's config.toml line by line, and some valid TOML
+  // defeats that: here a multi-line array inside a mubit tools table, one of whose lines starts
+  // with `[` and so reads as a table header. Whatever setup writes, a file the host refuses
+  // means Codex does not start at all, so setup checks the file loads after its write, puts
+  // back the text it had before that write when it does not, says so, and exits 1: the tools
+  // were not set up as asked, and a caller that reads 0 as done would say they were.
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    OLD_REGISTRATION,
+    '[mcp_servers.mubit.tools.mubit_outcome]',
+    'approval_mode = "prompt"',
+    'note = [',
+    '  "why I ask first",',
+    '["see", "the thread"],',
+    ']',
+    '',
+  ].join('\n');
+  const was = await hostView(makeHome({ 'config.toml': before }));
+  assert.ok(was.ok, `the input itself does not load, so this test proves nothing:\n${was.said}`);
+
+  const home = makeHome({ 'config.toml': before });
+  const r = await runSetup(home);
+  const after = readToml(home);
+  const seen = await hostView(home);
+  assert.ok(seen.ok,
+    'setup left a config.toml Codex refuses to load, so Codex does not start and the user has to '
+    + `find the broken line by hand:\n${seen.said}\n${after}`);
+  assert.ok(seen.mubit, `the mubit server is gone from the config.toml setup put back, so Codex starts with no Mubit tools:\n${after}`);
+  assert.equal(r.code, 1,
+    `setup put config.toml back and exited ${r.code}. The approvals it was run for were not written, `
+    + `so anything reading its status as success tells the user they were:\n${r.stdout}\n${r.stderr}`);
+  assert.match(printed(r), /config\.toml/,
+    `setup did not name config.toml when it put the file back, so the user cannot tell which file changed:\n${printed(r)}`);
+  assert.match(printed(r), /\b(?:restor(?:e|ed|ing)|put(?:s|ting)? back)\b/i,
+    `setup put config.toml back without saying so, so the user believes the approvals landed:\n${printed(r)}`);
+  assert.match(after, /^model = "gpt-5\.6-sol"$/m, `putting the file back cost the user their own model setting:\n${after}`);
+  assert.notEqual(hostApproval(seen, 'mubit_outcome'), APPROVAL.value,
+    `mubit_outcome is approved over the user's "prompt", so it runs unasked though they asked to be asked:\n${after}`);
+  assert.equal(readFileSync(join(home, 'config.toml.before-mubit'), 'utf8'), before,
+    'config.toml.before-mubit does not hold the file as the user had it, and it is the only copy '
+    + 'of the table setup could not carry: restoring it would not bring that table back.');
+});
+
+test('a failed registration leaves config.toml exactly as it was, and says the registration is unchanged', needsCodex, async () => {
+  // `codex mcp remove` runs before `codex mcp add`, so an add that fails has already cost the
+  // user their registration, their tools tables and their other server settings. Setup has the
+  // text it read before the remove; putting it back is the whole of the answer. The file is
+  // then byte-for-byte the user's, and the output says the registration was left unchanged
+  // rather than letting the user find a missing server at the next session.
+  const before = [
+    '# mine',
+    'model = "gpt-5.6-sol"',
+    '',
+    ...OLD_SERVER_LINES,
+    'startup_timeout_sec = 30',
+    '',
+    '[mcp_servers.mubit.tools.mubit_recall]',
+    'approval_mode = "prompt"',
+    '',
+    '[mcp_servers.mubit.tools.mubit_outcome]',
+    'approval_mode = "approve"',
+    '',
+  ].join('\n');
+  const was = await hostView(makeHome({ 'config.toml': before }));
+  assert.ok(was.ok && was.mubit, `the input itself does not load, so this test proves nothing:\n${was.said}`);
+
+  // --no-trust: nothing else writes to config.toml, so the file must come back byte-identical.
+  const home = makeHome({ 'config.toml': before });
+  const r = await runSetup(home, ['--no-trust'], codexWhoseAddFails());
+  assert.equal(readToml(home), before,
+    'the failed `codex mcp add` left config.toml changed. Setup`s own `codex mcp remove` took the '
+    + 'registration, the user`s tools tables and startup_timeout_sec, and nothing put them back, so '
+    + 'the next Codex session starts with no Mubit server at all.');
+  assert.match(printed(r), /\bunchanged\b/i,
+    'setup did not say the registration was left unchanged after the add failed, so the user '
+    + `cannot tell whether Codex still has a Mubit server:\n${printed(r)}`);
+  assert.equal(readFileSync(join(home, 'config.toml.before-mubit'), 'utf8'), before,
+    'config.toml.before-mubit does not hold the file as the user had it, so restoring it does not undo setup.');
+
+  // A normal run: the trust step still adds its tables after the failure, but the server the
+  // host reads is the one the user had, tools tables and timeout included.
+  const trusted = makeHome({ 'config.toml': before });
+  await runSetup(trusted, [], codexWhoseAddFails());
+  const seen = await hostView(trusted);
+  assert.ok(seen.ok, `Codex cannot load the config.toml a failed add left:\n${seen.said}\n${readToml(trusted)}`);
+  assert.deepEqual(seen.mubit, was.mubit,
+    'after a failed add, the mubit server the host reads is not the one the user had, so the failure '
+    + `cost them their registration or their settings on it:\n${readToml(trusted)}`);
+});
+
+test('the first config.toml backup is the one kept: no later run overwrites it', needsCodex, async () => {
+  // `config.toml.before-mubit` is what a user restores to undo setup. A run that overwrites it
+  // replaces the file as the user had it with whatever the previous run left, and after a
+  // failed run that is a file with the registration missing: the original is then gone for
+  // good. So the first backup wins, across failed and successful runs alike.
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    OLD_REGISTRATION,
+    '[mcp_servers.mubit.tools.mubit_recall]',
+    'approval_mode = "prompt"',
+    '',
+  ].join('\n');
+  const home = makeHome({ 'config.toml': before });
+  const backup = join(home, 'config.toml.before-mubit');
+  const runs = [
+    { label: 'a failed add', env: codexWhoseAddFails() },
+    { label: 'a second failed add', env: codexWhoseAddFails() },
+    { label: 'a successful run', env: {} },
+    { label: 'a second successful run', env: {} },
+  ];
+  for (const run of runs) {
+    await runSetup(home, ['--no-trust'], run.env);
+    assert.ok(existsSync(backup), `no config.toml.before-mubit after ${run.label}, so there is nothing to undo setup from`);
+    assert.equal(readFileSync(backup, 'utf8'), before,
+      `${run.label} overwrote config.toml.before-mubit, so the file as the user had it before setup `
+      + `is gone:\n${readFileSync(backup, 'utf8')}`);
+  }
+  assert.notEqual(readToml(home), before,
+    'config.toml is still the original after two successful runs, so the backup checks above could '
+    + 'not have seen an overwrite.');
+});
+
+test('an approval the user set inline or as a dotted key under [mcp_servers.mubit] is theirs', needsCodex, async () => {
+  // `[mcp_servers.mubit.tools.<tool>]` is one of three ways to write a tool's approval. The
+  // other two live inside `[mcp_servers.mubit]` itself, and a `[mcp_servers.mubit.tools.<tool>]`
+  // table beside either defines the tool twice: the host refuses the file and Codex does not
+  // start. Setup writes no approval for a tool the user decided about in either form, leaves
+  // the decision standing, and prints a warning naming the tool.
+  const cases = [
+    { form: 'an inline table', line: 'tools = { mubit_outcome = { approval_mode = "prompt" } }' },
+    { form: 'a dotted key', line: 'tools.mubit_outcome.approval_mode = "prompt"' },
+  ];
+  for (const c of cases) {
+    const before = ['model = "gpt-5.6-sol"', '', ...OLD_SERVER_LINES, c.line, ''].join('\n');
+    const was = await hostView(makeHome({ 'config.toml': before }));
+    assert.equal(hostApproval(was, 'mubit_outcome'), 'prompt',
+      `${c.form}: the host does not read the input as "prompt", so this case proves nothing:\n${was.said}`);
+
+    const home = makeHome({ 'config.toml': before });
+    const r = await runSetup(home);
+    const after = readToml(home);
+    const seen = await hostView(home);
+    assert.ok(seen.ok,
+      `${c.form}: Codex cannot load the config.toml setup left, so it does not start:\n${seen.said}\n${after}`);
+    assert.equal(hostApproval(seen, 'mubit_outcome'), 'prompt',
+      `${c.form}: the host reads mubit_outcome as ${JSON.stringify(hostApproval(seen, 'mubit_outcome'))}, `
+      + `not the "prompt" the user set, so setup overrode or dropped a decision the user had made:\n${after}`);
+    assert.ok(linesNaming(printed(r), 'mubit_outcome').some((l) => /warn/i.test(l)),
+      `${c.form}: setup printed no warning naming mubit_outcome, so the user is not told the tool `
+      + `was left out of the approvals:\n${printed(r)}`);
+  }
+});
+
+test('a CRLF config.toml with a comment on the tools header: the user`s value is recognised and kept, with and without --no-trust', needsCodex, async () => {
+  // A file saved on Windows ends each line with `\r\n`, and a header may carry a comment. Both
+  // are valid TOML. Setup has to recognise the user's table in that file before its own
+  // `codex mcp remove` takes it, or the value is gone: a normal run then approves the tool
+  // over the user's "prompt", and `--no-trust` drops it while saying it kept it.
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    ...OLD_SERVER_LINES,
+    '',
+    '[mcp_servers.mubit.tools.mubit_outcome] # mine',
+    'approval_mode = "prompt"',
+    '',
+  ].join('\r\n');
+  const was = await hostView(makeHome({ 'config.toml': before }));
+  assert.equal(hostApproval(was, 'mubit_outcome'), 'prompt', `the input does not load as "prompt":\n${was.said}`);
+
+  for (const args of [[], ['--no-trust']]) {
+    const flag = args.length ? '--no-trust' : 'a normal run';
+    const home = makeHome({ 'config.toml': before });
+    const r = await runSetup(home, args);
+    const after = readToml(home);
+    const seen = await hostView(home);
+    assert.ok(seen.ok, `${flag}: Codex cannot load the config.toml setup left:\n${seen.said}\n${after}`);
+    assert.equal(r.code, 0, `${flag}: setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+    assert.equal(hostApproval(seen, 'mubit_outcome'), 'prompt',
+      `${flag}: the host reads mubit_outcome as ${JSON.stringify(hostApproval(seen, 'mubit_outcome'))}, `
+      + `so the user's "prompt" in a CRLF file with a commented header was not recognised, and was `
+      + `lost or overwritten:\n${JSON.stringify(after)}\n${r.stdout}`);
+    if (!args.length) {
+      assert.ok(linesNaming(printed(r), 'mubit_outcome').some((l) => /\bkept\b/i.test(l)),
+        `setup did not report the user's approval_mode on mubit_outcome as kept, so the user cannot tell it was seen:\n${r.stdout}`);
+    }
+  }
+});
+
+test('what setup says matches what it did: "already approved" on a re-run, "kept" for the user`s own value', needsCodex, async () => {
+  // Setup reports each of the two tools. A tool whose approval_mode is already "approve" is
+  // already approved: telling the user setup "kept the approval_mode you set" credits them
+  // with a setting setup itself wrote on the last run. A value of their own that is not
+  // "approve" is theirs, and is reported as kept.
+  const home = makeHome();
+  const first = await runSetup(home);
+  assert.equal(first.code, 0, `run 1 exited ${first.code}:\n${first.stdout}\n${first.stderr}`);
+  const again = await runSetup(home);
+  assert.equal(again.code, 0, `run 2 exited ${again.code}:\n${again.stdout}\n${again.stderr}`);
+  for (const tool of APPROVAL.tools) {
+    const lines = linesNaming(printed(again), tool);
+    assert.ok(lines.some((l) => /\balready approved\b/i.test(l)),
+      `the re-run did not say ${tool} was already approved, so the user cannot tell the approval is in place:\n${again.stdout}`);
+    assert.ok(!lines.some((l) => /\bkept\b/i.test(l)),
+      `the re-run told the user it kept an approval_mode they set on ${tool}, which setup itself `
+      + `wrote on the last run:\n${again.stdout}`);
+  }
+
+  const theirs = makeHome({
+    'config.toml': [OLD_REGISTRATION, '[mcp_servers.mubit.tools.mubit_outcome]', 'approval_mode = "prompt"', ''].join('\n'),
+  });
+  for (let i = 0; i < 2; i++) {
+    const r = await runSetup(theirs);
+    assert.equal(r.code, 0, `run ${i + 1} exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+    const outcome = linesNaming(printed(r), 'mubit_outcome');
+    assert.ok(outcome.some((l) => /\bkept\b/i.test(l)),
+      `run ${i + 1} did not report the user's own approval_mode on mubit_outcome as kept, so the user `
+      + `cannot tell setup saw their setting:\n${r.stdout}`);
+    assert.ok(!outcome.some((l) => /\balready approved\b/i.test(l)),
+      `run ${i + 1} called mubit_outcome already approved, but the user set it to "prompt", so the report `
+      + `contradicts the file:\n${r.stdout}`);
+    assert.ok(linesNaming(printed(r), 'mubit_learned').some((l) => /\bapproved\b/i.test(l)),
+      `run ${i + 1} did not report mubit_learned as approved, so an approval setup holds goes unmentioned:\n${r.stdout}`);
+  }
+});
+
+test('the user`s other settings on [mcp_servers.mubit] survive setup', needsCodex, async () => {
+  // `codex mcp remove` deletes the whole server table and `codex mcp add` writes back only
+  // `command`, `args` and `env`. A user who raised `startup_timeout_sec` for a slow start, or
+  // `tool_timeout_sec` for a long recall, set it on this table, and setup re-registering the
+  // server is no reason for it to go. They are saved before the remove and put back after the
+  // add, the way the tools tables are, on every run and under `--no-trust` alike.
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    ...OLD_SERVER_LINES,
+    'startup_timeout_sec = 30',
+    'tool_timeout_sec = 120',
+    '',
+  ].join('\n');
+  const home = makeHome({ 'config.toml': before });
+  for (const args of [[], [], ['--no-trust']]) {
+    const r = await runSetup(home, args);
+    const after = readToml(home);
+    const seen = await hostView(home);
+    const run = args.length ? 'the --no-trust re-run' : 'a normal run';
+    assert.ok(seen.ok, `${run}: Codex cannot load the config.toml setup left:\n${seen.said}\n${after}`);
+    assert.equal(r.code, 0, `${run}: setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+    assert.deepEqual(seen.mubit?.args, [join(CODEX_ROOT, 'mcp/dist/index.js')],
+      `${run}: the server was not re-registered at this install's path, so Codex launches some other server:\n${after}`);
+    assert.equal(seen.mubit?.startup_timeout_sec, 30,
+      `${run}: the user's startup_timeout_sec on [mcp_servers.mubit] is gone, so a slow server start `
+      + `times out again after setup:\n${after}`);
+    assert.equal(seen.mubit?.tool_timeout_sec, 120,
+      `${run}: the user's tool_timeout_sec on [mcp_servers.mubit] is gone, so a long call times out at the `
+      + `host default again:\n${after}`);
+  }
 });
 
 // ===========================================================================

@@ -36,8 +36,8 @@
  *     sentence existed, because that host already gets it from the MCP instructions, and the
  *     same holds for its three no-memory blocks, which keep the slash form.
  *
- * The wording is the implementer's. These tests pin the facts the sentence has to carry (a
- * bracketed id, `entry_ids`, `mubit_outcome`), not its prose.
+ * These tests pin the facts the sentence has to carry (a bracketed id, `entry_ids`,
+ * `mubit_outcome`), not its prose, so the wording can change without a test changing.
  *
  * `MUBIT_CC_OUTCOME_REVIEW` is set explicitly in every case but one, because the Codex default
  * for it is due to move from `nudge` to `stop`, and a test that leant on the default would
