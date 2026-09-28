@@ -541,6 +541,11 @@ function steerBlock(cfg, runId, lessons, anchor = '', partial = false) {
       'Save what you learn with mubit_learned, and credit what helped with mubit_outcome. '
         + `${skill('remember')} and ${skill('recall')} are the explicit forms.`,
     );
+    // With capture off no session log is written to resolve an id back to its entry.
+    if (cfg.capture && cfg.outcomeReview !== 'off') {
+      lines.push('Each memory line starts with a short id in brackets, like [m7k2q]: pass it in '
+        + 'entry_ids of mubit_outcome to credit or fault that entry.');
+    }
   }
   if (anchor) {
     lines.push('', '## Compacted context',
