@@ -12,7 +12,7 @@
  *   - the ladder, one test per rung, each proving its rung wins once the rungs above it
  *     are gone. A rung that quietly never fires is a rung that is not there.
  *   - `${dataDir}/actor.json`: hit, miss, and a record past its 30-day TTL.
- *   - totality (§4.9). No `git` on PATH, a directory that is not a repo, a data dir that
+ *   - totality. No `git` on PATH, a directory that is not a repo, a data dir that
  *     cannot be read or written: every one of them is `''`, and none of them throws. The
  *     callers are `capture` (every tool call) and `drain`; neither may ever fail for this.
  *

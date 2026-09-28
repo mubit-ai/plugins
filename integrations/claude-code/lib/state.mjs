@@ -13,7 +13,7 @@
  *      for a process that is about to exit, and removes an entire class of
  *      "process exited before the write landed" bugs.
  *   3. Nothing here throws. Every caller is on a hook's critical path, and a
- *      memory layer has no business breaking a prompt (§4.9).
+ *      memory layer has no business breaking a prompt.
  */
 
 import {
@@ -28,7 +28,7 @@ const MIN = 60 * SEC;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
-/** §7: pruning runs at most hourly, gated by an O_EXCL marker at `prune.lock`. */
+/** Pruning runs at most hourly, gated by an O_EXCL marker at `prune.lock`. */
 const PRUNE_INTERVAL_MS = HOUR;
 
 /** This plugin's data directory, and the prefix every suffixed variant of it shares. */
@@ -204,7 +204,7 @@ export function resolveDataDir(cfg = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.8: never throws. A truncated, empty, binary or absent file is normal after
+ * Never throws. A truncated, empty, binary or absent file is normal after
  * a SIGKILL and yields the fallback.
  * @param {string} p
  * @param {any} [fallback]
@@ -222,7 +222,7 @@ export function readJson(p, fallback = null) {
 }
 
 /**
- * §4.8: write `<p>.tmp-<pid>`, then rename. `rename(2)` is atomic within a
+ * Write `<p>.tmp-<pid>`, then rename. `rename(2)` is atomic within a
  * filesystem, so a concurrent reader — `bin/statusline.mjs` runs every frame —
  * sees either the whole old file or the whole new one, never a partial.
  *
@@ -410,7 +410,7 @@ export function pruneStale(cfg = {}) {
       }
     }
   } catch {
-    // §12.1: an unusable DATA dir costs the sweep, nothing else.
+    // An unusable DATA dir costs the sweep, nothing else.
   }
 }
 

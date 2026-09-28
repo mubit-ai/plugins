@@ -49,7 +49,7 @@
  *
  *   1. Zero dependencies, Node >= 20 built-ins only, no import outside `lib/`.
  *   2. Everything is synchronous. A hook process is about to exit.
- *   3. Nothing throws. Losing this file costs one un-briefed session, never a prompt (§4.9).
+ *   3. Nothing throws. Losing this file costs one un-briefed session, never a prompt.
  */
 
 import { unlinkSync } from 'node:fs';
@@ -90,7 +90,7 @@ export const RESUME_TTL_MS = 30 * 60 * 1000;
  */
 
 /**
- * §7: `runs/<run_id>/resume.json`, or `''` when the run id leaves no usable path segment.
+ * `runs/<run_id>/resume.json`, or `''` when the run id leaves no usable path segment.
  *
  * A run id can be pinned by hand in a settings file or an environment variable, so it is
  * untrusted input to a path — the same rule `lib/state.mjs` applies everywhere. An empty
@@ -221,7 +221,7 @@ export function writeResume(cfg, runId, outcome, meta = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Drop an un-injected briefing — the compaction reset (§5.6), shared with `clearCarry`.
+ * Drop an un-injected briefing — the compaction reset, shared with `clearCarry`.
  *
  * A compaction means the conversation the model can read has been rewritten, and the briefing
  * is about a session that no longer exists in the window in the form it described.

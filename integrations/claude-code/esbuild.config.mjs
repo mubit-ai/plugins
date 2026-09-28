@@ -2,7 +2,7 @@
 //
 // Everything Claude Code executes is a bundled, dependency-free .mjs: `node <path>` on a
 // single file is a ~30 ms cold start, where `npx` or a TS loader would cost ~500 ms on
-// every PostToolUse (§11.4). The output lives in git (§11.3), so the settings that make
+// every PostToolUse. The output lives in git, so the settings that make
 // the build byte-reproducible — minify: false, sourcemap: 'inline' — are pinned here
 // rather than left to esbuild's defaults; CI rebuilds and runs `git diff --exit-code`.
 
@@ -53,7 +53,7 @@ const shared = {
 const HOOKS = ['session-start','cwd-changed','prompt-recall','stage-prompt','pre-tool','subagent-start','capture','checkpoint','session-end','drain','recall-refresh','session-resume'];
 
 /**
- * The bundled @mubit-ai/mcp server (§8.3) — the **in-repo** package, not the registry copy.
+ * The bundled @mubit-ai/mcp server — the **in-repo** package, not the registry copy.
  *
  * This used to read `node_modules/@mubit-ai/mcp/dist/index.js`, which resolved to whatever
  * npm had installed for `"@mubit-ai/mcp": "^0.8.0"`. The §8.1 allowlist patch landed after

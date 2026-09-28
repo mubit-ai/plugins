@@ -11,7 +11,7 @@
  * Budgets: PreCompact 5000 ms internal / 10 s hook timeout — the one place blocking is
  * justified, because after compaction the content is gone. PostCompact 800 ms, no network.
  *
- * Tests pin the run id with the `static` strategy (§6.1) so state paths under
+ * Tests pin the run id with the `static` strategy so state paths under
  * `runs/<run_id>/` are known before the hook runs and can be seeded.
  */
 
@@ -86,8 +86,8 @@ const preCompactPayload = (transcriptPath, over = {}) =>
 // --pre
 // ---------------------------------------------------------------------------
 
-// §5.6 — the PreCompact request body, verbatim. `run_id` is the only mandatory field
-// on a `POST /v2/control/checkpoint` body (§1.3), but the label is what makes the anchor findable.
+// The PreCompact request body, verbatim. `run_id` is the only mandatory field
+// on a `POST /v2/control/checkpoint` body, but the label is what makes the anchor findable.
 test('--pre posts /v2/control/checkpoint with run_id, agent_id, label, snapshot and metadata', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -145,7 +145,7 @@ test('--pre redacts the transcript and bounds the snapshot to the last 200 KB', 
     'the snapshot must be the last 200 KB, not the first');
 });
 
-// §7 — `runs/<run_id>/checkpoints.json` keeps the last 10, so a long session's anchors
+// `runs/<run_id>/checkpoints.json` keeps the last 10, so a long session's anchors
 // do not grow without bound and the newest is always findable by PostCompact.
 test('--pre persists {checkpoint_id, token_estimate, at} to checkpoints.json', async (t) => {
   const server = await fakeMubit();
@@ -165,7 +165,7 @@ test('--pre persists {checkpoint_id, token_estimate, at} to checkpoints.json', a
   assert.ok(list[0].at >= before, 'entry carries the time it was taken');
 });
 
-// §7 — "Last 10". 12 seeded + 1 new must leave exactly 10, oldest evicted.
+// "Last 10". 12 seeded + 1 new must leave exactly 10, oldest evicted.
 test('--pre keeps only the last 10 checkpoints', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -193,7 +193,7 @@ test('--pre keeps only the last 10 checkpoints', async (t) => {
   assert.ok(n >= 2, `label counter did not advance past prior checkpoints, got ${n}`);
 });
 
-// §5.6 step 5 — the spooled `checkpoint`-intent item is the belt to the checkpoint call's
+// The spooled `checkpoint`-intent item is the belt to the checkpoint call's
 // braces: it goes through the normal ingest path, so the anchor survives even when the
 // dedicated endpoint fails. §1.5: intent is always set, or the server pays an LLM call.
 test('--pre spools a checkpoint-intent item even when the checkpoint POST 500s', async (t) => {
@@ -210,8 +210,8 @@ test('--pre spools a checkpoint-intent item even when the checkpoint POST 500s',
   assert.equal(spooled.length, 1, 'the summary item must be spooled regardless of the HTTP result');
   const item = readJsonFile(spooled[0]);
   assert.equal(item.intent, 'checkpoint');
-  assert.ok(item.item_id, 'item_id is required (§1.3)');
-  assert.ok(item.content_type, 'content_type is required (§1.3)');
+  assert.ok(item.item_id, 'item_id is required');
+  assert.ok(item.content_type, 'content_type is required');
   assert.ok(!JSON.stringify(item).includes(fx.SECRETS.mubitKey), 'the spooled item is redacted too');
 });
 
@@ -255,7 +255,7 @@ test('--pre omits the actor key entirely when no actor is known', async (t) => {
   assert.ok(!('actor' in meta), `expected no actor key at all, got ${JSON.stringify(meta.actor)}`);
 });
 
-// §5.6 — PreCompact stdout carries the id so the user can find the anchor later.
+// PreCompact stdout carries the id so the user can find the anchor later.
 test('--pre stdout carries the checkpoint id in systemMessage', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -272,7 +272,7 @@ test('--pre stdout carries the checkpoint id in systemMessage', async (t) => {
 });
 
 // §5.6 "Failure" — the ONE failure the user is shown, because it is the only one that
-// loses data permanently: after compaction the context is gone. Still exit 0 (§4.9).
+// loses data permanently: after compaction the context is gone. Still exit 0.
 test('--pre failure emits the exact checkpoint-failed systemMessage and exits 0', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/checkpoint': { status: 500, json: { error: 'boom' } } });
   t.after(() => server.close());
@@ -294,7 +294,7 @@ test('--pre failure emits the exact checkpoint-failed systemMessage and exits 0'
 // --post
 // ---------------------------------------------------------------------------
 
-// §5.6 — `--post` reads `checkpoints.json` and dials nothing; 800 ms is not a network budget.
+// `--post` reads `checkpoints.json` and dials nothing; 800 ms is not a network budget.
 //
 // It also injects NOTHING, and that is the fix rather than a regression: `PostCompact` is not
 // a `hookSpecificOutput.hookEventName` Claude Code accepts, so the re-anchor this hook used to
@@ -322,7 +322,7 @@ test('--post reads the stored checkpoint, dials nothing, and injects nothing', a
     `--post has nothing the host will accept, so it says nothing; got:\n${JSON.stringify(r.json)}`);
 });
 
-// §5.6 — with nothing stored there is nothing to anchor to, and the answer is the same
+// With nothing stored there is nothing to anchor to, and the answer is the same
 // suppression rather than a second shape. "checkpoint undefined holds your context" is worse
 // than silence, and so is a payload the host throws away.
 test('--post with no stored checkpoint degrades quietly', async (t) => {
@@ -343,7 +343,7 @@ test('--post with no stored checkpoint degrades quietly', async (t) => {
 // Transcript problems
 // ---------------------------------------------------------------------------
 
-// §4.9 — a compaction the plugin cannot snapshot must still not break compaction.
+// A compaction the plugin cannot snapshot must still not break compaction.
 test('--pre with a missing transcript_path exits 0 without crashing', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -356,7 +356,7 @@ test('--pre with a missing transcript_path exits 0 without crashing', async (t) 
   assert.equal(r.code, 0);
 });
 
-// §4.9 — same for an unreadable path (here: a directory where a file is expected).
+// Same for an unreadable path (here: a directory where a file is expected).
 test('--pre with an unreadable transcript_path exits 0 without crashing', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -373,7 +373,7 @@ test('--pre with an unreadable transcript_path exits 0 without crashing', async 
 });
 
 // ---------------------------------------------------------------------------
-// --post clears the cross-turn seen-set — §5.2 / `lib/seen.mjs`
+// --post clears the cross-turn seen-set.2 / `lib/seen.mjs`
 // ---------------------------------------------------------------------------
 
 /*
@@ -417,7 +417,7 @@ test('--post clears the seen-set, so the next prompt re-expands every memory in 
   assertHookContract(r);
   assert.equal(existsSync(seenPath(dataDir)), false,
     'a pointer that outlives the transcript it points into names a memory the model cannot read');
-  assert.equal(server.requests.length, 0, '--post still dials nothing (§5.6)');
+  assert.equal(server.requests.length, 0, '--post still dials nothing');
 });
 
 // The set is one conversation's. Another session in the same run still has its transcript,
@@ -465,7 +465,7 @@ test('--post clears the seen-set even when there is no checkpoint to re-anchor t
     + 'the transcript');
 });
 
-// §5.6: `--pre` runs before the compaction, while the model still has everything. Clearing
+// `--pre` runs before the compaction, while the model still has everything. Clearing
 // there would re-expand one block for no reason, and would leave the set live across the
 // compaction if `--post` never fired.
 test('--pre leaves the seen-set alone', async (t) => {
@@ -507,5 +507,5 @@ test('--post clears an un-injected resume briefing along with the seen-set', asy
   assert.equal(existsSync(resumePath), false,
     'a briefing that survives a compaction describes a session the model can no longer read, '
     + 'and would be injected on the first prompt after it as if nothing had happened');
-  assert.equal(server.requests.length, 0, '--post still dials nothing (§5.6)');
+  assert.equal(server.requests.length, 0, '--post still dials nothing');
 });

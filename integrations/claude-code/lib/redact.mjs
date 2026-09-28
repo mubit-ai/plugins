@@ -394,7 +394,7 @@ export function redactText(text, cfg = {}, kind = 'output') {
 }
 
 /**
- * §4.4: recursive, and caps EACH field — 4 KiB per field, not 4 KiB shared
+ * Recursive, and caps EACH field — 4 KiB per field, not 4 KiB shared
  * across the whole `tool_input`. Structure (arrays, nesting, non-string
  * scalars) is preserved exactly; only strings are touched.
  *

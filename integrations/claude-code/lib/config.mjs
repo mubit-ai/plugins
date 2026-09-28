@@ -40,7 +40,7 @@ import { dataDir as resolveDataRoot, readJson, writeJsonAtomic } from './state.m
 // ---------------------------------------------------------------------------
 
 /**
- * §8.2 — seven of the MCP server's twenty-one tools. A blank `mcpTools` /
+ * Seven of the MCP server's twenty-one tools. A blank `mcpTools` /
  * `MUBIT_MCP_TOOLS` means this curated set, never "none".
  *
  * The line is whether a tool answers a question the model is holding mid-task,
@@ -61,7 +61,7 @@ const DEFAULT_MCP_TOOLS = [
   'mubit_dereference', 'mubit_status', 'mubit_memory_health',
 ];
 
-/** §7: `config.json` — cached resolved config, keyed by an input hash. */
+/** `config.json` — cached resolved config, keyed by an input hash. */
 const CACHE_FILE = 'config.json';
 const CACHE_TTL_MS = 300 * 1000;
 /**
@@ -75,11 +75,11 @@ const CACHE_TTL_MS = 300 * 1000;
  */
 const CACHE_VERSION = 4;
 
-/** §4.1: env_tags ride on every ingested item, so the cap is a payload-size guarantee. */
+/** env_tags ride on every ingested item, so the cap is a payload-size guarantee. */
 const MAX_ENV_TAGS = 8;
 
 // ---------------------------------------------------------------------------
-// §6.3 — reading userConfig
+// Reading userConfig
 // ---------------------------------------------------------------------------
 
 /** `apiKey` -> `API_KEY`, `recallTokenBudget` -> `RECALL_TOKEN_BUDGET`. */
@@ -88,7 +88,7 @@ function screaming(key) {
 }
 
 /**
- * §6.3: the host's exact env-name transform for a `userConfig` key is not fully
+ * The host's exact env-name transform for a `userConfig` key is not fully
  * documented, so every plausible spelling is checked —
  * `CLAUDE_PLUGIN_OPTION_<SCREAMING_SNAKE>` first, then `CLAUDE_PLUGIN_OPTION_<key>`
  * verbatim, then `CLAUDE_PLUGIN_OPTION_<UPPERCASE>`. Cheap insurance that keeps
@@ -148,7 +148,7 @@ export function host(env = process.env) {
 }
 
 // ---------------------------------------------------------------------------
-// §4.1 — connection mode
+// Connection mode
 // ---------------------------------------------------------------------------
 
 /**
@@ -160,7 +160,7 @@ export function host(env = process.env) {
 export const MODE = 'hosted';
 
 /**
- * §1.2: `Authorization: Bearer <key>`. Absent — not empty — when no key is
+ * `Authorization: Bearer <key>`. Absent — not empty — when no key is
  * configured, so the 401 that follows is unambiguous.
  * @param {Record<string, any>} cfg
  * @returns {Record<string, string>}
@@ -198,7 +198,7 @@ export function isConfigured(cfg) {
 }
 
 // ---------------------------------------------------------------------------
-// §4.1 — envTags, in Mubit's TYPE:NAME[:VERSION] form
+// envTags, in Mubit's TYPE:NAME[:VERSION] form
 // ---------------------------------------------------------------------------
 
 /** Lockfile at the project root -> `lang:<x>`. */
@@ -319,7 +319,7 @@ export function loadConfig(env = process.env) {
   const key = inputHash(e, userFileRaw, creds, projectDir, dataDir);
 
   const cached = readCache(cachePath, key);
-  // §12.1: `apiKey` is deliberately absent from the cache (see `stripSecrets`), so a
+  // `apiKey` is deliberately absent from the cache (see `stripSecrets`), so a
   // cache hit re-resolves it. It is one env/file lookup — cheaper than the read that
   // just happened, and it keeps the key out of a file `plugin.json` promises it is not in.
   if (cached) return freezeConfig({ ...cached, apiKey: resolveApiKey(e, creds, userFile) });
@@ -368,7 +368,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
    * wins over whatever a developer once authenticated as on that machine, and above the
    * project file so a fresh `/mubit-memory:auth` beats a stale committed `.mubit-cc.json`.
    *
-   * @param {string} key   the `userConfig` key name (§3.1)
+   * @param {string} key   the `userConfig` key name
    * @param {string} envVar the §6.1 environment variable it maps to
    */
   const pick = (key, envVar) => {
@@ -436,7 +436,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   // Operators who would rather pay it can opt back in.
   const recallFallback = enumOf(pick('recallFallback', 'MUBIT_CC_RECALL_FALLBACK'),
     ['none', 'agent_routed'], 'none');
-  // §5.2 — how the server fuses semantic, lexical and recency scores for a recall query.
+  // How the server fuses semantic, lexical and recency scores for a recall query.
   // `relevance` is the server's own default and barely counts recency, which is why "where
   // were we?" answers with the most *similar* memory rather than the most recent one;
   // `freshness` makes recency dominant and `balanced` sits between them. The exact weights
@@ -454,7 +454,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   // field at all, so rung 3 always ranks at the service's defaults.
   const recallRankBy = enumOf(pick('recallRankBy', 'MUBIT_CC_RECALL_RANK_BY'),
     ['auto', 'relevance', 'balanced', 'freshness'], 'auto');
-  // §5.2 — carry-forward recall. On, `prompt-recall` renders the block the PREVIOUS turn's
+  // Carry-forward recall. On, `prompt-recall` renders the block the PREVIOUS turn's
   // detached refresh left in `runs/<run_id>/carry.json` and returns without dialling, so the
   // prompt never waits on the endpoint and `recallBudgetMs` stops being a tuning parameter
   // anyone has to discover. It costs one turn of staleness and a first prompt with no recall.
@@ -463,7 +463,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   // manifest fields are real but static, so a flag expressed there would need two competing
   // registrations and would cost a second process per prompt to everyone, opted in or not.
   const recallAsync = bool(pick('recallAsync', 'MUBIT_CC_RECALL_ASYNC'), false);
-  // §5.2 — whether recall may ask the server for its cross-run lesson overlay: lessons
+  // Whether recall may ask the server for its cross-run lesson overlay: lessons
   // learned in OTHER runs, surfaced alongside this run's own memory. It is real value, and it
   // is billed on a lane that cannot be bounded by a run id, so its cost tracks the size of the
   // whole instance and grows on its own as one fills up. On a hosted instance today it is
@@ -531,7 +531,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   const resumeBlock = bool(pick('resumeBlock', 'MUBIT_CC_RESUME_BLOCK'), true);
   const mcpToolsRaw = pick('mcpTools', 'MUBIT_MCP_TOOLS');
   const mcpTools = list(mcpToolsRaw, DEFAULT_MCP_TOOLS);
-  // §8.2 — the ceiling on what an MCP write may claim for itself. The bundled SDK stamps a
+  // The ceiling on what an MCP write may claim for itself. The bundled SDK stamps a
   // fixed `lesson_scope` on `mubit_learned` regardless of the caller, and `mcp/src/egress.mjs`
   // resolves it to this. The widest scope is deliberately absent from the list: it is not a
   // value a client sets for itself.
@@ -710,7 +710,7 @@ function readCache(p, key) {
   return raw.config;
 }
 
-/** §4.1: `Config` is a frozen object, and so is its nested `breaker` block. */
+/** `Config` is a frozen object, and so is its nested `breaker` block. */
 function freezeConfig(cfg) {
   const out = { ...cfg };
   out.breaker = Object.freeze({ ...(out.breaker ?? {}) });
@@ -733,7 +733,7 @@ function readUserFileRaw(projectDir) {
   }
 }
 
-/** §12.1: a malformed project file falls through to the default. */
+/** A malformed project file falls through to the default. */
 function parseUserFile(raw) {
   if (!raw || !raw.trim()) return {};
   try {

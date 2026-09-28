@@ -9,7 +9,7 @@
  * consulted before dialing).
  *
  * The load-bearing property of this module is that it **never throws**. Every hook exits 0
- * in every failure mode (§4.9), and that is only affordable because the network layer hands
+ * in every failure mode, and that is only affordable because the network layer hands
  * back a value for every outcome — including the ones that are not HTTP outcomes at all:
  *
  *   success  -> `{ok: true,  status, body, ms}`
@@ -82,7 +82,7 @@ import { readJson, resolveDataDir, writeJsonAtomic } from './state.mjs';
 /** @typedef {OkResult|ErrResult} Result */
 
 // ---------------------------------------------------------------------------
-// §1.1 — the route table, and the caps that go with it
+// The route table, and the caps that go with it
 // ---------------------------------------------------------------------------
 
 export const ROUTES = Object.freeze({
@@ -111,16 +111,16 @@ export const ROUTES = Object.freeze({
 export const HANDOFF_ACTIONS = Object.freeze(['review', 'continue', 'approve', 'execute']);
 export const FEEDBACK_VERDICTS = Object.freeze(['approve', 'request_changes', 'block', 'acknowledge']);
 
-/** §1.1: `POST /v2/control/query` has its own body limit. */
+/** `POST /v2/control/query` has its own body limit. */
 export const MAX_QUERY_BYTES = 256 * 1024;
 
-/** §1.1: everything else inherits the global limit. */
+/** Everything else inherits the global limit. */
 export const MAX_BODY_BYTES = 64 * 1024 * 1024;
 
-/** §4.2 / §6.1: `MUBIT_CC_TIMEOUT_MS` default. */
+/** `MUBIT_CC_TIMEOUT_MS` default. */
 const DEFAULT_TIMEOUT_MS = 4000;
 
-/** §1.1 / §7: the readiness probe is cached at `status/health.json` for 30 s. */
+/** The readiness probe is cached at `status/health.json` for 30 s. */
 const HEALTH_TTL_MS = 30 * 1000;
 const HEALTH_CACHE = ['status', 'health.json'];
 
@@ -130,11 +130,11 @@ const HEALTH_CACHE = ['status', 'health.json'];
  */
 export const QUERY_MODES = Object.freeze(['direct_bypass', 'direct', 'agent_routed']);
 
-/** §4.3: the one run id that must never reach the wire. */
+/** The one run id that must never reach the wire. */
 const POISONED_RUN_ID = 'default';
 
 // ---------------------------------------------------------------------------
-// request — §4.2
+// request
 // ---------------------------------------------------------------------------
 
 /**
@@ -156,12 +156,12 @@ export async function request(cfg, method, path, body, opts = {}) {
     const route = String(path ?? '');
     const wantsBody = body !== undefined && body !== null && verb !== 'GET' && verb !== 'HEAD';
 
-    // --- guard 3: the poisoned run id (§4.3). Checked before anything is serialized, so a
+    // --- guard 3: the poisoned run id. Checked before anything is serialized, so a
     // 64 MiB batch carrying it costs nothing.
     if (wantsBody && isPoisonedRunId(body)) {
       return refuse(cfg, started,
         `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} — it is the bundled `
-        + 'server\'s placeholder and identifies no project (§4.3)',
+        + 'server\'s placeholder and identifies no project',
         { route, run_id: POISONED_RUN_ID });
     }
 
@@ -174,7 +174,7 @@ export async function request(cfg, method, path, body, opts = {}) {
       }
       bodyText = encoded.text;
 
-      // --- guard 1: the per-route cap (§1.1). A 413 would read as a server fault to the
+      // --- guard 1: the per-route cap. A 413 would read as a server fault to the
       // breaker, so the request never leaves this process.
       const cap = capFor(route);
       const size = Buffer.byteLength(bodyText, 'utf8');
@@ -229,7 +229,7 @@ export async function request(cfg, method, path, body, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// health — §1.2, §4.2, §7
+// health
 // ---------------------------------------------------------------------------
 
 /**
@@ -273,7 +273,7 @@ export async function health(cfg, opts = {}) {
       parse: 'text',
     });
 
-    // §4.7: a 2xx is necessary and not sufficient. The status alone says only that *some*
+    // A 2xx is necessary and not sufficient. The status alone says only that *some*
     // host answered — an SSO redirect, a captive portal, a proxy error page and a completely
     // different service all answer 200 — and taking that as healthy opens the session by
     // telling the model memory is active when nothing behind it is Mubit. The route returns
@@ -304,7 +304,7 @@ export async function health(cfg, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Typed wrappers — §1.3, one route each, validated before dialing
+// Typed wrappers, one route each, validated before dialing
 // ---------------------------------------------------------------------------
 
 /**
@@ -350,7 +350,7 @@ export async function postQuery(cfg, req, opts = {}) {
 }
 
 /**
- * `POST /v2/control/context` — rung 3 only, and it costs two LLM calls (§1.8).
+ * `POST /v2/control/context` — rung 3 only, and it costs two LLM calls.
  * The request body requires `run_id`.
  *
  * @param {Record<string, any>} cfg
@@ -380,7 +380,7 @@ export async function postOutcome(cfg, req, opts = {}) {
   const bad = firstOf(
     requireString(req, 'run_id', 'postOutcome'),
     requireString(req, 'reference_id', 'postOutcome',
-      'pass "global" for run-level attribution and put the real ids in entry_ids[] (§1.3)'),
+      'pass "global" for run-level attribution and put the real ids in entry_ids[]'),
   );
   if (bad) return refuse(cfg, started, bad, { route: ROUTES.outcome });
   return request(cfg, 'POST', ROUTES.outcome, req, opts);
@@ -541,7 +541,7 @@ export async function getIngestJob(cfg, runId, jobId, opts = {}) {
   // none. Repeat it here rather than let the poisoned literal through on a query string.
   if (run === POISONED_RUN_ID) {
     return refuse(cfg, started,
-      `getIngestJob: refusing run_id "${POISONED_RUN_ID}" (§4.3)`, { route: ROUTES.ingestJobs });
+      `getIngestJob: refusing run_id "${POISONED_RUN_ID}"`, { route: ROUTES.ingestJobs });
   }
 
   const path = `${ROUTES.ingestJobs}/${encodeURIComponent(job)}?run_id=${encodeURIComponent(run)}`;
@@ -573,7 +573,7 @@ async function dial(cfg, o) {
     /** @type {Record<string, string>} */
     const headers = {
       accept: o.parse === 'text' ? 'text/plain, */*' : 'application/json',
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg),
     };
@@ -595,7 +595,7 @@ async function dial(cfg, o) {
 
       const parsed = decodeJson(text);
       if (parsed.error) {
-        // §4.7: a 200 whose body will not parse is a broken server (a reverse proxy
+        // A 200 whose body will not parse is a broken server (a reverse proxy
         // serving an HTML error page is the real-world shape), never an unhandled rejection.
         return {
           ok: false,
@@ -649,7 +649,7 @@ async function dial(cfg, o) {
 function settle(cfg, res, opts) {
   if (opts && opts.record === false) return;
   if (res.ok) { recordSuccess(cfg); return; }
-  // §5.2: `permission_denied` is a policy verdict about a rung the caller chose to probe,
+  // `permission_denied` is a policy verdict about a rung the caller chose to probe,
   // not a transport fault. Recording it would pin the status line to "✖ auth" on an instance
   // that is merely running with the instance's direct-search policy disabled.
   if (res.status === 403) return;
@@ -664,7 +664,7 @@ function settle(cfg, res, opts) {
 }
 
 // ---------------------------------------------------------------------------
-// §7 — status/health.json, a 30 s verdict cache
+// Status/health.json, a 30 s verdict cache
 // ---------------------------------------------------------------------------
 
 /** @param {Record<string, any>} cfg */
@@ -720,7 +720,7 @@ function writeHealthCache(cfg, res) {
       error: res.ok === true ? '' : String(res.error ?? ''),
     });
   } catch {
-    // §4.9: an unwritable data dir costs the cache, never the probe.
+    // An unwritable data dir costs the cache, never the probe.
   }
 }
 
@@ -852,7 +852,7 @@ function safeMode(req) {
 }
 
 /**
- * §4.3: exact match only. `cc-default-config-9f2a11c4` is a legitimate run id and must
+ * Exact match only. `cc-default-config-9f2a11c4` is a legitimate run id and must
  * still be able to reach the wire — this is a ban on one poisoned literal, not a substring.
  * @param {any} body
  */
@@ -860,7 +860,7 @@ function isPoisonedRunId(body) {
   return !!body && typeof body === 'object' && !Array.isArray(body) && body.run_id === POISONED_RUN_ID;
 }
 
-/** §1.1: the query route carries its own, much smaller, cap. */
+/** The query route carries its own, much smaller, cap. */
 function capFor(route) {
   return pathOf(route) === ROUTES.query ? MAX_QUERY_BYTES : MAX_BODY_BYTES;
 }
@@ -890,7 +890,7 @@ function decodeJson(text) {
   }
 }
 
-/** `opts.timeoutMs ?? cfg.timeoutMs`, default 4000 (§4.2, §6.1). */
+/** `opts.timeoutMs ?? cfg.timeoutMs`, default 4000. */
 function deadline(cfg, opts) {
   const o = Number(opts && opts.timeoutMs);
   if (Number.isFinite(o) && o > 0) return Math.trunc(o);

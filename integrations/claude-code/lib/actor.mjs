@@ -32,7 +32,7 @@
  * nothing waiting on it — the only place in this plugin where spending two `git` spawns is
  * affordable.
  *
- * Both are total (§4.9). A failure here costs the actor and never the hook.
+ * Both are total. A failure here costs the actor and never the hook.
  *
  * ---------------------------------------------------------------------------
  * The ladder, cheapest rung first
@@ -84,7 +84,7 @@ const CACHE_VERSION = 1;
 /** `${dataDir}/actor.json`. Top level, beside `config.json` — it is per machine, not per run. */
 const CACHE_FILE = 'actor.json';
 
-/** §7: 30 days. Long, because the answer almost never changes; finite, because it can. */
+/** 30 days. Long, because the answer almost never changes; finite, because it can. */
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
@@ -118,7 +118,7 @@ export function readActor(cfg = {}) {
     const hit = readCache(cfg);
     return hit ? hit.actor : '';
   } catch {
-    // §4.9: an unreadable data dir costs the attribution, never the capture.
+    // An unreadable data dir costs the attribution, never the capture.
     return '';
   }
 }
@@ -153,7 +153,7 @@ export function resolveActor(cfg = {}, projectDir = '') {
     if (found.actor) writeCache(cfg, found.actor, found.source);
     return found.actor;
   } catch {
-    // §4.9: the drainer's job is shipping memory. It never fails for want of a name.
+    // The drainer's job is shipping memory. It never fails for want of a name.
     return '';
   }
 }
@@ -284,7 +284,7 @@ function writeCache(cfg, actor, source) {
     // ("why does it think I am `root`?") is answerable from the file alone.
     writeJsonAtomic(cachePath(cfg), { v: CACHE_VERSION, at: Date.now(), actor, source });
   } catch {
-    // §4.9: an unwritable data dir costs the cache, never the answer.
+    // An unwritable data dir costs the cache, never the answer.
   }
 }
 

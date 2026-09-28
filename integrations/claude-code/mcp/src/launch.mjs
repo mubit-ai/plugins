@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `mcp/src/launch.mjs` — the `.mcp.json` entry point, bundled to `mcp/dist/index.js` (§8.3).
+ * `mcp/src/launch.mjs` — the `.mcp.json` entry point, bundled to `mcp/dist/index.js`.
  *
  * The upstream server reads its whole configuration at MODULE scope:
  *
@@ -42,7 +42,7 @@ import { alwaysLoadFor, INSTRUCTIONS, installInstructionsGuard } from './instruc
 import { installResultsGuard } from './results.mjs';
 
 /**
- * §8.2 — seven of the server's twenty-one tools, in the guide's order.
+ * Seven of the server's twenty-one tools, in the guide's order.
  *
  * A blank `mcpTools` means this curated set, never "none" and never all 21. The fourteen
  * left out are ones a hook already does better (`mubit_remember`, `mubit_context`), ones
@@ -158,7 +158,7 @@ function prepare(env) {
 
   const tools = allowlist(cfg);
 
-  // §8.3 step 3 — all five, before the import.
+  // All five, before the import.
   env.MUBIT_ENDPOINT = String(cfg.endpoint ?? '');
   env.MUBIT_API_KEY = String(cfg.apiKey ?? '');
   env.MUBIT_DEFAULT_SESSION_ID = runId;
@@ -275,7 +275,7 @@ function hostPayload(env) {
 }
 
 /**
- * §8.2 — `cfg.mcpTools`, or the curated seven. A user-supplied list passes through verbatim
+ * `cfg.mcpTools`, or the curated seven. A user-supplied list passes through verbatim
  * rather than being unioned with the default: "restore `mubit_handoff`" and "give me only
  * `mubit_recall`" are both legitimate, and only a verbatim list expresses the second.
  *

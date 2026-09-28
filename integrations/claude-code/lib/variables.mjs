@@ -46,7 +46,7 @@
  *     answer, and is how a cleared pin reaches a second terminal.
  *
  * Constraints, as everywhere in `lib/`: zero dependencies, Node >= 20 built-ins only, and
- * nothing here throws — every outcome is a value (§4.9).
+ * nothing here throws — every outcome is a value.
  */
 
 import { request } from './http.mjs';

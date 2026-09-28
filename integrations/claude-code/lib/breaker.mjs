@@ -30,7 +30,7 @@
  *
  * Discipline shared with the rest of `lib/`: zero dependencies, Node >= 20 built-ins,
  * everything synchronous (a hook is about to exit; an event-loop round trip buys nothing),
- * and nothing here throws — every caller is on a hook's critical path (§4.9). When state
+ * and nothing here throws — every caller is on a hook's critical path. When state
  * cannot be read or written the breaker degrades to "closed", because failing shut would
  * cost the user their memory over a full disk.
  */
@@ -47,7 +47,7 @@ import { readJson, resolveDataDir, writeJsonAtomic } from './state.mjs';
 /** @typedef {ConnState|"warming"} DisplayState */
 
 /**
- * §4.7: the ConnState union is closed — `bin/statusline.mjs` has no glyph for anything else.
+ * The ConnState union is closed — `bin/statusline.mjs` has no glyph for anything else.
  *
  * `unconfigured` is the odd member and is worth reading as such: every other value is a
  * verdict about a server that answered, or failed to. This one is a statement about *this
@@ -62,7 +62,7 @@ export const CONN_STATES = /** @type {const} */ ([
   'ready', 'unreachable', 'server_error', 'auth_failed', 'not_responding', 'unconfigured',
 ]);
 
-/** §4.7: "Only `timeoutStreak >= 3` escalates." Not tunable — it is the rule, not a knob. */
+/** "Only `timeoutStreak >= 3` escalates." Not tunable — it is the rule, not a knob. */
 const TIMEOUT_ESCALATION = 3;
 
 /**
@@ -79,10 +79,10 @@ const DEFAULT_WINDOW_MS = 300000;
 const DEFAULT_COOLDOWN_MS = 120000;
 
 // ---------------------------------------------------------------------------
-// classifyError — §4.7's mapping table, and nothing else
+// classifyError's mapping table, and nothing else
 // ---------------------------------------------------------------------------
 
-/** §4.7: `ECONNREFUSED, ENOTFOUND, EHOSTUNREACH, ECONNRESET`, plus their obvious cousins. */
+/** `ECONNREFUSED, ENOTFOUND, EHOSTUNREACH, ECONNRESET`, plus their obvious cousins. */
 export const UNREACHABLE_CODES = new Set([
   'ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ECONNRESET',
   'ENETUNREACH', 'ENETDOWN', 'EHOSTDOWN', 'EADDRNOTAVAIL', 'ECONNABORTED',
@@ -121,9 +121,9 @@ export function classifyError(err, status) {
 
     const s = toStatus(status);
     if (s !== null) {
-      // §1.2: every /v2/control/* handler authenticates first, so 401/403 is unambiguous.
+      // Every /v2/control/* handler authenticates first, so 401/403 is unambiguous.
       if (s === 401 || s === 403) return 'auth_failed';
-      // §4.7: a parsed 2xx is the only thing that means healthy. A 2xx whose body will not
+      // A parsed 2xx is the only thing that means healthy. A 2xx whose body will not
       // parse (JSON.parse threw a SyntaxError) is a broken server, not a broken network.
       if (s >= 200 && s < 300) return err ? 'server_error' : 'ready';
       // Everything the server said and we did not like — 5xx, and the non-auth 4xx that
@@ -182,11 +182,11 @@ function toStatus(v) {
 }
 
 // ---------------------------------------------------------------------------
-// §7 — breaker/<sha256(endpoint).slice(0,12)>.json
+// Breaker/<sha256(endpoint).slice(0,12)>.json
 // ---------------------------------------------------------------------------
 
 /**
- * §4.7: per endpoint. `MUBIT_ENDPOINT=https://…` must not start life inside a local outage.
+ * Per endpoint. `MUBIT_ENDPOINT=https://…` must not start life inside a local outage.
  * @param {Record<string, any>} [cfg]
  * @returns {string}
  */
@@ -195,7 +195,7 @@ export function breakerPath(cfg = {}) {
 }
 
 /**
- * §7: `sha256(endpoint)[0:12]`, the name every per-endpoint file is keyed by — `breaker/`,
+ * `sha256(endpoint)[0:12]`, the name every per-endpoint file is keyed by — `breaker/`,
  * `policy/`, `coldstart/`. Exported because it was open-coded in three places that must
  * agree in order for those files to join up, and a fourth copy is how they stop agreeing.
  *
@@ -312,7 +312,7 @@ function save(cfg, s) {
  *
  * @param {Record<string, any>} cfg
  * @param {{coldStartUntil?: number}} [opts] `coldStartUntil` is the absolute epoch-ms
- *   deadline the marker stores as `cold_start_until` (§4.8), passed in because the breaker
+ *   deadline the marker stores as `cold_start_until`, passed in because the breaker
  *   is keyed by endpoint and knows nothing about runs.
  * @returns {BreakerState & {display: DisplayState, suppressMessage: boolean}}
  */
@@ -376,7 +376,7 @@ export function recordFailure(cfg, state) {
     s.timeoutStreak = kind === 'not_responding' ? s.timeoutStreak + 1 : 0;
 
     if (kind === 'auth_failed') {
-      // §4.7: sticky, and it never enters the failure window. `failures` stays empty so the
+      // Sticky, and it never enters the failure window. `failures` stays empty so the
       // next request still fails loudly instead of being short-circuited.
       s.state = 'auth_failed';
     } else {
@@ -406,7 +406,7 @@ export function recordFailure(cfg, state) {
     s.lastState = prev;
     save(cfg ?? {}, s);
   } catch {
-    // §4.9: a breaker that cannot record is a slower plugin, never a broken prompt.
+    // A breaker that cannot record is a slower plugin, never a broken prompt.
   }
 }
 
@@ -442,7 +442,7 @@ export function recordSuccess(cfg) {
 // ---------------------------------------------------------------------------
 
 /**
- * The gate every caller consults before dialing (§4.2). While the breaker is closed this is
+ * The gate every caller consults before dialing. While the breaker is closed this is
  * a pure, idempotent read — a hook that checks twice must not lock itself out.
  *
  * While it is open it is *not* a pure read. Once the cooldown has elapsed the first caller

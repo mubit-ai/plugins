@@ -13,7 +13,7 @@
  *   2. `auth_failed` is sticky and never feeds the failure-count breaker. Opening a breaker
  *      on a 401 hides the single error the user can actually fix.
  *
- * Every window/cooldown is set through `MUBIT_CC_BREAKER_*` (§6.1). Shrinking them is how this
+ * Every window/cooldown is set through `MUBIT_CC_BREAKER_*`. Shrinking them is how this
  * file avoids sleeping for real seconds — but not the cooldown, which is long by default and
  * short only in the three tests that sleep through it deliberately. See `TIGHT` for why.
  */
@@ -26,7 +26,7 @@ import { join } from 'node:path';
 
 import { lib, baseEnv, makeDataDir } from './helpers/harness.mjs';
 
-/** The complete `ConnState` union (§4.7). Nothing outside this set may ever be produced. */
+/** The complete `ConnState` union. Nothing outside this set may ever be produced. */
 const CONN_STATES = [
   'ready', 'unreachable', 'server_error', 'auth_failed', 'not_responding', 'unconfigured',
 ];
@@ -84,7 +84,7 @@ async function setup(extra = {}, endpoint = LOCAL) {
   return { cfg, dataDir, B };
 }
 
-/** §4.7/§7: `breaker/<sha256(endpoint).slice(0,12)>.json`. */
+/** `breaker/<sha256(endpoint).slice(0,12)>.json`. */
 function breakerPath(dataDir, endpoint) {
   const h = createHash('sha256').update(endpoint).digest('hex').slice(0, 12);
   return join(dataDir, 'breaker', `${h}.json`);
@@ -156,7 +156,7 @@ test('classifyError: undici-wrapped AbortError still classifies as not_respondin
   assert.equal(classifyError(wrapped, undefined), 'not_responding');
 });
 
-// §4.7: the ConnState union is closed. Anything else leaks into the status line and the
+// The ConnState union is closed. Anything else leaks into the status line and the
 // marker, where `bin/statusline.mjs` has no glyph for it.
 test('classifyError: never produces a state outside the classifiable ConnState values', async () => {
   const { classifyError } = await lib('breaker.mjs');
@@ -182,7 +182,7 @@ test('classifyError: never produces a state outside the classifiable ConnState v
   }
 });
 
-// §4.7 — a breaker exists to stop dialing a server that is failing. An unconfigured
+// A breaker exists to stop dialing a server that is failing. An unconfigured
 // install never dialed one, so there is nothing to trip and nothing to cool down. Recording
 // it opened the breaker on a local config gap and then suppressed recall for the cooldown,
 // against an instance the user was one command away from having.
@@ -200,7 +200,7 @@ test('recordFailure: `unconfigured` is never recorded — no file, no failures, 
   assert.equal(b.failures.length, 0);
 });
 
-// §1.3/§5.5: a 422 is a bad payload, a 413 is an oversized body, a 429 is backpressure.
+// A 422 is a bad payload, a 413 is an oversized body, a 429 is backpressure.
 // None of them mean "auth is broken" or "the host is gone" — misfiling them either pins
 // the status line to `✖ auth` or tells the user their server is down.
 test('classifyError: non-auth 4xx is neither auth_failed nor unreachable', async () => {
@@ -215,10 +215,10 @@ test('classifyError: non-auth 4xx is neither auth_failed nor unreachable', async
 });
 
 // ---------------------------------------------------------------------------
-// State file — §7 `breaker/<endpoint_hash>.json`
+// State file `breaker/<endpoint_hash>.json`
 // ---------------------------------------------------------------------------
 
-// §4.7: a never-contacted endpoint is optimistic — closed breaker, no failures, no streak.
+// A never-contacted endpoint is optimistic — closed breaker, no failures, no streak.
 test('readBreaker: a fresh breaker is closed, ready and empty', async () => {
   const { cfg, B } = await setup();
   const b = B.readBreaker(cfg);
@@ -229,7 +229,7 @@ test('readBreaker: a fresh breaker is closed, ready and empty', async () => {
   assert.equal(B.allowRequest(cfg), true);
 });
 
-// §7: state file `breaker/<sha256(endpoint).slice(0,12)>.json` with the §4.7 field set.
+// State file `breaker/<sha256(endpoint).slice(0,12)>.json` with the §4.7 field set.
 test('recordFailure: writes breaker/<sha256(endpoint).slice(0,12)>.json with the documented shape', async () => {
   const { cfg, dataDir, B } = await setup();
   B.recordFailure(cfg, 'unreachable');
@@ -245,7 +245,7 @@ test('recordFailure: writes breaker/<sha256(endpoint).slice(0,12)>.json with the
   assert.ok(Math.abs(raw.failures[0] - Date.now()) < 5000, 'failures[] holds epoch-ms timestamps');
 });
 
-// §4.7: per endpoint. Switching between a local and a hosted instance must not inherit the
+// Per endpoint. Switching between a local and a hosted instance must not inherit the
 // other's verdict — otherwise `MUBIT_ENDPOINT=https://…` starts life inside a local outage.
 test('breaker state is per endpoint: a local outage does not condemn the hosted endpoint', async () => {
   const B = await lib('breaker.mjs');
@@ -299,10 +299,10 @@ test('readBreaker: an empty state file degrades to a fresh closed breaker', asyn
 });
 
 // ---------------------------------------------------------------------------
-// "A timeout is not a verdict." — §4.7
+// "A timeout is not a verdict."
 // ---------------------------------------------------------------------------
 
-// §4.7: one AbortError sets no state. It increments the streak and nothing else.
+// One AbortError sets no state. It increments the streak and nothing else.
 test('timeout: a single AbortError increments timeoutStreak and leaves the state unchanged', async () => {
   const { cfg, B } = await setup();
   B.recordSuccess(cfg);
@@ -326,7 +326,7 @@ test('timeout: a single AbortError does not overwrite an existing server_error v
   assert.equal(b.timeoutStreak, 1);
 });
 
-// §4.7: two is still not enough. The escalation threshold is exactly three.
+// Two is still not enough. The escalation threshold is exactly three.
 test('timeout: two consecutive timeouts still do not escalate', async () => {
   const { cfg, B } = await setup();
   B.recordSuccess(cfg);
@@ -338,7 +338,7 @@ test('timeout: two consecutive timeouts still do not escalate', async () => {
   assert.equal(b.state, 'ready');
 });
 
-// §4.7: only `timeoutStreak >= 3` escalates, and only to `not_responding`.
+// Only `timeoutStreak >= 3` escalates, and only to `not_responding`.
 test('timeout: three consecutive timeouts escalate to not_responding', async () => {
   const { cfg, B } = await setup();
   B.recordSuccess(cfg);
@@ -349,7 +349,7 @@ test('timeout: three consecutive timeouts escalate to not_responding', async () 
   assert.equal(b.state, 'not_responding');
 });
 
-// §4.7: "never to `unreachable` or `server_error`". A slow server is not a dead one, and
+// "never to `unreachable` or `server_error`". A slow server is not a dead one, and
 // the difference is the whole content of the message the user reads.
 test('timeout: ten timeouts still say not_responding, never unreachable or server_error', async () => {
   const { cfg, B } = await setup({ MUBIT_CC_BREAKER_THRESHOLD: '100' });
@@ -360,7 +360,7 @@ test('timeout: ten timeouts still say not_responding, never unreachable or serve
   assert.equal(b.timeoutStreak, 10);
 });
 
-// §4.7: a success resets the streak, so intermittent slowness never accumulates into
+// A success resets the streak, so intermittent slowness never accumulates into
 // a verdict across a whole session.
 test('timeout: a success resets timeoutStreak to zero', async () => {
   const { cfg, B } = await setup();
@@ -378,7 +378,7 @@ test('timeout: a success resets timeoutStreak to zero', async () => {
   assert.equal(b.state, 'ready');
 });
 
-// §4.7: "not a verdict" governs the *reported state*, not the breaker. A wedged
+// "not a verdict" governs the *reported state*, not the breaker. A wedged
 // server that times out every request must still trip the failure counter, or every prompt
 // pays the full recall budget forever.
 test('timeout: timeouts still count toward the failure-count breaker', async () => {
@@ -390,10 +390,10 @@ test('timeout: timeouts still count toward the failure-count breaker', async () 
 });
 
 // ---------------------------------------------------------------------------
-// auth_failed is sticky and does not feed the breaker — §4.7
+// auth_failed is sticky and does not feed the breaker
 // ---------------------------------------------------------------------------
 
-// §4.7: ten consecutive 401s leave `failures` empty and the breaker closed. Opening
+// Ten consecutive 401s leave `failures` empty and the breaker closed. Opening
 // on a 401 hides the one error the user can actually fix by pasting a key.
 test('auth_failed: ten consecutive 401s record no failures and never open the breaker', async () => {
   const { cfg, B } = await setup();
@@ -406,7 +406,7 @@ test('auth_failed: ten consecutive 401s record no failures and never open the br
   assert.equal(B.allowRequest(cfg), true, 'the breaker must stay closed on auth failures');
 });
 
-// §4.7: sticky — a later transport or server failure does not displace the auth verdict,
+// Sticky — a later transport or server failure does not displace the auth verdict,
 // because fixing the key is still the only action that helps.
 test('auth_failed: stays pinned when a later server_error arrives', async () => {
   const { cfg, B } = await setup();
@@ -418,7 +418,7 @@ test('auth_failed: stays pinned when a later server_error arrives', async () => 
   assert.equal(b.failures.length, 1, 'the server_error still counts toward the breaker');
 });
 
-// §4.7: "It pins the status line to ✖ auth until a success clears it."
+// "It pins the status line to ✖ auth until a success clears it."
 test('auth_failed: only a success clears the sticky state', async () => {
   const { cfg, B } = await setup();
   for (let i = 0; i < 4; i++) B.recordFailure(cfg, 'auth_failed');
@@ -433,10 +433,10 @@ test('auth_failed: only a success clears the sticky state', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Threshold, window, cooldown — §4.7 (5 failures / 300 s → open for 120 s)
+// Threshold, window, cooldown.7 (5 failures / 300 s → open for 120 s)
 // ---------------------------------------------------------------------------
 
-// §4.7: threshold-many failures inside the window opens the breaker.
+// Threshold-many failures inside the window opens the breaker.
 test('breaker: threshold failures within the window opens it', async () => {
   const { cfg, B } = await setup();       // threshold 3
   assert.equal(cfg.breaker.threshold, 3, 'MUBIT_CC_BREAKER_THRESHOLD feeds cfg.breaker.threshold');
@@ -459,7 +459,7 @@ test('breaker: allowRequest is idempotent while closed', async () => {
   for (let i = 0; i < 5; i++) assert.equal(B.allowRequest(cfg), true);
 });
 
-// §4.7 / §12.6: the window is rolling — failures older than it drop out and stop counting.
+// The window is rolling — failures older than it drop out and stop counting.
 // Without expiry, five failures spread over a week would open the breaker on a healthy box.
 //
 // The window is wide for the same reason the cooldown is (see `TIGHT`): the two "fresh"
@@ -480,7 +480,7 @@ test('breaker: failures older than the window expire and no longer count', async
   assert.equal(B.allowRequest(cfg), true, 'two fresh failures are below the threshold of 3');
 });
 
-// §4.7: after the cooldown exactly one half-open probe dials; a second short-circuits.
+// After the cooldown exactly one half-open probe dials; a second short-circuits.
 //
 // One of the three tests that sleeps through a cooldown, so one of the three that takes the
 // short one. It is also the sharpest case for why the default is long: it needs two
@@ -498,7 +498,7 @@ test('breaker: after the cooldown exactly one half-open probe is allowed', async
   assert.equal(B.allowRequest(cfg), true, 'a further cooldown earns another single probe');
 });
 
-// §4.7: a successful probe closes the breaker and clears the failure window.
+// A successful probe closes the breaker and clears the failure window.
 test('breaker: a successful half-open probe closes it and clears failures', async () => {
   const { cfg, B } = await setup(PROBE_COOLDOWN);
   for (let i = 0; i < 3; i++) B.recordFailure(cfg, 'unreachable');
@@ -515,7 +515,7 @@ test('breaker: a successful half-open probe closes it and clears failures', asyn
   assert.equal(B.allowRequest(cfg), true, 'closed means unlimited requests again');
 });
 
-// §4.7: a failed probe re-opens with a FRESH openedAt, so the next probe is a full cooldown
+// A failed probe re-opens with a FRESH openedAt, so the next probe is a full cooldown
 // away rather than immediately available.
 test('breaker: a failed half-open probe re-opens with a fresh openedAt', async () => {
   const { cfg, B } = await setup(PROBE_COOLDOWN);
@@ -533,16 +533,16 @@ test('breaker: a failed half-open probe re-opens with a fresh openedAt', async (
 });
 
 // ---------------------------------------------------------------------------
-// Cold-start suppression — §4.7, §4.8 (marker.cold_start_until)
+// Cold-start suppression.8 (marker.cold_start_until)
 // ---------------------------------------------------------------------------
 
-// §4.7: within `coldStartGraceMs` of the run's first SessionStart the failure is still
+// Within `coldStartGraceMs` of the run's first SessionStart the failure is still
 // recorded, but it is reported as `warming` and no systemMessage is emitted. A user who
 // whose instance is still starting should not be told memory is broken for
 // the first seconds it spends warming up.
 //
 // The grace deadline is an absolute epoch-ms timestamp — the same value the marker stores
-// as `cold_start_until` (§4.8) — and is passed in, because the breaker is keyed by endpoint
+// as `cold_start_until` — and is passed in, because the breaker is keyed by endpoint
 // and knows nothing about runs.
 test('cold start: a failure inside the grace window reports "warming" and suppresses the message', async () => {
   const { cfg, B } = await setup();
@@ -557,7 +557,7 @@ test('cold start: a failure inside the grace window reports "warming" and suppre
   assert.equal(b.suppressMessage, true, 'no systemMessage while warming');
 });
 
-// §4.7: once the grace expires the real verdict surfaces.
+// Once the grace expires the real verdict surfaces.
 test('cold start: past the grace window the real state is displayed again', async () => {
   const { cfg, B } = await setup();
   B.recordFailure(cfg, 'unreachable');

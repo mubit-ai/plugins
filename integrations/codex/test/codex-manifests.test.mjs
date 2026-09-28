@@ -47,7 +47,7 @@ const P = {
 };
 
 /**
- * §2 — the skills, the same set the Claude Code plugin ships, in the order they arrived.
+ * The skills, the same set the Claude Code plugin ships, in the order they arrived.
  *
  * One name per line on purpose: four branches append to this list at once, and a single-line
  * array makes every one of those a conflict on the same line.

@@ -14,7 +14,7 @@
  *      recall block is an answer to a question the user has moved on from.
  *   2. **Nothing is consumed.** A pin renders on every prompt until it is cleared.
  *
- * Everything here is total (§4.9): a missing, truncated, foreign or absurd cache costs the
+ * Everything here is total: a missing, truncated, foreign or absurd cache costs the
  * pins and never the prompt.
  */
 

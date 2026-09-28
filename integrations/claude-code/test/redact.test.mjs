@@ -82,7 +82,7 @@ function assertNoSecrets(text) {
 // Stage 1 — pattern scrub
 // ===========================================================================
 
-describe('stage 1 — pattern scrub (§4.4)', () => {
+describe('stage 1 — pattern scrub', () => {
   /**
    * One row per kind in the §4.4 pattern table. `context` places the credential
    * in prose so the kind label is unambiguous — a credential wrapped in an
@@ -169,7 +169,7 @@ describe('stage 1 — pattern scrub (§4.4)', () => {
   });
 
   /**
-   * §4.4: the `assignment` keyword list is seeded from the server's own policy
+   * The `assignment` keyword list is seeded from the server's own policy
    *. The guide sketches the pattern with `\b`, but the
    * canonical fixture is `DATABASE_PASSWORD=…` — where the keyword is preceded
    * by `_`, a word character. A literal `\b` cannot match there, so the real
@@ -415,7 +415,7 @@ describe('stage 1 — pattern scrub (§4.4)', () => {
     });
   });
 
-  // §4.4: the placeholder format is exactly `[REDACTED:<kind>]` (spec §6.4 says
+  // The placeholder format is exactly `[REDACTED:<kind>]` (spec §6.4 says
   // `[redacted:<kind>]`; the build guide is the implementation contract).
   it('uses the exact [REDACTED:<kind>] placeholder form', async () => {
     const { redactText } = await R();
@@ -425,7 +425,7 @@ describe('stage 1 — pattern scrub (§4.4)', () => {
     assert.ok(!/\[redacted:/.test(r.text), 'placeholder is uppercase REDACTED per §4.4');
   });
 
-  // §4.4: `redactions` is the match count — capture.mjs writes it to metadata_json.
+  // `redactions` is the match count — capture.mjs writes it to metadata_json.
   it('counts every match in `redactions`', async () => {
     const { redactText } = await R();
     const text = [
@@ -439,7 +439,7 @@ describe('stage 1 — pattern scrub (§4.4)', () => {
     assertNoSecrets(r.text);
   });
 
-  // §4.4: the documented return shape is {text, redactions, dropped}.
+  // The documented return shape is {text, redactions, dropped}.
   it('returns {text, redactions, dropped}', async () => {
     const { redactText } = await R();
     const r = redactText('nothing sensitive here', cfg(), 'output');
@@ -452,7 +452,7 @@ describe('stage 1 — pattern scrub (§4.4)', () => {
     assert.equal(r.dropped, false);
   });
 
-  // §12.2: "a realistic .env body redacts every line".
+  // "a realistic .env body redacts every line".
   it('redacts every line of a realistic .env body', async () => {
     const { redactText } = await R();
     const dotenv = [
@@ -525,7 +525,7 @@ describe('idempotency-key survives redaction', () => {
 // High-entropy false positives
 // ===========================================================================
 
-describe('high-entropy false-positive guard (spec §6.4)', () => {
+describe('high-entropy false-positive guard', () => {
   /**
    * Spec §6.4 argues the entropy rule should be CONJUNCTIVE — high entropy AND
    * within 40 chars of a key-ish token — because "an unconditional
@@ -594,7 +594,7 @@ describe('high-entropy false-positive guard (spec §6.4)', () => {
       'at most the literal itself may be replaced, never the surrounding code');
   });
 
-  // §4.4: the length gate is 32 — shorter high-entropy runs are left alone.
+  // The length gate is 32 — shorter high-entropy runs are left alone.
   it('leaves high-entropy runs shorter than 32 chars alone', async () => {
     const { redactText } = await R();
     const line = 'short blob Zm9vYmFyYmF6cXV4 in the log';
@@ -608,7 +608,7 @@ describe('high-entropy false-positive guard (spec §6.4)', () => {
 // entropy()
 // ===========================================================================
 
-describe('entropy() — Shannon over the byte distribution (§4.4)', () => {
+describe('entropy() — Shannon over the byte distribution', () => {
   it('is ~0 for a single repeated byte', async () => {
     const { entropy } = await R();
     assert.ok(entropy('aaaaaaaa') < 1e-9, `expected ~0, got ${entropy('aaaaaaaa')}`);
@@ -636,10 +636,10 @@ describe('entropy() — Shannon over the byte distribution (§4.4)', () => {
 // Order — scrub BEFORE cap. The single most important test in this file.
 // ===========================================================================
 
-describe('order — stage 1 runs before stage 3 (§4.4)', () => {
+describe('order — stage 1 runs before stage 3', () => {
   /**
    * "Order matters: scrub before capping, so truncation cannot slice a secret
-   * in half and leave the recognizable prefix." (§4.4)
+   * in half and leave the recognizable prefix."
    *
    * A cap-then-scrub implementation truncates mid-credential and the surviving
    * prefix — `sk-proj-AbCd…` — is never seen by the scrubber, because the
@@ -686,8 +686,8 @@ describe('order — stage 1 runs before stage 3 (§4.4)', () => {
 // Stage 2 — path denylist
 // ===========================================================================
 
-describe('stage 2 — path denylist (§4.4)', () => {
-  // §4.4: matching captures are DROPPED entirely, not scrubbed.
+describe('stage 2 — path denylist', () => {
+  // Matching captures are DROPPED entirely, not scrubbed.
   const DENIED = [
     '.env',
     '.env.local',
@@ -765,7 +765,7 @@ describe('stage 2 — path denylist (§4.4)', () => {
       'absolute form of a gitignored path must drop too');
   });
 
-  // §4.4 / §6.1: MUBIT_CC_CAPTURE_DENY *appends* globs; it does not replace.
+  // MUBIT_CC_CAPTURE_DENY *appends* globs; it does not replace.
   it('MUBIT_CC_CAPTURE_DENY appends to the built-in denylist', async () => {
     const { isDeniedPath } = await R();
     const projectDir = makeProjectDir();
@@ -788,8 +788,8 @@ describe('stage 2 — path denylist (§4.4)', () => {
 // Stage 3 — byte caps
 // ===========================================================================
 
-describe('stage 3 — byte caps (§4.4)', () => {
-  // §12.2: "100 KB output caps to 8 KB with metadata_json.truncated = true".
+describe('stage 3 — byte caps', () => {
+  // "100 KB output caps to 8 KB with metadata_json.truncated = true".
   it('caps 100 KB of output to 8 KiB and marks the truncation', async () => {
     const { redactText } = await R();
     const line = 'warning: unused variable `x` in src/core/runtime\n';
@@ -808,7 +808,7 @@ describe('stage 3 — byte caps (§4.4)', () => {
     assert.equal(r.truncated, true, 'redactText must report truncation to its caller');
   });
 
-  // §4.4: `kind` selects the cap — 4 KiB for params, 8 KiB for output.
+  // `kind` selects the cap — 4 KiB for params, 8 KiB for output.
   it('applies the 4 KiB param cap and the 8 KiB output cap by `kind`', async () => {
     const { redactText } = await R();
     const text = 'z'.repeat(5000);
@@ -853,11 +853,11 @@ describe('stage 3 — byte caps (§4.4)', () => {
 // Self-reference suppression
 // ===========================================================================
 
-describe('self-reference suppression (§4.4)', () => {
+describe('self-reference suppression', () => {
   /**
    * "Without this the plugin records its own traffic, recalls it, then records
    * the recall — and the store fills with
-   * `curl https://api.mubit.ai/v2/control/context`." (§4.4)
+   * `curl https://api.mubit.ai/v2/control/context`."
    */
 
   // Our own MCP tools, under the plugin-qualified prefix.
@@ -894,7 +894,7 @@ describe('self-reference suppression (§4.4)', () => {
     }
   });
 
-  // §4.4: Bash whose command mentions the endpoint host:port, /v2/control/,
+  // Bash whose command mentions the endpoint host:port, /v2/control/,
   // /v2/core/, `mubit`, or `MUBIT_`.
   const BASH_DROP = [
     ['the guide\'s own example', 'curl https://api.mubit.ai/v2/control/context'],
@@ -928,7 +928,7 @@ describe('self-reference suppression (§4.4)', () => {
     });
   }
 
-  // §4.4: a subject path inside ${CLAUDE_PLUGIN_DATA} or ${CLAUDE_PLUGIN_ROOT}.
+  // A subject path inside ${CLAUDE_PLUGIN_DATA} or ${CLAUDE_PLUGIN_ROOT}.
   it('drops a subject path inside ${CLAUDE_PLUGIN_DATA}', async () => {
     const { isSelfReference } = await R();
     const dataDir = makeDataDir();
@@ -974,9 +974,9 @@ describe('self-reference suppression (§4.4)', () => {
 // MUBIT_CC_REDACT=0
 // ===========================================================================
 
-describe('MUBIT_CC_REDACT=0 (§6.1)', () => {
+describe('MUBIT_CC_REDACT=0', () => {
   /**
-   * "`0` disables the scrub stage; denylist and caps still apply." (§6.1)
+   * "`0` disables the scrub stage; denylist and caps still apply."
    * The escape hatch exists for users whose tool output is mangled by the
    * entropy rule — it must not also disable the two stages that have no
    * false-positive cost.
@@ -1022,7 +1022,7 @@ describe('MUBIT_CC_REDACT=0 (§6.1)', () => {
 // redactParams
 // ===========================================================================
 
-describe('redactParams — recursive, caps each field (§4.4)', () => {
+describe('redactParams — recursive, caps each field', () => {
   /** Symmetric with redactText; capture.mjs needs the count for metadata_json.redactions. */
   it('returns {params, redactions}', async () => {
     const { redactParams } = await R();
@@ -1094,7 +1094,7 @@ describe('redactParams — recursive, caps each field (§4.4)', () => {
     assert.doesNotThrow(() => redactParams([SECRETS.mubitKey], c));
   });
 
-  // §4.4: "caps each field" — 4 KiB per field, not 4 KiB shared across the object.
+  // "caps each field" — 4 KiB per field, not 4 KiB shared across the object.
   it('caps each field independently at MUBIT_CC_MAX_PARAM_BYTES', async () => {
     const { redactParams } = await R();
     const toolInput = { old_string: 'a'.repeat(5000), new_string: 'b'.repeat(5000) };

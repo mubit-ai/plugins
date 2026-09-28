@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/runid.mjs` — the map from "a Claude Code session" to "a Mubit run" (§4.3).
+ * `lib/runid.mjs` — the map from "a Claude Code session" to "a Mubit run".
  *
  * Four strategies:
  *
@@ -361,7 +361,7 @@ function assertUsableRunId(id) {
     throw new Error(
       `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. `
       + 'An empty run id, a bare "cc-" prefix, or the literal "default" would write this '
-      + "project's memory into a run shared by every user and project on the machine (§4.3).");
+      + "project's memory into a run shared by every user and project on the machine.");
   }
   return s;
 }
@@ -437,7 +437,7 @@ export function turnNumber(cfg, runId, payload) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.3/§5.1: the stable role `claude-code`, plus `-sub-<agentShort>` when the payload
+ * The stable role `claude-code`, plus `-sub-<agentShort>` when the payload
  * belongs to a subagent — two subagents working at the same time must never share an
  * identity, or their work cannot be told apart. That distinctness is the only thing this
  * value has to provide; see `AGENT_ROLES` for why the parent half is not per-session.
@@ -456,7 +456,7 @@ export function deriveAgentId(payload = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.3: the sub-run form — `<parent_run_id>-sub-<agentShort>`, the same suffix
+ * The sub-run form — `<parent_run_id>-sub-<agentShort>`, the same suffix
  * `deriveAgentId` puts on the role, applied to the run instead.
  *
  * ---------------------------------------------------------------------------
@@ -546,7 +546,7 @@ function subagentShort(payload) {
  */
 
 /**
- * §4.3: persist the whole `SessionRecord`, verbatim. Takes no `cfg` — the data
+ * Persist the whole `SessionRecord`, verbatim. Takes no `cfg` — the data
  * root comes from the live environment — because every caller is a hook that
  * already has the environment and may not have a config.
  *
@@ -563,13 +563,13 @@ export function saveSessionMap(sessionId, record) {
     if (!file) return;
     writeJsonAtomic(sessionPath(file), normaliseRecord(record));
   } catch {
-    // §4.9: an unwritable data dir costs the mapping, never the hook.
+    // An unwritable data dir costs the mapping, never the hook.
   }
 }
 
 /**
- * §4.3: the mapped record, or `null`. A missing file, an empty file and a file
- * truncated by a SIGKILL are all "no record" — never a throw (§12.1), because
+ * The mapped record, or `null`. A missing file, an empty file and a file
+ * truncated by a SIGKILL are all "no record" — never a throw, because
  * the caller's answer to `null` is simply to derive.
  * @param {string} sessionId
  * @returns {(SessionRecord & Record<string, any>)|null}
@@ -872,7 +872,7 @@ function shortHash(input, len) {
 }
 
 /**
- * §7: the same `sha256(endpoint).slice(0, 12)` that names `breaker/` and
+ * The same `sha256(endpoint).slice(0, 12)` that names `breaker/` and
  * `policy/` files, so a record can be joined against them.
  * @param {any} endpoint
  * @returns {string}

@@ -128,7 +128,7 @@ export function baseEnv(o) {
     MUBIT_ENDPOINT: o.endpoint ?? 'https://mubit.example.com',
     MUBIT_API_KEY: o.apiKey ?? 'mbt_test_0123456789abcdef_deadbeefcafebabe0123456789abcdef',
     MUBIT_CC_LOG_LEVEL: 'error',
-    // Tests must never inherit the MCP server's poisoned default (§4.3).
+    // Tests must never inherit the MCP server's poisoned default.
     MUBIT_DEFAULT_SESSION_ID: '',
     // The resume briefing ships ON, and it is pinned off here for the same category of
     // reason as the line above it — a shipped default that would otherwise make unrelated
@@ -585,7 +585,7 @@ export async function assertWithinBudget(label, budgetMs, firstMs, resample, ext
 /**
  * Assert the universal hook contract: exit 0, and stdout is either empty or
  * parseable JSON. Every hook in this plugin satisfies this in every mode,
- * including every failure mode (§4.9).
+ * including every failure mode.
  * @param {HookResult} r
  */
 export function assertHookContract(r) {
@@ -601,7 +601,7 @@ export function assertHookContract(r) {
 // ---------------------------------------------------------------------------
 
 /**
- * Drive the plugin's MCP server over real newline-delimited JSON-RPC (§8).
+ * Drive the plugin's MCP server over real newline-delimited JSON-RPC.
  *
  * Everything else in this file stubs the server out: `test/launch.test.mjs` swaps
  * `./server.js` for a module that snapshots `process.env`, which is the right tool for the

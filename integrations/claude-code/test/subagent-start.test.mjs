@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `hooks/src/subagent-start.mjs` — SubagentStart, blocking (§5.2, §4.3).
+ * `hooks/src/subagent-start.mjs` — SubagentStart, blocking.
  *
  * ---------------------------------------------------------------------------
  * The two facts this hook exists because of, both measured
@@ -150,7 +150,7 @@ test('a subagent starts with memory: SubagentStart returns a recall block on its
     server.assertCalled('POST', '/v2/control/query', 1);
   });
 
-// §5.2: the ladder is `lib/recall.mjs`'s, and rung 1 is the zero-LLM-call one. A subagent
+// The ladder is `lib/recall.mjs`'s, and rung 1 is the zero-LLM-call one. A subagent
 // spawn is not a licence to spend two LLM calls the parent's own prompt would not spend.
 test('recall for a subagent spends one direct_bypass query and never touches /v2/control/context',
   async (t) => {
@@ -207,7 +207,7 @@ test('the query is the parent turn\'s staged prompt, because the payload carries
     assert.equal(body.run_id, RUN_ID,
       'the query must read the PARENT run: a sub-run id has no memory stored against it, so '
       + 'querying one would return nothing for every subagent, forever');
-    // §5.2 — and the same text decides the fusion weights. The staged parent prompt is a
+    // And the same text decides the fusion weights. The staged parent prompt is a
     // diagnosis, so `auto` resolves it to `relevance`, exactly as it does for the parent's
     // own `UserPromptSubmit`. One rule, one query text, three call sites.
     assert.equal(body.rank_by, 'relevance');
@@ -383,7 +383,7 @@ test('two siblings on one parent turn leave two distinct records and two distinc
       `both queries went out as ${JSON.stringify(agentIds)}; two subagents working at the same `
       + 'time must not share an identity on the wire or their work cannot be told apart');
     for (const id of agentIds) {
-      assert.match(id, /^claude-code-sub-/, 'a subagent is the role plus its own suffix (§4.3)');
+      assert.match(id, /^claude-code-sub-/, 'a subagent is the role plus its own suffix');
     }
   });
 
@@ -433,7 +433,7 @@ test('the parent\'s seen ids do not degrade the subagent\'s block into pointers'
 });
 
 // ---------------------------------------------------------------------------
-// §4.9 — a memory layer never breaks a subagent spawn
+// A memory layer never breaks a subagent spawn
 // ---------------------------------------------------------------------------
 
 test('an empty recall injects nothing rather than "I found nothing"', async (t) => {

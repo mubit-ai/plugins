@@ -127,7 +127,7 @@ test('no temp file survives a write', { skip: IS_ROOT }, async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Never throws — every caller is on a hook's critical path (§4.9)
+// Never throws — every caller is on a hook's critical path
 // ---------------------------------------------------------------------------
 
 test('corrupt JSON reads as {} rather than throwing', async () => {

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `mcp/src/instructions.mjs` — the server `instructions` the bundled server cannot set (§8.3).
+ * `mcp/src/instructions.mjs` — the server `instructions` the bundled server cannot set.
  *
  * **Why this field matters more than it looks.** Claude Code defers MCP tool schemas: with
  * tool search on — the default — only tool *names* and the server's `instructions` string

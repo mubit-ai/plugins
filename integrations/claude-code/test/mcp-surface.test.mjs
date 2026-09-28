@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * What the model is actually handed — §8.1, §8.2, §3.5.
+ * What the model is actually handed.
  *
  * Every other MCP test in this suite stubs the server out. `test/launch.test.mjs` swaps
  * `./server.js` for a module that snapshots `process.env`, which proves the launcher sets
@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { mcpListTools, PLUGIN_ROOT } from './helpers/harness.mjs';
 
 /**
- * §8.2 — the curated set, in the guide's order: the retrieval verbs, the two writes that make
+ * The curated set, in the guide's order: the retrieval verbs, the two writes that make
  * memory improve with use, and the two diagnostics. Everything a person asks for — the
  * catalogue, a delete, a named checkpoint, the pattern across lessons, an explicit reflect —
  * is reached through a skill that runs `bin/admin.mjs`, at no listing cost on either host.
@@ -52,7 +52,7 @@ const EXCLUDED = [
 
 /** The remedy every failure in this file shares. Stated once. */
 const REMEDY = '\n  The shipped `mcp/dist/server.js` must be built from an @mubit-ai/mcp that reads\n'
-  + '  MUBIT_MCP_TOOLS (§8.1). Rebuild it:\n'
+  + '  MUBIT_MCP_TOOLS. Rebuild it:\n'
   + '    npm --prefix ../mcp ci && npm --prefix ../mcp run build\n'
   + '    npm run build';
 
@@ -86,16 +86,16 @@ const RETRIEVAL = ['mubit_recall', 'mubit_lessons', 'mubit_diagnose', 'mubit_der
 let _default;
 const defaultSurface = () => (_default ??= mcpListTools());
 
-// §8.2 — a blank `mcpTools` means the curated set. Not none, and not all 21.
+// A blank `mcpTools` means the curated set. Not none, and not all 21.
 test('tools/list advertises exactly the curated set', async () => {
   const { names } = await defaultSurface();
 
   assert.deepEqual(names, [...DEFAULT_ALLOWLIST].sort(),
-    `the server advertised ${names.length} tools, not the curated ${DEFAULT_ALLOWLIST.length} (§8.2).\n`
+    `the server advertised ${names.length} tools, not the curated ${DEFAULT_ALLOWLIST.length}.\n`
     + `  advertised: ${names.join(', ')}${REMEDY}`);
 });
 
-// §3.5 — the cost of getting this wrong, stated as the thing it costs: eight tool schemas
+// The cost of getting this wrong, stated as the thing it costs: eight tool schemas
 // resident in every session, forever, for verbs a hook already covers.
 test('none of the eight excluded tools is advertised', async () => {
   const { names } = await defaultSurface();
@@ -103,10 +103,10 @@ test('none of the eight excluded tools is advertised', async () => {
 
   assert.deepEqual(leaked, [],
     `${leaked.length} tool(s) outside the allowlist are advertised, and every session pays `
-    + `for their schemas: ${leaked.join(', ')} (§8.2, §3.5).${REMEDY}`);
+    + `for their schemas: ${leaked.join(', ')}.${REMEDY}`);
 });
 
-// §8.2 — "Users restore any of them with mcpTools / MUBIT_MCP_TOOLS." A user-supplied list
+// "Users restore any of them with mcpTools / MUBIT_MCP_TOOLS." A user-supplied list
 // is used verbatim, not unioned with the default: "give me only mubit_recall" is a
 // legitimate request and only a verbatim list can express it.
 test('a user-supplied MUBIT_MCP_TOOLS is honoured verbatim', async () => {
@@ -117,7 +117,7 @@ test('a user-supplied MUBIT_MCP_TOOLS is honoured verbatim', async () => {
     + `${names.join(', ')}${REMEDY}`);
 });
 
-// §8.1 — the same commit that added the allowlist stopped reporting a hardcoded
+// The same commit that added the allowlist stopped reporting a hardcoded
 // serverInfo.version of "0.1.0" and read it from package.json instead. The literal is
 // therefore a reliable tell that the bundle predates the patch, and `scripts/mcp-probe.mjs`
 // already prints it as one. Asserting it here means the version and the behaviour cannot
@@ -134,7 +134,7 @@ test('a user-supplied MUBIT_MCP_TOOLS is honoured verbatim', async () => {
 // `realToolNames()` in launch.test.mjs documents. The two are held equal at release time and
 // asserted by manifests.test.mjs ('version lockstep'), so reading the local one costs nothing
 // and works everywhere this test can run.
-// §3.5 — `skills.test.mjs` already holds every SKILL.md to this bar: the description "is
+// `skills.test.mjs` already holds every SKILL.md to this bar: the description "is
 // what the model reads when deciding whether to invoke the skill; it is always loaded and
 // counts against contextCost, so it must actually describe the trigger". Tool descriptions
 // are the same surface with a higher bill — every one of them resident in every request of every
@@ -207,7 +207,7 @@ test('serverInfo reports the bundled server\'s real version', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// §8.2 — three verbs whose descriptions stay gated
+// Three verbs whose descriptions stay gated
 // ---------------------------------------------------------------------------
 
 /**

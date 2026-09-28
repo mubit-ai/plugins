@@ -2,7 +2,7 @@
 // @ts-check
 /**
  * `hooks/src/capture.mjs` — PostToolUse / PostToolUseFailure / PermissionRequest / Stop /
- * StopFailure / SubagentStop (§5.4).
+ * StopFailure / SubagentStop.
  *
  * One script, six modes by argv: none, `--failure`, `--permission`, `--stop`,
  * `--stop-failure`, `--subagent`.
@@ -114,7 +114,7 @@ const PATH_KEYS = [
  * looked empty. Do not tidy it back on.
  *
  * Applied to SUCCESSFUL calls only, for the same reason self-reference suppression is
- * (step 2 below): a failure is the highest-value thing a coding agent can remember (§4.5),
+ * (step 2 below): a failure is the highest-value thing a coding agent can remember,
  * and "the todo write blew up" is a diagnostic nobody else is keeping.
  */
 const SKIP_TOOLS = new Set([
@@ -494,7 +494,7 @@ function buildToolItem(payload, cfg, mode, runId) {
   return item({
     cfg,
     payload,
-    // §5.4: "item_id is stable per tool call so a retried drain deduplicates." Derived from
+    // "item_id is stable per tool call so a retried drain deduplicates." Derived from
     // `tool_use_id` and nothing else — a timestamp in here would make every retry a new
     // entry, which is the exact failure the dedup exists to prevent.
     id: `cc-${idPart(payload.tool_use_id) || fallbackId(payload, text)}`,
@@ -613,7 +613,7 @@ function buildPermissionItem(payload, cfg) {
  * Stop / SubagentStop: `"Q: <staged prompt>\n\nA: <capped assistant message>"`.
  *
  * `Stop` carries `last_assistant_message` but NOT the prompt, so the other half of the
- * conversation comes from the turn file `stage-prompt.mjs` wrote (§5.3).
+ * conversation comes from the turn file `stage-prompt.mjs` wrote.
  *
  * A `Stop` is a `task_result`; a `SubagentStop` is a `handoff` — the same text, addressed to
  * the parent role and carrying the fields a handoff created through the route carries, so a
@@ -656,7 +656,7 @@ function buildTurnItem(payload, cfg, runId, mode, suffix = '') {
   const a = attempt(() => redactText(answer, cfg, 'output'), { text: '', redactions: 0, truncated: false });
   const text = `Q: ${q.text}\n\nA: ${a.text}`;
 
-  // §4.5: a SubagentStop is attributed to the subagent's own `agent_id`, not the parent's.
+  // A SubagentStop is attributed to the subagent's own `agent_id`, not the parent's.
   // ingest item (control.proto) has no agent field and the batch-level one belongs
   // to the session, so the attribution rides in `metadata_json` — otherwise a six-subagent
   // fan-out collapses into one indistinguishable blob at recall time.
@@ -708,8 +708,8 @@ function buildTurnItem(payload, cfg, runId, mode, suffix = '') {
 }
 
 /**
- * The §5.4 wire shape. `item_id` and `content_type` are REQUIRED (§1.3) — a missing one is a
- * 422 for the whole batch, not just this item — and `intent` is always set (§1.5).
+ * The §5.4 wire shape. `item_id` and `content_type` are REQUIRED — a missing one is a
+ * 422 for the whole batch, not just this item — and `intent` is always set.
  *
  * @param {{cfg: Record<string, any>, payload: Record<string, any>, id: string, text: string,
  *          intent: any, importance: any, metadata: Record<string, any>}} o
@@ -884,7 +884,7 @@ function errorText(payload) {
 }
 
 // ---------------------------------------------------------------------------
-// The turn file (§5.3 / §5.4 step 8)
+// The turn file
 // ---------------------------------------------------------------------------
 
 /** @param {Record<string, any>} cfg @param {string} runId @param {any} promptId */
@@ -903,11 +903,11 @@ function readTurn(cfg, runId, promptId) {
 }
 
 /**
- * §5.4 step 8: add the end markers **in place**. `prompt` and `recalled` were staged by
+ * Add the end markers **in place**. `prompt` and `recalled` were staged by
  * `stage-prompt.mjs` and are what `drain --with-outcome` attributes against — writing a
  * fresh object here would silently delete the attribution the next step depends on.
  *
- * This is also where the used-signal lands (§5.5), for the same reason: everything it needs
+ * This is also where the used-signal lands, for the same reason: everything it needs
  * — the staged terms and `last_assistant_message` — is in scope at one point in one function,
  * and the file is already being rewritten. One read, one write, no new lifecycle.
  *
@@ -1314,7 +1314,7 @@ function resultIsError(response) {
  * Until that check exists, nothing may gate recall on this: it is a measurement, not a
  * verdict, and `drain` treats it as one.
  *
- * §4.4: nothing from the reply is written down. The record carries only terms that
+ * Nothing from the reply is written down. The record carries only terms that
  * `prompt-recall` already staged and already scrubbed, so a secret the assistant happened to
  * print cannot land here — the reply is read, matched against, and dropped.
  *
@@ -1362,7 +1362,7 @@ function usedEvidence(turn, payload) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.3/§5.5: `count >= batchMaxItems OR oldestMs >= batchMaxAgeMs`.
+ * `count >= batchMaxItems OR oldestMs >= batchMaxAgeMs`.
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @returns {boolean}
@@ -1450,7 +1450,7 @@ function hasDeniedSubject(payload, cfg) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.4: "every step is individually try/caught". One broken step costs its own contribution
+ * "every step is individually try/caught". One broken step costs its own contribution
  * and nothing else — most importantly, a redaction crash drops the item rather than letting
  * an unredacted one through.
  * @template T
@@ -1517,13 +1517,13 @@ function fallbackId(payload, text) {
   return `anon-${h.toString(16).padStart(8, '0')}`;
 }
 
-/** §1.5: there is no path out of here with an empty or `unclassified` intent. */
+/** There is no path out of here with an empty or `unclassified` intent. */
 function intentOr(v) {
   const s = str(v).trim();
   return s && s !== 'unclassified' ? s : 'tool_output';
 }
 
-/** §1.3: `importance` is a closed vocabulary; anything else is a 422 waiting to happen. */
+/** `importance` is a closed vocabulary; anything else is a 422 waiting to happen. */
 function importanceOr(v) {
   const s = str(v).trim().toLowerCase();
   return ['low', 'medium', 'high', 'critical'].includes(s) ? s : 'medium';

@@ -64,7 +64,7 @@ describe('classifyTool — Codex tool names', () => {
           : 'A read graded as a trace inflates the run with low-value episodes.'}`);
       assert.equal(got.importance, row.importance,
         `${row.tool} graded ${got.importance}, expected ${row.importance}.`);
-      assert.equal(got.contentType, 'text', 'the plugin only ever writes text (§1.3).');
+      assert.equal(got.contentType, 'text', 'the plugin only ever writes text.');
     });
   }
 });

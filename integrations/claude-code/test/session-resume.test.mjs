@@ -625,7 +625,7 @@ test('takeResume: a briefing older than RESUME_TTL_MS is dropped rather than inj
     'an expired briefing is swept too, or it is re-read and re-rejected on every prompt');
 });
 
-// §4.9: nothing on the recall path throws. A truncated file is the ordinary state after a
+// Nothing on the recall path throws. A truncated file is the ordinary state after a
 // SIGKILL mid-write, and the unlink happens first precisely so that a file which cannot be
 // parsed does not become a permanent read on the blocking path.
 test('takeResume: a corrupt briefing degrades to nothing, and is removed anyway', async () => {
@@ -1038,7 +1038,7 @@ test('a dead endpoint costs the briefing and nothing else', async () => {
   assert.equal(existsSync(resumePath(dataDir)), false);
 });
 
-// §4.1: with no endpoint there is nothing to brief from. `urlFor` would hand `fetch` a bare
+// With no endpoint there is nothing to brief from. `urlFor` would hand `fetch` a bare
 // route, which throws `ERR_INVALID_URL` before a socket exists.
 test('an unconfigured install dials nothing and writes nothing', async () => {
   const dataDir = makeDataDir();

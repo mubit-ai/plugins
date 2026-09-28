@@ -111,7 +111,7 @@ function stageTurn(cfg, runId, payload) {
     // can be pinned by hand. This join used to sanitise only the first, which put the turn
     // file somewhere no sibling hook would ever read it.
     const dir = join(runDir(cfg, runId), 'turns');
-    // §12.1: a read-only ${CLAUDE_PLUGIN_DATA} costs this Q&A pair and nothing else.
+    // A read-only ${CLAUDE_PLUGIN_DATA} costs this Q&A pair and nothing else.
     if (!ensureDir(dir)) return false;
 
     const file = join(dir, `${promptId}.json`);
@@ -252,7 +252,7 @@ function maybeDrain(cfg, runId, payload) {
     const stale = oldestMs >= intOr(cfg.batchMaxAgeMs, 30000);
     if (!full && !stale) return;
 
-    // §4.9: the payload travels by file, not by inherited stdin — a detached child's stdin is
+    // The payload travels by file, not by inherited stdin — a detached child's stdin is
     // not reliably readable once this process exits.
     const payloadPath = writePayload(cfg, payload);
     spawnDetached(cfg, 'drain', [], payloadPath);

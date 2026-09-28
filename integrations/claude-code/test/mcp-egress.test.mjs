@@ -3,7 +3,7 @@
  * What an MCP write actually puts on the wire.
  *
  * Every other outbound call in this plugin goes through `lib/http.mjs`, which refuses a
- * poisoned run id (§4.3) and scrubs the body first (§7). The MCP server is the exception:
+ * poisoned run id and scrubs the body first. The MCP server is the exception:
  * it is a vendored bundle that dials the endpoint itself, and nothing in this repo saw the
  * request. Two things used to go out through that gap.
  *
@@ -102,7 +102,7 @@ test('the lesson itself still reaches the wire intact', async (t) => {
   assert.equal(item.source, 'agent');
 });
 
-// §4.3 — the launcher exists to derive the run id rather than let it be defaulted. The tool
+// The launcher exists to derive the run id rather than let it be defaulted. The tool
 // schema then hands the caller a `session_id` parameter that would override it. Closing the
 // second hole is what makes the first one worth closing.
 test('a caller-supplied session_id does not move the write out of the derived run', async (t) => {
@@ -281,7 +281,7 @@ test('resolveCeiling defaults to run and refuses anything it does not know', asy
   }
 });
 
-// `org` is promotion-only and must never be client-written (§1.6). It sits above `global`,
+// `org` is promotion-only and must never be client-written. It sits above `global`,
 // so a ceiling of `global` has to bring it down like anything else.
 test('guardIngest clamps down the whole lattice and never up', async () => {
   const { guardIngest } = await E();

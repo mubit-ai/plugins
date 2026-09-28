@@ -322,7 +322,7 @@ export const cwdChanged = (over = {}) => base({
   ...over,
 });
 
-/** A spooled ingest item, shaped as one element of the eventual `items[]` (§5.4). */
+/** A spooled ingest item, shaped as one element of the eventual `items[]`. */
 export const spoolItem = (over = {}) => ({
   item_id: `cc-${TOOL_USE_ID}-1765000000123`,
   content_type: 'text',

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/rank.mjs` — the prompt-shape rule behind `rank_by` (§5.2, W1-2).
+ * `lib/rank.mjs` — the prompt-shape rule behind `rank_by` (W1-2).
  *
  * ---------------------------------------------------------------------------
  * What is being claimed, and what would falsify it
@@ -126,7 +126,7 @@ for (const [prompt, why] of RELEVANCE) {
 // Totality — this runs on the critical path of every prompt
 // ---------------------------------------------------------------------------
 
-// §4.9: recall must never take a prompt down, and this is the first thing that touches the
+// Recall must never take a prompt down, and this is the first thing that touches the
 // prompt text. Anything that is not a string is simply not a handoff question.
 test('rankForPrompt: junk in, "relevance" out, and never a throw', async () => {
   const { rankForPrompt } = await R();

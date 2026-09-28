@@ -13,7 +13,7 @@
  * So the rules have to already be on disk when it runs. Two hooks are *already* paying for a
  * network call that returns typed entries, and both of them see rules go past:
  *
- *   - `session-start` asks `POST /v2/control/lessons` for the global set (§5.1 step 6). Some
+ *   - `session-start` asks `POST /v2/control/lessons` for the global set. Some
  *     of those are `lesson_type: "rule"`.
  *   - `prompt-recall` asks `POST /v2/control/query` on every prompt and gets `evidence[]`
  *     back, with `entry_type: "rule"` among the five types it requests (§5.2 rung 1).
@@ -50,7 +50,7 @@ import { join } from 'node:path';
 
 import { ensureDir, readJson, runDir, writeJsonAtomic } from './state.mjs';
 
-/** §7: `runs/<run_id>/rules.json`. */
+/** `runs/<run_id>/rules.json`. */
 export const RULES_FILE = 'rules.json';
 
 /** Bumped only if the on-disk shape changes; an unknown version reads as no rules. */
@@ -107,7 +107,7 @@ export function recordRules(cfg, runId, entries) {
     const merged = dedupe([...incoming, ...readRules(cfg, runId)]).slice(0, MAX_RULES);
 
     const dir = runDir(cfg, runId);
-    // §12.1: a read-only ${CLAUDE_PLUGIN_DATA} costs the warnings, nothing else.
+    // A read-only ${CLAUDE_PLUGIN_DATA} costs the warnings, nothing else.
     if (!ensureDir(dir)) return 0;
     const ok = writeJsonAtomic(join(dir, RULES_FILE), {
       version: VERSION,

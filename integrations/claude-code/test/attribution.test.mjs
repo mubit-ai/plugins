@@ -99,7 +99,7 @@ test('recall → stop → drain attributes the outcome to the recalled reference
 
   const body = server.lastCall('POST', '/v2/control/outcome').body;
 
-  // §1.3/§5.5: reference_id must be non-empty; "global" is the run-level sentinel and the
+  // reference_id must be non-empty; "global" is the run-level sentinel and the
   // real attribution lives in entry_ids[], which reinforces each entry individually
   // (control.proto).
   assert.equal(body.run_id, RUN_ID);
@@ -121,7 +121,7 @@ test('recall → stop → drain attributes the outcome to the recalled reference
   }
 });
 
-// §4.10/§5.5: only what actually reached the model can be credited for the turn. Evidence
+// Only what actually reached the model can be credited for the turn. Evidence
 // the token budget dropped was never seen, so reinforcing it would teach the store a lie.
 test('only the entries that survived the token budget are attributed', async (t) => {
   const long = (tag, ch) => `${tag} ${ch.repeat(400)}`; // ~100 tokens each
@@ -168,7 +168,7 @@ test('only the entries that survived the token budget are attributed', async (t)
 // outcomeMode
 // ---------------------------------------------------------------------------
 
-// §5.5/§6.1: "off" disables implicit attribution entirely. The loop stops; nothing else does.
+// "off" disables implicit attribution entirely. The loop stops; nothing else does.
 test('outcomeMode "off" posts no outcome at all', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/ingest': SLOW_INGEST });
   t.after(() => server.close());
@@ -186,7 +186,7 @@ test('outcomeMode "off" posts no outcome at all', async (t) => {
   server.assertNotCalled('POST', '/v2/control/outcome');
 });
 
-// §5.5: "explicit" hands the call to the model via the mubit_outcome MCP verb. The hook must
+// "explicit" hands the call to the model via the mubit_outcome MCP verb. The hook must
 // not also fire one, or the model's deliberate judgement gets diluted by an automatic 0.2.
 test('outcomeMode "explicit" posts no implicit outcome either', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/ingest': SLOW_INGEST });
@@ -203,7 +203,7 @@ test('outcomeMode "explicit" posts no implicit outcome either', async (t) => {
   server.assertNotCalled('POST', '/v2/control/outcome');
 });
 
-// §5.5/§12.4: "only when entry_ids is non-empty". An outcome with an empty entry_ids[]
+// "only when entry_ids is non-empty". An outcome with an empty entry_ids[]
 // attributes a turn to nothing at all — a wasted round trip that also pollutes the
 // run-level signal history the reflect path reads.
 test('a turn that recalled nothing skips the outcome call entirely', async (t) => {
@@ -234,7 +234,7 @@ test('a turn that recalled nothing skips the outcome call entirely', async (t) =
 // Idempotency
 // ---------------------------------------------------------------------------
 
-// §5.5: the outcome idempotency_key is derived from (run_id, prompt_id), never random, so a
+// The outcome idempotency_key is derived from (run_id, prompt_id), never random, so a
 // retry after a failed post is a server-side no-op instead of double reinforcement. The
 // server keeps an outcome idempotency ledger across restarts, which only
 // helps if the client sends a stable key.

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `lib/hook.mjs` — the harness every hook in this plugin runs inside (§4.9).
+ * `lib/hook.mjs` — the harness every hook in this plugin runs inside.
  *
  * The whole point of this module is exit-code discipline. Claude Code reads a hook's
  * exit code first: 0 → stdout is parsed as JSON; 2 → the hook BLOCKS and stderr becomes
@@ -124,7 +124,7 @@ async function runScript(script, o) {
   return { code, stdout, stderr, ms: Date.now() - started };
 }
 
-/** Exit 0 and stdout that parses as a JSON object — the universal contract (§4.9). */
+/** Exit 0 and stdout that parses as a JSON object — the universal contract. */
 function jsonStdout(r) {
   assert.equal(r.code, 0, `hook must ALWAYS exit 0, got ${r.code}. stderr:\n${r.stderr}`);
   const raw = r.stdout.trim();
@@ -154,7 +154,7 @@ async function mubit(t, routes) {
 
 // ---------------------------------------------------------------------------
 
-// §4.9 — whatever body returns is stringified to stdout, and the exit code is 0.
+// Whatever body returns is stringified to stdout, and the exit code is 0.
 test('runHook: a normal return is stringified to stdout with exit 0', async (t) => {
   requireHookLib();
   const dataDir = makeDataDir();
@@ -166,7 +166,7 @@ test('runHook: a normal return is stringified to stdout with exit 0', async (t) 
   assert.deepEqual(out, { hookSpecificOutput: { hookEventName: 'PostToolUse', ok: true } });
 });
 
-// §4.9 — "undefined emits {}". A hook with nothing to say still owes Claude Code valid JSON.
+// "undefined emits {}". A hook with nothing to say still owes Claude Code valid JSON.
 test('runHook: a body returning undefined emits {}', async (t) => {
   requireHookLib();
   const dataDir = makeDataDir();
@@ -177,7 +177,7 @@ test('runHook: a body returning undefined emits {}', async (t) => {
   assert.deepEqual(jsonStdout(r), {});
 });
 
-// §4.9 — "Any throw is caught, logged, and becomes exit 0 with {"suppressOutput": true}".
+// "Any throw is caught, logged, and becomes exit 0 with {"suppressOutput": true}".
 // Exit 1 here would show the user an error toast for a memory-layer bug they cannot fix.
 test('runHook: a throw inside body becomes exit 0 + {"suppressOutput":true}', async (t) => {
   requireHookLib();
@@ -192,7 +192,7 @@ test('runHook: a throw inside body becomes exit 0 + {"suppressOutput":true}', as
   assert.notEqual(r.code, 2);
 });
 
-// §4.9 — a rejected promise is the async spelling of a throw and must land identically.
+// A rejected promise is the async spelling of a throw and must land identically.
 test('runHook: a rejected promise from body becomes exit 0 + {"suppressOutput":true}', async (t) => {
   requireHookLib();
   const dataDir = makeDataDir();
@@ -203,7 +203,7 @@ test('runHook: a rejected promise from body becomes exit 0 + {"suppressOutput":t
   assert.deepEqual(jsonStdout(r), { suppressOutput: true });
 });
 
-// §4.9 — body runs "under a hard deadline". Claude Code waits for the process to exit
+// Body runs "under a hard deadline". Claude Code waits for the process to exit
 // before reading stdout, so a runaway body must not be able to stall a tool call.
 test('runHook: a body over budget is cut off, still exits 0 with valid JSON', async (t) => {
   requireHookLib();
@@ -220,7 +220,7 @@ test('runHook: a body over budget is cut off, still exits 0 with valid JSON', as
     'the late body result must not be emitted after the deadline');
 });
 
-// §4.9 — malformed stdin emits {} and exits 0, and says so exactly once in the log.
+// Malformed stdin emits {} and exits 0, and says so exactly once in the log.
 test('runHook: malformed stdin emits {}, exits 0, logs once, and never runs body', async (t) => {
   requireHookLib();
   const dataDir = makeDataDir();
@@ -233,13 +233,13 @@ test('runHook: malformed stdin emits {}, exits 0, logs once, and never runs body
   assert.equal(existsSync(echo), false, 'body must not run on unparseable stdin');
 
   const logPath = join(dataDir, 'logs', 'mubit-cc.log');
-  assert.ok(existsSync(logPath), 'a swallowed stdin parse failure must still be logged (§4.8)');
+  assert.ok(existsSync(logPath), 'a swallowed stdin parse failure must still be logged');
   const hits = readFileSync(logPath, 'utf8')
     .split('\n').filter((l) => /stdin|payload|malformed|parse/i.test(l));
   assert.equal(hits.length, 1, `expected exactly one log entry, got:\n${hits.join('\n')}`);
 });
 
-// §4.9 — empty stdin is the same story: {} and exit 0, never a crash.
+// Empty stdin is the same story: {} and exit 0, never a crash.
 test('runHook: empty stdin emits {} and exits 0', async (t) => {
   requireHookLib();
   const dataDir = makeDataDir();
@@ -252,7 +252,7 @@ test('runHook: empty stdin emits {} and exits 0', async (t) => {
   assert.equal(existsSync(echo), false, 'body must not run without a payload');
 });
 
-// §4.9 — spawnDetached: the parent returns immediately, the child outlives it, and the
+// spawnDetached: the parent returns immediately, the child outlives it, and the
 // payload travels through a file because a detached child's inherited stdin is not
 // reliably readable once the parent exits.
 test('spawnDetached: parent returns immediately; child is detached and unlinks its payload file', async (t) => {
@@ -303,7 +303,7 @@ import { randomUUID } from 'node:crypto';
 const cfg = loadConfig();
 const dataDir = process.env.MUBIT_CC_DATA_DIR;
 mkdirSync(join(dataDir, 'tmp'), { recursive: true });
-// §4.9: payload handoff goes through \${CLAUDE_PLUGIN_DATA}/tmp/<uuid>.json.
+// Payload handoff goes through \${CLAUDE_PLUGIN_DATA}/tmp/<uuid>.json.
 const payloadPath = join(dataDir, 'tmp', randomUUID() + '.json');
 writeFileSync(payloadPath, process.env.T_PAYLOAD);
 const t0 = Date.now();

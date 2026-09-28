@@ -2,8 +2,8 @@
 /**
  * `lib/state.mjs`, `lib/markers.mjs`, `lib/log.mjs`.
  *
- * Protects the module API and the exact Marker shape (§4.8), and the state
- * layout under `${CLAUDE_PLUGIN_DATA}` and its TTL table (§7).
+ * Protects the module API and the exact Marker shape, and the state
+ * layout under `${CLAUDE_PLUGIN_DATA}` and its TTL table.
  *
  * These three modules are the plugin's only durable surface: every hook is a
  * short-lived process, so anything that must survive a process boundary goes
@@ -108,7 +108,7 @@ function walk(dir, prefix = '') {
 // state.mjs — dataDir()
 // ===========================================================================
 
-// §4.8: dataDir() resolution order, level 1 — MUBIT_CC_DATA_DIR wins outright.
+// dataDir() resolution order, level 1 — MUBIT_CC_DATA_DIR wins outright.
 test('dataDir(): MUBIT_CC_DATA_DIR beats CLAUDE_PLUGIN_DATA', async () => {
   const state = await lib('state.mjs');
   const override = makeDataDir();
@@ -120,7 +120,7 @@ test('dataDir(): MUBIT_CC_DATA_DIR beats CLAUDE_PLUGIN_DATA', async () => {
   assert.equal(got, override);
 });
 
-// §4.8: resolution order, level 2 — the host's CLAUDE_PLUGIN_DATA.
+// Resolution order, level 2 — the host's CLAUDE_PLUGIN_DATA.
 test('dataDir(): falls back to CLAUDE_PLUGIN_DATA when the override is unset', async () => {
   const state = await lib('state.mjs');
   const host = makeDataDir();
@@ -149,7 +149,7 @@ test('dataDir(): falls back to ~/.claude/plugins/data/mubit-memory', async () =>
 // state.mjs — writeJsonAtomic()
 // ===========================================================================
 
-// §4.8: writeJsonAtomic writes `<p>.tmp-<pid>` then renames — nothing is left behind.
+// writeJsonAtomic writes `<p>.tmp-<pid>` then renames — nothing is left behind.
 test('writeJsonAtomic(): target parses and no .tmp-* sibling survives', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -162,7 +162,7 @@ test('writeJsonAtomic(): target parses and no .tmp-* sibling survives', async ()
   assert.deepEqual(leftovers, [], 'a temp file survived the rename');
 });
 
-// §4.8/§7: hooks write into `runs/<run_id>/spool/` before anything creates it.
+// Hooks write into `runs/<run_id>/spool/` before anything creates it.
 test('writeJsonAtomic(): creates missing parent directories', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -174,7 +174,7 @@ test('writeJsonAtomic(): creates missing parent directories', async () => {
   assert.equal(readJsonFile(target).item_id, fx.spoolItem().item_id);
 });
 
-// §4.8: the point of the tmp+rename dance — a concurrent reader (the status line
+// The point of the tmp+rename dance — a concurrent reader (the status line
 // runs every frame) must see either the old file or the new one, never a partial.
 test('writeJsonAtomic(): a concurrent reader never observes a partial file', async () => {
   const state = await lib('state.mjs'); // red-state guard: fails loudly if unwritten
@@ -235,7 +235,7 @@ test('writeJsonAtomic(): a concurrent reader never observes a partial file', asy
 // state.mjs — readJson()
 // ===========================================================================
 
-// §4.8: readJson never throws — every caller is on a hook's critical path.
+// readJson never throws — every caller is on a hook's critical path.
 test('readJson(): returns the fallback for a missing file', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -260,7 +260,7 @@ test('readJson(): returns the fallback for corrupt and truncated files', async (
   }
 });
 
-// §4.8: the documented default fallback is null.
+// The documented default fallback is null.
 test('readJson(): defaults the fallback to null, and parses valid JSON', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -347,7 +347,7 @@ test('pruneStale(): a fresh ledger survives the sweep that ages out the turn fil
   assert.equal(existsSync(ledger), true, 'the ledger is on a thirty-day clock, not the turns\' six-hour one');
 });
 
-// §7: "Pruning runs at most hourly, gated by an O_EXCL marker at prune.lock."
+// "Pruning runs at most hourly, gated by an O_EXCL marker at prune.lock."
 test('pruneStale(): claims an O_EXCL prune.lock', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -356,7 +356,7 @@ test('pruneStale(): claims an O_EXCL prune.lock', async () => {
     'prune must leave the hourly gate marker behind');
 });
 
-// §7: at most hourly — a second call in the same hour must not sweep again.
+// At most hourly — a second call in the same hour must not sweep again.
 test('pruneStale(): a second call within the hour is a no-op', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -368,7 +368,7 @@ test('pruneStale(): a second call within the hour is a no-op', async () => {
     'prune ran twice inside one hour; the gate is not holding');
 });
 
-// §7: once the gate is older than an hour, the sweep runs again.
+// Once the gate is older than an hour, the sweep runs again.
 test('pruneStale(): runs again once prune.lock is older than an hour', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -383,7 +383,7 @@ test('pruneStale(): runs again once prune.lock is older than an hour', async () 
   assert.equal(existsSync(p), false, 'a >1h prune.lock must not block the next sweep');
 });
 
-// §7: the sweep is a scalpel — unknown files under DATA are not its business.
+// The sweep is a scalpel — unknown files under DATA are not its business.
 test('pruneStale(): leaves files it does not own alone', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -394,7 +394,7 @@ test('pruneStale(): leaves files it does not own alone', async () => {
   assert.equal(existsSync(foreign), true);
 });
 
-// §4.9/§12.1: state helpers never throw, even when DATA is unusable.
+// State helpers never throw, even when DATA is unusable.
 test('pruneStale(): does not throw when the data dir does not exist', async () => {
   const state = await lib('state.mjs');
   const dir = tempDir('mubit-cc-gone-');
@@ -407,7 +407,7 @@ test('pruneStale(): does not throw when the data dir does not exist', async () =
 // markers.mjs
 // ===========================================================================
 
-/** The Marker, verbatim (§4.8). */
+/** The Marker, verbatim. */
 const MARKER = {
   run_id: 'cc-my-project-9f2a11c4',
   mode: 'local',
@@ -445,7 +445,7 @@ test('updateMarker()/readMarker(): the §4.8 Marker round-trips at status/<run_i
   }
 });
 
-// §4.8: updateMarker is a patch — hooks each own one slice of the marker and
+// updateMarker is a patch — hooks each own one slice of the marker and
 // run in separate processes, so a write must not clobber a sibling's slice.
 test('updateMarker(): merges, and does not clobber sibling keys', async () => {
   const markers = await lib('markers.mjs');
@@ -471,7 +471,7 @@ test('updateMarker(): merges, and does not clobber sibling keys', async () => {
   assert.equal(got.lessons.global, 3);
 });
 
-// §4.8/§10: statusline.mjs reads the marker on every frame; a missing marker is
+// statusline.mjs reads the marker on every frame; a missing marker is
 // the normal state before the first hook has ever run.
 test('readMarker(): a missing marker yields a usable default, never a throw', async () => {
   const markers = await lib('markers.mjs');
@@ -502,7 +502,7 @@ test('readMarker(): a missing marker yields a usable default, never a throw', as
   }
 });
 
-// §4.8/§12.1: a corrupt marker degrades to the default rather than taking
+// A corrupt marker degrades to the default rather than taking
 // the status line (or the hook that writes it) down with it.
 test('readMarker(): a corrupt marker file degrades to the default', async () => {
   const markers = await lib('markers.mjs');
@@ -520,7 +520,7 @@ test('readMarker(): a corrupt marker file degrades to the default', async () => 
 // log.mjs
 // ===========================================================================
 
-// §4.8: "every message passes through redactText on the way out" — the log is
+// "every message passes through redactText on the way out" — the log is
 // the easiest place to leak the API key you were debugging.
 test('log(): redacts secrets in the message before they reach the file', async () => {
   const log = await lib('log.mjs');
@@ -530,7 +530,7 @@ test('log(): redacts secrets in the message before they reach the file', async (
   inData(dir, () => log.log(cfg, 'error', `register failed with key ${fx.SECRETS.mubitKey}`));
 
   const p = join(dir, 'logs', 'mubit-cc.log');
-  assert.equal(existsSync(p), true, 'log must write to logs/mubit-cc.log (§7)');
+  assert.equal(existsSync(p), true, 'log must write to logs/mubit-cc.log');
   const body = readFileSync(p, 'utf8');
   assert.equal(body.includes(fx.SECRETS.mubitKey), false,
     'the raw mbt_ key reached the log file');
@@ -573,7 +573,7 @@ test('log(): honours the configured level', async () => {
   assert.ok(readFileSync(p, 'utf8').includes('this one is at threshold'));
 });
 
-// §4.8: "rotates at 1 MiB and keeps two files" — a ring, not an unbounded log.
+// "rotates at 1 MiB and keeps two files" — a ring, not an unbounded log.
 test('log(): rings at 1 MiB keeping exactly two files', async () => {
   const log = await lib('log.mjs');
   const dir = makeDataDir();
@@ -604,7 +604,7 @@ test('log(): rings at 1 MiB keeping exactly two files', async () => {
   }
 });
 
-// §4.9/§12.1: logging is never allowed to be the thing that breaks a hook.
+// Logging is never allowed to be the thing that breaks a hook.
 test('log(): does not throw when the log directory cannot be created', async () => {
   const log = await lib('log.mjs');
   const dir = tempDir('mubit-cc-nolog-');
@@ -616,7 +616,7 @@ test('log(): does not throw when the log directory cannot be created', async () 
 });
 
 // ---------------------------------------------------------------------------
-// dataDir / liveDataDir — §4.8, and the directory a command actually finds
+// dataDir / liveDataDir, and the directory a command actually finds
 // ---------------------------------------------------------------------------
 
 /** A fake `$HOME` with the named `mubit-memory*` directories under it. */

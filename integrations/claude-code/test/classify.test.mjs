@@ -28,7 +28,7 @@ let _mod;
 const C = async () => (_mod ??= await lib('classify.mjs'));
 
 // ---------------------------------------------------------------------------
-// The type inventory (§1.6)
+// The type inventory
 // ---------------------------------------------------------------------------
 
 /** The 17 LTM entry types. */
@@ -72,7 +72,7 @@ describe('classifyTool — the §4.5 tool_name table', () => {
     { tool: 'MultiEdit',    intent: 'trace', importance: 'medium', input: { file_path: '/Users/x/repo/src/lib.rs', edits: [{ old_string: 'a', new_string: 'b' }] } },
     { tool: 'NotebookEdit', intent: 'trace', importance: 'medium', input: { notebook_path: '/Users/x/repo/nb.ipynb', new_source: 'print(1)' } },
 
-    // Bash — also subject to self-reference suppression (§4.4), which runs
+    // Bash — also subject to self-reference suppression, which runs
     // upstream of the classifier in capture.mjs step 2.
     { tool: 'Bash',   intent: 'tool_output', importance: 'low',    input: { command: 'cargo check -p tonic' } },
 
@@ -95,17 +95,17 @@ describe('classifyTool — the §4.5 tool_name table', () => {
     });
   }
 
-  // §5.4 step 4: classifyTool() → {intent, importance, contentType}.
+  // classifyTool() → {intent, importance, contentType}.
   it('returns {intent, importance, contentType}', async () => {
     const { classifyTool } = await C();
     const r = classifyTool('Read', { file_path: '/Users/x/repo/src/lib.rs' }, 'ok');
 
     assert.equal(typeof r.intent, 'string');
     assert.equal(typeof r.importance, 'string');
-    assert.equal(r.contentType, 'text', 'ingest item.content_type is required (§1.3)');
+    assert.equal(r.contentType, 'text', 'ingest item.content_type is required');
   });
 
-  // §4.5: foreign `mcp__*` → tool_output/low, with server + tool in metadata.
+  // Foreign `mcp__*` → tool_output/low, with server + tool in metadata.
   it('foreign mcp__* → tool_output/low with server and tool in metadata', async () => {
     const { classifyTool } = await C();
     const r = classifyTool('mcp__github__create_issue', { title: 'bug', body: 'x' }, 'ok');
@@ -130,7 +130,7 @@ describe('classifyTool — the §4.5 tool_name table', () => {
   });
 
   /**
-   * §4.5: "any tool, PostToolUseFailure → trace / HIGH".
+   * "any tool, PostToolUseFailure → trace / HIGH".
    *
    * Failures are high on purpose. A failed approach is the highest-value thing
    * a coding agent can remember — it is the one class of knowledge the model
@@ -181,8 +181,8 @@ describe('classifyTool — the §4.5 tool_name table', () => {
 // Turn-level classification
 // ===========================================================================
 
-describe('classifyTurn — Stop, SubagentStop, PreCompact (§4.5)', () => {
-  // §4.5: Stop Q&A pair → task_result/medium.
+describe('classifyTurn — Stop, SubagentStop, PreCompact', () => {
+  // Stop Q&A pair → task_result/medium.
   it('a Stop Q&A pair → task_result/medium', async () => {
     const { classifyTurn } = await C();
     const s = stop();
@@ -193,12 +193,12 @@ describe('classifyTurn — Stop, SubagentStop, PreCompact (§4.5)', () => {
   });
 
   /**
-   * §4.5: SubagentStop → handoff/medium, "attributed to the subagent agent_id". A subagent's
+   * SubagentStop → handoff/medium, "attributed to the subagent agent_id". A subagent's
    * result is the note it hands back to the parent for review — the server files `handoff`
    * and `task_result` in one promotion tier, so nothing is lost, and the handoff lane gains a
    * fan-out's results listed as open until each is answered. The third argument is the
    * options bag carrying the hook event and the payload's `agent_id`, which `deriveAgentId`
-   * (§4.3) turns into `claude-code-<sessionShort>-sub-<agentShort>`.
+   * turns into `claude-code-<sessionShort>-sub-<agentShort>`.
    */
   it('a SubagentStop → handoff/medium attributed to the subagent agent_id', async () => {
     const { classifyTurn } = await C();
@@ -224,9 +224,9 @@ describe('classifyTurn — Stop, SubagentStop, PreCompact (§4.5)', () => {
   });
 
   /**
-   * §4.5: PreCompact → `checkpoint`. Importance is "—" in the table because the
+   * PreCompact → `checkpoint`. Importance is "—" in the table because the
    * item never reaches ingest: it goes via `POST /v2/control/checkpoint`
-   * (§5.6), which has no importance field.
+   *, which has no importance field.
    */
   it('PreCompact → checkpoint', async () => {
     const { classifyTurn } = await C();
@@ -302,7 +302,7 @@ describe('§1.5 — every produced item carries a real intent', () => {
     });
   }
 
-  // §1.6: the 19 intent values, and only those.
+  // The 19 intent values, and only those.
   it('every intent the classifier emits is one of the 19 intent values', async () => {
     const { classifyTool, classifyTurn } = await C();
     const seen = new Set();

@@ -30,10 +30,10 @@ const O = async () => (_mod ??= await lib('outcome.mjs'));
 
 const RUN_ID = 'cc-outcome-test';
 
-/** The reference ids `prompt-recall` staged, in render order (§5.2 step 6). */
+/** The reference ids `prompt-recall` staged, in render order. */
 const RECALLED = ['ref_rule_1', 'ref_lesson_1'];
 
-/** A turn as `stage-prompt` + `capture --stop` leave it on disk (§5.3 / §5.4 step 8). */
+/** A turn as `stage-prompt` + `capture --stop` leave it on disk. */
 function turn(over = {}) {
   return {
     prompt_id: PROMPT_ID,
@@ -66,7 +66,7 @@ function evidence(used, over = {}) {
 // ===========================================================================
 
 describe('the constants live in exactly one place', () => {
-  // §5.5: "the implicit signal is deliberately weak (0.2, not 1.0) — a turn completing is
+  // "the implicit signal is deliberately weak (0.2, not 1.0) — a turn completing is
   // not proof the recalled memory helped, only weak positive evidence."
   it('SIGNAL_SUCCESS is +0.2 and SIGNAL_FAILURE is -0.3', async () => {
     const m = await O();
@@ -93,7 +93,7 @@ describe('the constants live in exactly one place', () => {
     assert.equal(m.OUTCOME_UNUSED, 'neutral');
   });
 
-  // §1.3: `reference_id` must be non-empty on an outcome, so run-level attribution
+  // `reference_id` must be non-empty on an outcome, so run-level attribution
   // uses a sentinel and puts the real ids in `entry_ids[]`.
   it('RUN_LEVEL_REFERENCE is the non-empty run-level sentinel', async () => {
     const m = await O();
@@ -103,7 +103,7 @@ describe('the constants live in exactly one place', () => {
 });
 
 // ===========================================================================
-// §5.5 step 7 — the five-case table
+// The five-case table
 // ===========================================================================
 
 describe('decideOutcome — the five cases, one row each', () => {
@@ -241,7 +241,7 @@ describe('the rationale names the method, so a neutral record is legible', () =>
 // ===========================================================================
 
 describe('decideOutcome — the reasons not to post', () => {
-  // §5.5/§12.4: "only when entry_ids is non-empty". An outcome attributed to nothing is a
+  // "only when entry_ids is non-empty". An outcome attributed to nothing is a
   // wasted round trip that also pollutes the run-level signal history the reflect path
   // reads — and it is what makes the neutral record legible: "no post" then means one thing
   // only, *nothing was injected*.
@@ -332,7 +332,7 @@ describe('decideOutcome — the reasons not to post', () => {
 });
 
 // ===========================================================================
-// §6.1 — the mode gate, the same one in both hooks
+// The mode gate, the same one in both hooks
 // ===========================================================================
 
 describe('implicitOutcomesEnabled — "off" and "explicit" silence the implicit path', () => {
@@ -370,7 +370,7 @@ describe('implicitOutcomesEnabled — "off" and "explicit" silence the implicit 
 // ===========================================================================
 
 describe('outcomeIdempotencyKey — the same turn is the same key, forever', () => {
-  // §5.5: the server keeps an outcome idempotency ledger across restarts, which only helps
+  // The server keeps an outcome idempotency ledger across restarts, which only helps
   // if the client sends a stable key. It is what makes a concurrent drain and a session-end
   // flush a no-op rather than double reinforcement.
   it('is derived from (run_id, prompt_id) and nothing else', async () => {
@@ -422,7 +422,7 @@ describe('outcomeRequest — the body both hooks put on the wire', () => {
     assert.equal(body.outcome, 'neutral');
     assert.equal(body.signal, 0);
     assert.deepEqual(body.entry_ids, []);
-    assert.equal(body.reference_id, 'global', 'reference_id must still be non-empty (§1.3)');
+    assert.equal(body.reference_id, 'global', 'reference_id must still be non-empty');
   });
 });
 

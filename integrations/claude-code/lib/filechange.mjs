@@ -81,7 +81,7 @@ import { ensureDir, readJson, runDir, writeJsonAtomic } from './state.mjs';
 /** The kinds a change can have. @type {readonly string[]} */
 export const FILE_CHANGE_KINDS = Object.freeze(['add', 'delete', 'update']);
 
-/** §7: `runs/<run_id>/files.json`. */
+/** `runs/<run_id>/files.json`. */
 export const FILES_FILE = 'files.json';
 
 /** Bumped only if the on-disk shape changes; an unknown version reads as no data. */
@@ -210,7 +210,7 @@ export function fileChanges(toolName, toolInput, toolResponse) {
       collectNode(e, parentPath, push);
     }
   } catch {
-    // §4.9: a hostile `tool_input` costs the lane, never the item it was attached to.
+    // A hostile `tool_input` costs the lane, never the item it was attached to.
   }
   return out;
 }
@@ -408,7 +408,7 @@ export function recordFileChanges(cfg, runId, changes) {
     const files = [...touched.map((p) => map.get(p)), ...rest].slice(0, MAX_INDEXED_PATHS);
 
     const dir = runDir(cfg, runId);
-    // §12.1: a read-only ${CLAUDE_PLUGIN_DATA} costs the index, nothing else.
+    // A read-only ${CLAUDE_PLUGIN_DATA} costs the index, nothing else.
     if (!ensureDir(dir)) return 0;
     const ok = writeJsonAtomic(join(dir, FILES_FILE), {
       version: VERSION,

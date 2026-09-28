@@ -70,7 +70,7 @@ function seed(dataDir, entries, runId = RUN, session = SESSION) {
 // readSeen — total, and empty by default
 // ---------------------------------------------------------------------------
 
-// §5.2: this is read on the blocking path in front of every prompt. A conversation that has
+// This is read on the blocking path in front of every prompt. A conversation that has
 // never injected anything is the ordinary first-prompt case, not an error.
 test('readSeen: a conversation with no roll-up yet reports nothing seen', async () => {
   const { cfg, S } = await setup();
@@ -82,7 +82,7 @@ test('readSeen: a conversation with no roll-up yet reports nothing seen', async 
     'a first prompt must not be told it has already shown something');
 });
 
-// §4.9: nothing in lib/ throws on the recall path. A truncated or foreign file is the
+// Nothing in lib/ throws on the recall path. A truncated or foreign file is the
 // normal state after a SIGKILL and must cost the saving, never the prompt.
 test('readSeen: a corrupt roll-up degrades to nothing seen rather than throwing', async () => {
   const { cfg, dataDir, S } = await setup();
@@ -106,13 +106,13 @@ test('readSeen: a roll-up whose refs are not an object is ignored', async () => 
 // markSeen — the roll-up
 // ---------------------------------------------------------------------------
 
-// §5.2 step 6: `prompt-recall` marks what it rendered, next to the ids it stages on the turn.
+// `prompt-recall` marks what it rendered, next to the ids it stages on the turn.
 test('markSeen: records the reference ids a turn injected, under the session', async () => {
   const { cfg, dataDir, S } = await setup();
 
   assert.equal(S.markSeen(cfg, RUN, ['ref_rule_1', 'ref_lesson_1'], SESSION), true);
   assert.equal(existsSync(seenPath(dataDir)), true,
-    'the roll-up must land at runs/<run_id>/seen/<session_id>.json (§7)');
+    'the roll-up must land at runs/<run_id>/seen/<session_id>.json');
   assert.equal(existsSync(join(runDir(dataDir), 'seen.json')), false,
     'the run-keyed file of releases up to 0.13.0 must not be written any more');
 
@@ -155,7 +155,7 @@ test('markSeen: keeps the first sighting and moves the last', async () => {
   assert.equal(second.count, 2, 'the sighting count is how a guide shows the saving compounding');
 });
 
-// §1.3: `reference_id` must be non-empty. An entry with no id can never be pointed at, so it
+// `reference_id` must be non-empty. An entry with no id can never be pointed at, so it
 // must never take a slot in a bounded roll-up either.
 test('markSeen: ignores blank, non-string and duplicate ids', async () => {
   const { cfg, S } = await setup();
@@ -176,7 +176,7 @@ test('markSeen: an empty id list writes nothing at all', async () => {
     'a turn that injected nothing must not create a roll-up for it');
 });
 
-// §4.8: `writeJsonAtomic` renames into place, so `bin/statusline.mjs` and a racing hook see
+// `writeJsonAtomic` renames into place, so `bin/statusline.mjs` and a racing hook see
 // either the whole old file or the whole new one. A leftover temp file is the tell that a
 // writer took the non-atomic path.
 test('markSeen: leaves no temp file beside the roll-up', async () => {
@@ -258,12 +258,12 @@ test('a session id cannot escape the run directory', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The TTL — §7, the same 6 h the turn files get
+// The TTL, the same 6 h the turn files get
 // ---------------------------------------------------------------------------
 
 /*
  * A memory the model can no longer see is not a memory it has seen. `runs/<run_id>/turns/`
- * expires at 6 h (§7), and the roll-up is an aggregation over exactly those files, so it
+ * expires at 6 h, and the roll-up is an aggregation over exactly those files, so it
  * expires with them. Past the TTL the entry goes back to being rendered in full, which is
  * the safe direction: the cost of an unnecessary expansion is tokens, the cost of an
  * unwarranted pointer is a memory the model was never actually shown.
@@ -302,7 +302,7 @@ test('readSeen: an entry with no usable timestamp is treated as expired', async 
 });
 
 // ---------------------------------------------------------------------------
-// The bound — §7, nothing under the data dir grows without a ceiling
+// The bound, nothing under the data dir grows without a ceiling
 // ---------------------------------------------------------------------------
 
 // A long session with a wide store can inject thousands of distinct ids. The roll-up is read
@@ -330,7 +330,7 @@ test('markSeen: the roll-up is bounded, keeping the most recent sightings', asyn
 // ---------------------------------------------------------------------------
 
 /*
- * §5.6: compaction resets the model's window, not the file. After `PostCompact` the model
+ * Compaction resets the model's window, not the file. After `PostCompact` the model
  * has not seen any of it, so a pointer would name a memory that is no longer anywhere in
  * the conversation — the one failure mode of this whole mechanism that is worse than
  * paying full price.
@@ -362,10 +362,10 @@ test('clearSeen: clearing a run that never had a roll-up is not an error', async
 });
 
 // ---------------------------------------------------------------------------
-// §4.9 — never throws, on any path
+// Never throws, on any path
 // ---------------------------------------------------------------------------
 
-// §12.1: an unwritable ${CLAUDE_PLUGIN_DATA} costs the saving and nothing else. The
+// An unwritable ${CLAUDE_PLUGIN_DATA} costs the saving and nothing else. The
 // prompt still goes out, with every entry rendered in full.
 test('markSeen: an unwritable run directory costs the roll-up, never the prompt', async (t) => {
   if (process.getuid?.() === 0) return t.skip('root ignores mode bits');
@@ -393,7 +393,7 @@ test('every export is total against a missing config, a missing run id and a mis
   assert.doesNotThrow(() => S.clearSeen(cfg, RUN, /** @type {any} */ (undefined)));
 });
 
-// §7: the run id names a directory and can be pinned by hand, so it is untrusted input to a
+// The run id names a directory and can be pinned by hand, so it is untrusted input to a
 // path — the same rule `lib/state.mjs` applies everywhere else.
 test('the roll-up cannot be written outside the run directory', async () => {
   const { cfg, dataDir, S } = await setup();

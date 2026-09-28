@@ -1,8 +1,8 @@
 // @ts-check
 /**
- * `lib/assemble.mjs` — client-side section assembly (§4.10).
+ * `lib/assemble.mjs` — client-side section assembly.
  *
- * Rungs 1 and 2 of the read ladder (§1.8) answer with `evidence[]`, not a preassembled
+ * Rungs 1 and 2 of the read ladder answer with `evidence[]`, not a preassembled
  * `context_block`. This module does what rung 3 (`POST /v2/control/context`) would have done
  * server-side — for **zero LLM calls instead of two**. That substitution is only honest if
  * the client renders the *same* shape, in the *same* order, with the *same* `emptyReason`
@@ -14,7 +14,7 @@
  *     mental_models → active_rules → lessons → facts → observations → working_memory →
  *     traces → goals. The client never reorders, so switching rungs cannot look like a
  *     change in what was recalled.
- *   - **Section vocabulary is the server's** (§1.3). Nothing here may invent a key; an
+ *   - **Section vocabulary is the server's**. Nothing here may invent a key; an
  *     `entry_type` with no row in the §4.10 table renders under `other`.
  *   - **`emptyReason` is the server's**: `""` when something rendered, `"no_evidence"` when
  *     there was nothing to say, `"budget_exhausted"` when there was and none of it fit.
@@ -26,7 +26,7 @@
  *     transparency and marks them (`control.proto`); that mark is only worth
  *     anything if the client acts on it.
  *   - **`sourceRefIds` carries `reference_id`, never `id`.** That array is what `Stop`
- *     attributes against (§5.5) and what becomes `RecordOutcome.entry_ids`
+ *     attributes against and what becomes `RecordOutcome.entry_ids`
  *     (`control.proto`). An item that renders but is not recorded there is a memory
  *     that silently never gets reinforced, and nothing anywhere reports it.
  *
@@ -112,14 +112,14 @@ const HEADINGS = Object.freeze({
 /** §6.1 `MUBIT_CC_RECALL_TOKENS`. Used when a caller names no budget. */
 const DEFAULT_TOKEN_BUDGET = 1500;
 
-/** §4.10: "~4 chars per token. Deliberately cheap." */
+/** "~4 chars per token. Deliberately cheap." */
 const CHARS_PER_TOKEN = 4;
 
 /** A single rendered line is capped so one pathological entry cannot eat a whole budget. */
 const MAX_ITEM_CHARS = 2000;
 
 /**
- * The mark on a degraded repeat (§5.2, `lib/seen.mjs`).
+ * The mark on a degraded repeat (`lib/seen.mjs`).
  *
  * A `reference_id` already injected earlier in this run renders as a pointer — the id plus
  * the entry's first clause — instead of its whole content. It is a **degrade, not a drop**:
@@ -167,7 +167,7 @@ export function sectionFor(entryType) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.10: four characters per token, no tokenizer. Monotonic in length, exact at 0, and
+ * Four characters per token, no tokenizer. Monotonic in length, exact at 0, and
  * cheap enough to call once per candidate line inside a 1500 ms budget.
  *
  * @param {string} text
@@ -258,7 +258,7 @@ export function assembleContext(evidence, opts = {}) {
     const text = oneLine(e.content);
     if (!text) continue;                    // nothing to render is not a dropped candidate
 
-    // §4.10: "maps entry_type (or origin_entry_type when the entry came through an
+    // "maps entry_type (or origin_entry_type when the entry came through an
     // overlay)". The overlay's own type is bookkeeping; the origin is what the user reads.
     const type = (str(e.origin_entry_type) || str(e.entry_type)).toLowerCase();
     const section = sectionFor(type);
@@ -314,7 +314,7 @@ export function assembleContext(evidence, opts = {}) {
     for (const item of bucket) {
       if (perSection > 0 && count >= perSection) { continue; }
 
-      // §4.10: the server marks an entry stale; a mark the client renders nowhere is a mark
+      // The server marks an entry stale; a mark the client renders nowhere is a mark
       // that does nothing. It rides on the line it qualifies, where the model reads it —
       // including on a pointer, where the model still has to know not to trust the entry.
       const tag = handleTag(item.ref);
@@ -336,7 +336,7 @@ export function assembleContext(evidence, opts = {}) {
       count++;
       rendered++;
       if (degraded) pointers++;
-      // §4.10/§5.5: reference_id, never id. Deduped, because the same entry surfacing
+      // reference_id, never id. Deduped, because the same entry surfacing
       // through two retrieval lanes must not be reinforced twice for one turn.
       if (item.ref && !seenRefs.has(item.ref)) {
         seenRefs.add(item.ref);

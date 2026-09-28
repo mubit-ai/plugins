@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `recallAsync` — the carry-forward recall path (§5.2).
+ * `recallAsync` — the carry-forward recall path.
  *
  * ---------------------------------------------------------------------------
  * What is being claimed, and what would falsify it
@@ -264,7 +264,7 @@ test('takeCarry: a block older than CARRY_TTL_MS is dropped rather than injected
     'an expired block is also swept, or it is re-read and re-rejected on every prompt');
 });
 
-// §4.9: nothing on the recall path throws. A truncated file is the ordinary state after a
+// Nothing on the recall path throws. A truncated file is the ordinary state after a
 // SIGKILL mid-write, and it must cost the carried block, never the prompt.
 test('takeCarry: a corrupt carry file degrades to nothing carried rather than throwing', async () => {
   const { cfg, dataDir, C } = await setup();
@@ -364,7 +364,7 @@ test('recall-refresh writes the carried block, and writes neither the turn nor t
   assert.ok(String(carry.block).includes('poll the job'), 'the refresh exists to produce a block');
   assert.deepEqual(carry.ref_ids, ['ref_rule_1']);
 
-  // §5.2 — the refresh runs the same ladder, so it must send the same fusion weights. The
+  // The refresh runs the same ladder, so it must send the same fusion weights. The
   // fixture prompt is a diagnosis, so `auto` resolves it to `relevance` here too: a hook
   // that dials on a user's behalf and quietly ranks it differently from the one the user
   // waits on is two recall behaviours wearing one name.
@@ -475,7 +475,7 @@ test('recallAsync: the first prompt injects nothing, dials nothing, and primes t
   assertHookContract(r);
   assert.deepEqual(r.json, { suppressOutput: true },
     'nothing carried means nothing injected — "I found nothing" teaches the model to '
-    + 'distrust the channel (§5.2)');
+    + 'distrust the channel');
 
   const spawns = await waitFor(() => {
     const s = refreshSpawns(file);
@@ -672,7 +672,7 @@ test('recallAsync: the injected wrapper says the block is one turn old', async (
     + 'question; the blocking path never had to say it, so nothing else does');
 });
 
-// §4.7 — the breaker still governs whether a process is spawned to dial a server already
+// The breaker still governs whether a process is spawned to dial a server already
 // known to be down. It must NOT stop a block that is already on disk from being rendered:
 // that block cost a round trip nobody has to repeat.
 test('recallAsync: a tripped breaker renders the carried block but starts no refresh', async (t) => {

@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `hooks/src/drain.mjs` — the detached drainer (§5.5).
+ * `hooks/src/drain.mjs` — the detached drainer.
  *
  * Not registered in `hooks.json`. It is spawned only by `stage-prompt`, `capture --stop`,
  * or `session-end`, which is what keeps the per-tool-call hot path free of node's startup
@@ -99,11 +99,11 @@ function rejectedFiles(dataDir) {
 
 /** §1.3 + §1.5 — the three fields the server will not forgive. */
 function assertWireItem(item) {
-  assert.ok(typeof item.item_id === 'string' && item.item_id.length > 0, 'item_id is REQUIRED (§1.3)');
+  assert.ok(typeof item.item_id === 'string' && item.item_id.length > 0, 'item_id is REQUIRED');
   assert.ok(typeof item.content_type === 'string' && item.content_type.length > 0,
-    'content_type is REQUIRED (§1.3)');
+    'content_type is REQUIRED');
   assert.ok(typeof item.intent === 'string' && item.intent.length > 0,
-    'every item carries a non-empty intent (§1.5) — otherwise the server spends one LLM call per item');
+    'every item carries a non-empty intent — otherwise the server spends one LLM call per item');
   assert.notEqual(item.intent, 'unclassified');
 }
 
@@ -120,7 +120,7 @@ async function mubit(t, routes) {
 
 // ---------------------------------------------------------------------------
 
-// §5.5 step 1 — single drainer. A second one exits immediately rather than racing.
+// Single drainer. A second one exits immediately rather than racing.
 test('drain: exits 0 without dialing when another drainer holds the lock', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -136,7 +136,7 @@ test('drain: exits 0 without dialing when another drainer holds the lock', async
   assert.ok(existsSync(lockPath(dataDir)), 'the loser must not delete the winner\'s lock');
 });
 
-// §5.5 step 2 — breaker open → release the lock and exit. Items stay spooled; a drain that
+// Breaker open → release the lock and exit. Items stay spooled; a drain that
 // dials into an open breaker is exactly the traffic the breaker exists to stop.
 test('drain: an open breaker short-circuits the next drain and leaves items spooled', async (t) => {
   const dataDir = makeDataDir();
@@ -171,13 +171,13 @@ test('drain: sends exactly one POST /v2/control/ingest for a 32-item batch', asy
   assert.equal(body.run_id, RUN_ID);
   assert.ok(typeof body.agent_id === 'string' && body.agent_id.length > 0);
   assert.ok(typeof body.idempotency_key === 'string' && body.idempotency_key.length > 0);
-  assert.equal(body.parallel, true, 'batch items are independent (§5.5)');
+  assert.equal(body.parallel, true, 'batch items are independent');
   assert.equal(body.items.length, 32);
-  assert.deepEqual(body.items.map((i) => i.item_id), ids, 'readBatch is oldest-first (§4.6)');
+  assert.deepEqual(body.items.map((i) => i.item_id), ids, 'readBatch is oldest-first');
   for (const item of body.items) assertWireItem(item);
 });
 
-// §5.5 — "idempotency_key is per batch, derived from (run_id, prompt_id, batch sequence),
+// "idempotency_key is per batch, derived from (run_id, prompt_id, batch sequence),
 // so a retry after a transport timeout is a server-side no-op."
 test('drain: two drains of the same batch send the same idempotency_key', async (t) => {
   const dataDir = makeDataDir();
@@ -248,12 +248,12 @@ test('drain and session-end send one batch under one idempotency_key', async (t)
     'the same items must carry the same key whichever drainer sends them');
 });
 
-// §5.5 step 6 — 2xx commits: spool unlinked, marker advanced, job_id kept for the doctor skill.
+// 2xx commits: spool unlinked, marker advanced, job_id kept for the doctor skill.
 test('drain: a 2xx unlinks the batch, advances the marker, and records the job_id', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
   seedSpool(dataDir, 3);
-  // §7: jobs.json keeps the last 20. Seed it past the cap so trimming is observable.
+  // jobs.json keeps the last 20. Seed it past the cap so trimming is observable.
   mkdirSync(runDir(dataDir), { recursive: true });
   writeFileSync(join(runDir(dataDir), 'jobs.json'), JSON.stringify(
     Array.from({ length: 25 }, (_, i) => ({ job_id: `job_old_${i}`, at: Date.now() - 1000 * i })),
@@ -267,7 +267,7 @@ test('drain: a 2xx unlinks the batch, advances the marker, and records the job_i
   assert.equal(existsSync(lockPath(dataDir)), false, 'the drain lock is released');
 
   const jobs = readJsonFile(join(runDir(dataDir), 'jobs.json'));
-  assert.ok(Array.isArray(jobs), 'jobs.json is an array of {job_id, ...} (§15.4)');
+  assert.ok(Array.isArray(jobs), 'jobs.json is an array of {job_id, ...}');
   assert.ok(jobs.length <= 20, `jobs.json keeps the last 20, got ${jobs.length}`);
   assert.ok(jobs.some((j) => j.job_id === 'job_test_1'), 'the new job_id must be recorded');
 
@@ -277,7 +277,7 @@ test('drain: a 2xx unlinks the batch, advances the marker, and records the job_i
   assert.ok(captured.reduce((a, b) => a + b, 0) >= 3, `marker.captured did not advance: ${JSON.stringify(marker.captured)}`);
 });
 
-// §5.5 step 6 — a transport failure records a breaker failure and LEAVES the spool alone.
+// A transport failure records a breaker failure and LEAVES the spool alone.
 // The spool is keyed by run_id, not session, so nothing is lost by waiting.
 test('drain: a network failure leaves every spool file in place', async (t) => {
   const dataDir = makeDataDir();
@@ -295,7 +295,7 @@ test('drain: a network failure leaves every spool file in place', async (t) => {
     `recordFailure did not run: ${JSON.stringify(breakers[0].json)}`);
 });
 
-// §5.5 step 6 — a non-retryable 4xx means the payload is bad, not the server.
+// A non-retryable 4xx means the payload is bad, not the server.
 // Retrying a 422 forever is how a spool becomes unbounded.
 test('drain: a 422 quarantines the batch under spool/rejected/ and never retries it', async (t) => {
   const dataDir = makeDataDir();
@@ -315,7 +315,7 @@ test('drain: a 422 quarantines the batch under spool/rejected/ and never retries
     'a quarantined batch is never retried');
 });
 
-// §5.5 step 8 — loop while items remain and elapsed < 10s. 70 items is 32/32/6.
+// Loop while items remain and elapsed < 10s. 70 items is 32/32/6.
 test('drain: loops until the spool is empty, one request per batch', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -333,8 +333,8 @@ test('drain: loops until the spool is empty, one request per batch', async (t) =
     'each batch in the sequence gets its own key');
 });
 
-// §5.5 step 7 — `--with-outcome` attributes the turn. `reference_id` must be non-empty
-// (§1.3); "global" is the run-level sentinel and the real attribution lives in entry_ids[].
+// `--with-outcome` attributes the turn. `reference_id` must be non-empty
+//; "global" is the run-level sentinel and the real attribution lives in entry_ids[].
 // The signal is deliberately weak: a turn completing is not proof the recalled memory
 // helped, only weak positive evidence — hence 0.2, not 1.0.
 test('drain --with-outcome: posts one outcome carrying the turn\'s recalled entry_ids', async (t) => {
@@ -354,7 +354,7 @@ test('drain --with-outcome: posts one outcome carrying the turn\'s recalled entr
   const body = server.lastCall('POST', '/v2/control/outcome').body;
   assert.equal(body.run_id, RUN_ID);
   assert.equal(body.reference_id, 'global');
-  assert.ok(body.reference_id.length > 0, 'reference_id must be non-empty on an outcome (§1.3)');
+  assert.ok(body.reference_id.length > 0, 'reference_id must be non-empty on an outcome');
   assert.equal(body.outcome, 'success');
   assert.equal(body.signal, 0.2);
   assert.deepEqual(body.entry_ids, ['ref_rule_1', 'ref_lesson_1']);
@@ -383,7 +383,7 @@ test('drain --with-outcome: posts one outcome carrying the turn\'s recalled entr
   assert.ok(row.at > 0);
 });
 
-// §5.5 — no recalled ids means there is nothing to reinforce; the call is skipped entirely
+// No recalled ids means there is nothing to reinforce; the call is skipped entirely
 // rather than sent with an empty entry_ids[].
 test('drain --with-outcome: skips the outcome call when entry_ids is empty', async (t) => {
   const dataDir = makeDataDir();
@@ -400,7 +400,7 @@ test('drain --with-outcome: skips the outcome call when entry_ids is empty', asy
   server.assertNotCalled('POST', '/v2/control/outcome');
 });
 
-// §5.5 — outcomeMode "off" disables implicit attribution entirely.
+// outcomeMode "off" disables implicit attribution entirely.
 test('drain --with-outcome: skips the outcome call when outcomeMode is "off"', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -417,7 +417,7 @@ test('drain --with-outcome: skips the outcome call when outcomeMode is "off"', a
 });
 
 /**
- * §5.5 — a turn whose file records `outcome: "failure"` posts `failure` / -0.3. The turn file
+ * A turn whose file records `outcome: "failure"` posts `failure` / -0.3. The turn file
  * records how the turn ended, so the drain never has to re-derive it.
  *
  * This used to be titled "a StopFailure turn", after §5.5's line *"On a StopFailure turn:
@@ -544,7 +544,7 @@ test('drain --with-outcome: an ignored injection is distinguishable from no inje
   empty.assertNotCalled('POST', '/v2/control/outcome');
 });
 
-// §5.5: the weak +0.2 was always defended as "a turn completing is weak positive evidence".
+// The weak +0.2 was always defended as "a turn completing is weak positive evidence".
 // It now stands on something narrower and checkable — the reply carried the memory's own
 // vocabulary — and the record says which method decided that.
 test('drain --with-outcome: evidence of use keeps the +0.2 and the entry attribution', async (t) => {
@@ -586,7 +586,7 @@ test('drain --with-outcome: a failed turn with no evidence of use is not punishe
   assert.deepEqual(body.entry_ids, []);
 });
 
-// §5.5/§6.1: the new record is still implicit attribution. "off" means the hook posts
+// The new record is still implicit attribution. "off" means the hook posts
 // nothing, and "explicit" means the model owns the call — a measurement that ignores either
 // is a measurement the user did not consent to.
 for (const mode of ['off', 'explicit']) {
@@ -666,7 +666,7 @@ test('drain --run: drains the named run and ignores the derivation', async (t) =
 });
 
 // A pin that could only name the poisoned shared run is refused, exactly as a derivation
-// that could only answer `"default"` is (§4.3). The spool waits for a run id worth writing to.
+// that could only answer `"default"` is. The spool waits for a run id worth writing to.
 test('drain --run: a "default" pin drains nothing', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -717,7 +717,7 @@ test('drain: resolves the actor once and caches it for capture to read', async (
 });
 
 // The drainer ships memory. A machine with no git, no configured actor and no `$USER` has
-// nothing to attribute to, and that must cost the name and nothing else (§4.9).
+// nothing to attribute to, and that must cost the name and nothing else.
 test('drain: an unresolvable actor costs the name, not the batch', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);

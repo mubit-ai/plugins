@@ -42,7 +42,7 @@
  * A roll-up, not a new source of truth
  * ---------------------------------------------------------------------------
  * Every id in this file was already written to `runs/<run_id>/turns/<prompt_id>.json` under
- * `recalled` (§5.2 step 6) — the array `lib/outcome.mjs:170` later reads as `entry_ids`.
+ * `recalled` — the array `lib/outcome.mjs:170` later reads as `entry_ids`.
  * This is an aggregation over files the plugin is already writing, kept as one file so the
  * blocking recall path costs one `readFileSync` rather than one per turn in the session.
  *
@@ -55,7 +55,7 @@
  *
  *   1. Zero dependencies, Node >= 20 built-ins only, no import outside `lib/`.
  *   2. Everything is synchronous. A hook process is about to exit.
- *   3. Nothing here throws. A memory layer has no business breaking a prompt (§4.9).
+ *   3. Nothing here throws. A memory layer has no business breaking a prompt.
  */
 
 import { unlinkSync } from 'node:fs';
@@ -65,7 +65,7 @@ import { hostSessionId } from './runid.mjs';
 import { readJson, runDir, safeSegment, writeJsonAtomic } from './state.mjs';
 
 /**
- * §7: the same 6 h the turn files get, and for the same reason.
+ * The same 6 h the turn files get, and for the same reason.
  *
  * A memory the model can no longer see is not a memory it has seen. `runs/<run_id>/turns/`
  * expires at 6 h and this file is an aggregation over exactly those, so it expires with
@@ -117,7 +117,7 @@ function emptySeen() {
 }
 
 /**
- * §7: `runs/<run_id>/seen/<session_id>.json`, or `''` when either id leaves no usable path
+ * `runs/<run_id>/seen/<session_id>.json`, or `''` when either id leaves no usable path
  * segment.
  *
  * A run id normally arrives from `lib/runid.mjs`, but it can be pinned by hand in a
@@ -183,7 +183,7 @@ export function readSeen(cfg, runId, sessionId = '') {
     }
     return out;
   } catch {
-    // §4.9/§12.1: an unreadable ${CLAUDE_PLUGIN_DATA} costs the saving, nothing else.
+    // An unreadable ${CLAUDE_PLUGIN_DATA} costs the saving, nothing else.
     return emptySeen();
   }
 }
@@ -270,7 +270,7 @@ function bounded(refs) {
 }
 
 /**
- * §1.3: `reference_id` must be non-empty. An entry with no id can never be pointed at, so
+ * `reference_id` must be non-empty. An entry with no id can never be pointed at, so
  * it must not take a slot in a bounded file either. The same id twice in one turn is one
  * injection — `lib/assemble.mjs` already deduped `sourceRefIds`, and this keeps the count
  * honest for anyone who reaches for the file directly.
@@ -297,7 +297,7 @@ function usableIds(refIds) {
 // ---------------------------------------------------------------------------
 
 /**
- * Forget everything this conversation has been shown — the compaction reset (§5.6).
+ * Forget everything this conversation has been shown — the compaction reset.
  *
  * Compaction resets the model's window, not the file. After `PostCompact` the transcript
  * the entries were injected into is **gone**, so a surviving pointer names a memory that

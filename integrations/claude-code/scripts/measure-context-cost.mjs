@@ -46,7 +46,7 @@
  *
  * ## The token estimate
  *
- * Zero dependencies is a hard constraint (§11.1), so there is no real BPE tokenizer here.
+ * Zero dependencies is a hard constraint, so there is no real BPE tokenizer here.
  * The estimator segments into word / number / symbol runs and charges:
  *
  *   - a word run:   `ceil(len / 4)` tokens  (BPE keeps common short words whole and splits
@@ -78,7 +78,7 @@ const MARKETPLACE = join(REPO_ROOT, '.claude-plugin', 'marketplace.json');
 /** The host prefixes a plugin-provided server's tools with this. 30 chars, once per tool. */
 const QUALIFIED_PREFIX = 'mcp__plugin_mubit-memory_mubit__';
 
-/** §8.2 — the curated set a blank `mcpTools` resolves to. Kept in sync by verify-manifests. */
+/** The curated set a blank `mcpTools` resolves to. Kept in sync by verify-manifests. */
 const DEFAULT_ALLOWLIST = [
   'mubit_learned', 'mubit_recall', 'mubit_outcome', 'mubit_diagnose',
   'mubit_dereference', 'mubit_status', 'mubit_memory_health',
@@ -157,7 +157,7 @@ async function main() {
  */
 async function listTools(entry) {
   if (!existsSync(entry)) {
-    throw new Error(`${entry} does not exist. Build it first: npm run build (§11.2)`);
+    throw new Error(`${entry} does not exist. Build it first: npm run build`);
   }
   // The measurement must not depend on whatever is in the developer's shell: a
   // `MUBIT_MCP_TOOLS` sitting in the environment would silently measure someone's
@@ -362,7 +362,7 @@ function report(r) {
       `\nThis server registers all ${b.toolSchemas.count} tools, so \`mcpTools\` is inert and every\n`
       + `user pays for every tool. With the curated set honoured the same surface costs\n`
       + `${r.curatedValue} tokens, ${r.value - r.curatedValue} fewer.\n`
-      + 'The server is bundled from the in-repo @mubit-ai/mcp, which reads MUBIT_MCP_TOOLS (§8.1).\n'
+      + 'The server is bundled from the in-repo @mubit-ai/mcp, which reads MUBIT_MCP_TOOLS.\n'
       + 'A server that ignores it is a stale bundle — rebuild:\n'
       + '  npm --prefix ../mcp ci && npm --prefix ../mcp run build && npm run build\n');
   }
@@ -407,7 +407,7 @@ function write(r) {
 }
 
 function usage() {
-  process.stdout.write(`measure-context-cost — what the plugin costs before the model does anything (§3.5)
+  process.stdout.write(`measure-context-cost — what the plugin costs before the model does anything
 
   --write           stamp scripts/context-cost.json and update marketplace.json
   --json            machine-readable

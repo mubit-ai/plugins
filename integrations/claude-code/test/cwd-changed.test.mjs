@@ -286,7 +286,7 @@ test('cwd-changed: writes a marker for the new run', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// §4.9 — failure costs the memory, never the turn
+// Failure costs the memory, never the turn
 // ---------------------------------------------------------------------------
 
 test('cwd-changed: exits 0 with valid JSON when the data dir is unwritable', async (t) => {

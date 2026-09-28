@@ -3,7 +3,7 @@
  * `lib/runid.mjs`.
  *
  * Protects the four run-id strategies, the `SessionStart.source` table and
- * `SessionRecord` (§4.3, §12.3), plus spec §7 (identity and session model).
+ * `SessionRecord`, plus spec §7 (identity and session model).
  *
  * The run id is the data scope: get it wrong and a user's memory either leaks
  * across projects or is silently written somewhere they will never read it
@@ -46,7 +46,7 @@ function envFor(dataDir, projectDir, strategy, extra = {}) {
 
 /**
  * `loadConfig` + `deriveRunId` under one environment. `loadSessionMap` takes no
- * cfg (§4.3), so the environment has to be live for the call, not just passed.
+ * cfg, so the environment has to be live for the call, not just passed.
  * @param {any} config @param {any} runid
  * @param {Record<string,string>} env @param {any} payload
  */
@@ -79,10 +79,10 @@ function git(cwd, args) { spawnSync('git', args, { cwd, stdio: 'ignore' }); }
 const HASH8 = /-[0-9a-f]{8}$/;
 
 // ===========================================================================
-// §4.3 — the four strategies and their documented shapes
+// The four strategies and their documented shapes
 // ===========================================================================
 
-// §4.3: per-directory (default) → cc-<slug>-<hash8>, hashing `git rev-parse --show-toplevel`.
+// Per-directory (default) → cc-<slug>-<hash8>, hashing `git rev-parse --show-toplevel`.
 test('per-directory: shape is cc-<slug>-<hash8>', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -96,7 +96,7 @@ test('per-directory: shape is cc-<slug>-<hash8>', async () => {
   assert.equal(/\s/.test(id), false, 'a run id may not contain whitespace');
 });
 
-// §4.3: git-branch → cc-<slug>-<branch>-<hash8>.
+// Git-branch → cc-<slug>-<branch>-<hash8>.
 test('git-branch: shape is cc-<slug>-<branch>-<hash8>', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -109,7 +109,7 @@ test('git-branch: shape is cc-<slug>-<branch>-<hash8>', async () => {
   assert.ok(id.includes('-wip-'), `"${id}" does not carry the branch name`);
 });
 
-// §4.3: per-conversation → cc-<host_session_id>.
+// Per-conversation → cc-<host_session_id>.
 test('per-conversation: shape is cc-<host_session_id>', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -120,7 +120,7 @@ test('per-conversation: shape is cc-<host_session_id>', async () => {
   assert.equal(id, `cc-${fx.SESSION_ID}`);
 });
 
-// §4.3: static → the literal MUBIT_CC_RUN_ID, untouched.
+// Static → the literal MUBIT_CC_RUN_ID, untouched.
 test('static: the literal MUBIT_CC_RUN_ID', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -131,7 +131,7 @@ test('static: the literal MUBIT_CC_RUN_ID', async () => {
   assert.equal(derive(config, runid, env, fx.sessionStart()), 'cc-team-shared-run');
 });
 
-// §4.3: "config error when unset — never a silent default". A silent fallback
+// "config error when unset — never a silent default". A silent fallback
 // here would write a team's pinned-run memory into some other run.
 test('static: an unset MUBIT_CC_RUN_ID is a config error', async () => {
   const config = await lib('config.mjs');
@@ -184,10 +184,10 @@ test('static: a run id with unusual but harmless characters is still accepted', 
 });
 
 // ===========================================================================
-// §4.3/§12.3 — stability
+// Stability
 // ===========================================================================
 
-// §12.3: stable across two invocations in one directory. Two terminals in the
+// Stable across two invocations in one directory. Two terminals in the
 // same repo must share a run; that is the whole point of per-directory.
 test('per-directory: stable across invocations, distinct across directories', async () => {
   const config = await lib('config.mjs');
@@ -208,7 +208,7 @@ test('per-directory: stable across invocations, distinct across directories', as
   assert.notEqual(a1, b1, 'two directories must not share a run');
 });
 
-// §4.3: "falling back to CLAUDE_PROJECT_DIR" when there is no git root.
+// "falling back to CLAUDE_PROJECT_DIR" when there is no git root.
 test('per-directory: falls back to CLAUDE_PROJECT_DIR outside a git repo', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -228,8 +228,8 @@ test('per-directory: falls back to CLAUDE_PROJECT_DIR outside a git repo', async
     'the fallback must hash CLAUDE_PROJECT_DIR, not the process cwd');
 });
 
-// §12.3: git-branch changes with the branch while per-directory does not —
-// "so a feature branch gets its own memory" (spec §7).
+// Git-branch changes with the branch while per-directory does not —
+// "so a feature branch gets its own memory".
 test('git-branch tracks the branch; per-directory ignores it', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -251,7 +251,7 @@ test('git-branch tracks the branch; per-directory ignores it', async () => {
 });
 
 // ===========================================================================
-// §4.3 — the SessionStart.source table
+// The SessionStart.source table
 // ===========================================================================
 
 // §4.3 `startup`: "Derive fresh, write the map."
@@ -332,7 +332,7 @@ test('source=clear: produces a NEW run id with an incrementing -c<n>', async () 
   assert.equal(readJsonFile(sessionFile(dataDir, fx.SESSION_ID)).clear_count, 2);
 });
 
-// §4.3: resume with nothing mapped (fresh install, restored terminal) still has
+// Resume with nothing mapped (fresh install, restored terminal) still has
 // to answer with a real run id.
 test('source=resume: derives when there is no session record at all', async () => {
   const config = await lib('config.mjs');
@@ -346,7 +346,7 @@ test('source=resume: derives when there is no session record at all', async () =
 });
 
 // ===========================================================================
-// §4.3/§12.3 — the headline: "default" is unreachable
+// The headline: "default" is unreachable
 // ===========================================================================
 
 /** Missing, blank and outright hostile inputs. */
@@ -365,7 +365,7 @@ const HOSTILE = [
 ];
 
 for (const strategy of ['per-directory', 'git-branch', 'per-conversation', 'static']) {
-  // §4.3/§12.3: no strategy can ever emit "default" — it is the bundled server's
+  // No strategy can ever emit "default" — it is the bundled server's
   // placeholder, and it identifies nothing: a run id has to name one project on one machine.
   test(`${strategy}: no input can produce "default" or an empty run id`, async () => {
     const config = await lib('config.mjs');
@@ -393,10 +393,10 @@ for (const strategy of ['per-directory', 'git-branch', 'per-conversation', 'stat
 }
 
 // ===========================================================================
-// §4.3 — deriveAgentId
+// deriveAgentId
 // ===========================================================================
 
-// §4.3/§5.1: a role, not a session. The session id must not leak into the identity — a new
+// A role, not a session. The session id must not leak into the identity — a new
 // principal per session makes any upstream "how many distinct actors confirmed this?" count
 // meaningless, because one person working two days running satisfies it alone.
 test('deriveAgentId(): the stable role claude-code, with no session in it', async () => {
@@ -412,7 +412,7 @@ test('deriveAgentId(): the stable role claude-code, with no session in it', asyn
     'the host session id must not appear in the agent id');
 });
 
-// §4.3: subagents still get their own identity — claude-code-sub-<agentShort>. This is the
+// Subagents still get their own identity — claude-code-sub-<agentShort>. This is the
 // one distinctness the value has to provide, and making the parent stable must not cost it.
 test('deriveAgentId(): appends -sub-<agentShort> for a subagent payload', async () => {
   const runid = await lib('runid.mjs');
@@ -436,7 +436,7 @@ test('deriveAgentId(): a payload echoing the parent id is not a subagent', async
 });
 
 // ===========================================================================
-// §4.3 — deriveSubRunId
+// deriveSubRunId
 // ===========================================================================
 
 /**
@@ -499,10 +499,10 @@ test('deriveSubRunId(): deriving twice is deriving once', async () => {
 });
 
 // ===========================================================================
-// §4.3 — the session map
+// The session map
 // ===========================================================================
 
-// §4.3: SessionRecord round-trips whole at sessions/<host_session_id>.json.
+// SessionRecord round-trips whole at sessions/<host_session_id>.json.
 test('saveSessionMap()/loadSessionMap(): the full SessionRecord round-trips', async () => {
   const runid = await lib('runid.mjs');
   const dataDir = makeDataDir();
@@ -525,7 +525,7 @@ test('saveSessionMap()/loadSessionMap(): the full SessionRecord round-trips', as
   }
 });
 
-// §4.3: an unknown session is `null` — the caller derives; it never guesses.
+// An unknown session is `null` — the caller derives; it never guesses.
 test('loadSessionMap(): an unknown session returns null', async () => {
   const runid = await lib('runid.mjs');
   const env = envFor(makeDataDir(), makeProjectDir(), 'per-directory');
@@ -547,7 +547,7 @@ test('loadSessionMap(): a corrupt session file returns null', async () => {
 });
 
 // ===========================================================================
-// §4.3 — one session that changes directory
+// One session that changes directory
 // ===========================================================================
 
 /*

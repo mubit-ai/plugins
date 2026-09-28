@@ -40,7 +40,7 @@ const SERVER_BUNDLE = join(PLUGIN_ROOT, 'mcp', 'dist', 'server.js');
 const QUALIFIED_PREFIX = 'mcp__plugin_mubit-memory_mubit__';
 
 /**
- * §2/§9 — the skills the plugin ships, in the order they arrived. The first eight are the
+ * The skills the plugin ships, in the order they arrived. The first eight are the
  * original set. Of the rest, three grant an MCP tool that used to sit outside the default
  * allowlist — an allowlisted tool with nothing to invoke it is schema cost with no surface —
  * and `activity` runs a bundled script instead, the way `auth` and `dashboard` do.
@@ -163,7 +163,7 @@ function loadAgent() {
 /** The real MCP tool names, parsed from the server bundle the plugin ships. */
 function realToolNames() {
   const src = readOrFail(SERVER_BUNDLE, 'mcp/dist/server.js',
-    'The bundled MCP server (§1.9). Run `npm run build` — the plugin cannot start without it.');
+    'The bundled MCP server. Run `npm run build` — the plugin cannot start without it.');
   return [...src.matchAll(/name:\s*"(mubit_[a-z_0-9]+)"/g)].map((m) => m[1]);
 }
 
@@ -187,25 +187,25 @@ function allMarkdown() {
 }
 
 // ---------------------------------------------------------------------------
-// §9 — structure
+// Structure
 // ---------------------------------------------------------------------------
 
-// §9 — every skill is namespaced /mubit-memory:<skill>. The frontmatter `name` is the
+// Every skill is namespaced /mubit-memory:<skill>. The frontmatter `name` is the
 // invocation name; if it disagrees with the directory the skill is unreachable by the
 // name the docs give it.
 for (const name of SKILLS) {
   test(`skills/${name}/SKILL.md exists with a name matching its directory and a real description`, () => {
     const { fm } = loadSkill(name);
     assert.equal(fm.name, name,
-      `skills/${name}/SKILL.md frontmatter name is ${JSON.stringify(fm.name)} — it must match the directory (§9)`);
+      `skills/${name}/SKILL.md frontmatter name is ${JSON.stringify(fm.name)} — it must match the directory`);
     assert.equal(typeof fm.description, 'string', `skills/${name}: description must be a string`);
     assert.ok(String(fm.description).trim().length >= 40,
       `skills/${name}: description is what the model reads when deciding whether to invoke the skill; ` +
-      'it is always loaded and counts against contextCost (§3.5), so it must actually describe the trigger');
+      'it is always loaded and counts against contextCost, so it must actually describe the trigger');
   });
 }
 
-// §2/§9 — exactly this set. An extra skill is extra always-loaded context that §3.5's
+// Exactly this set. An extra skill is extra always-loaded context that §3.5's
 // contextCost estimate does not account for.
 test('exactly the documented skills ship — no more, no fewer', () => {
   assert.ok(existsSync(SKILLS_DIR), `skills/ does not exist yet: ${SKILLS_DIR}`);
@@ -215,28 +215,28 @@ test('exactly the documented skills ship — no more, no fewer', () => {
     'the plugin ships exactly this skill set (§2 file tree); contextCost in marketplace.json is sized for it');
 });
 
-// §9.4 — Haiku with maxTurns 3 is the right shape: the work is retrieval and
+// Haiku with maxTurns 3 is the right shape: the work is retrieval and
 // summarisation. An unbounded loop against a memory tool is how you get twenty queries.
 test('agents/mubit-recall.md is a bounded Haiku subagent (model, effort, maxTurns, tools)', () => {
   const { fm } = loadAgent();
-  assert.equal(fm.name, 'mubit-recall', 'agent name must be mubit-recall (§9.4)');
-  assert.equal(fm.model, 'haiku', 'the recall subagent runs on haiku (§9.4) — retrieval and summarisation, not reasoning');
-  assert.equal(fm.effort, 'low', 'effort: low (§9.4)');
+  assert.equal(fm.name, 'mubit-recall', 'agent name must be mubit-recall');
+  assert.equal(fm.model, 'haiku', 'the recall subagent runs on haiku — retrieval and summarisation, not reasoning');
+  assert.equal(fm.effort, 'low', 'effort: low');
   assert.equal(fm.maxTurns, 3,
-    'maxTurns must be 3 (§9.4) — an unbounded loop against a memory tool is how you get twenty queries');
+    'maxTurns must be 3 — an unbounded loop against a memory tool is how you get twenty queries');
   const tools = toolsOf(fm);
   assert.ok(Array.isArray(tools) && tools.length > 0,
-    'the agent must declare an explicit tools list (§9.4); an unrestricted subagent can do far more than search memory');
+    'the agent must declare an explicit tools list; an unrestricted subagent can do far more than search memory');
 });
 
-// §9.4 — "Plugin agents cannot declare hooks, mcpServers, or permissionMode." Declaring
+// "Plugin agents cannot declare hooks, mcpServers, or permissionMode." Declaring
 // one is not an error the host reports; it is silently ignored, so the file reads as
 // though it grants something it does not.
 test('agents/mubit-recall.md declares none of hooks, mcpServers, permissionMode', () => {
   const { fm } = loadAgent();
   for (const forbidden of ['hooks', 'mcpServers', 'permissionMode']) {
     assert.ok(!(forbidden in fm),
-      `agents/mubit-recall.md declares "${forbidden}" — plugin agents cannot declare it (§9.4); it will be silently ignored`);
+      `agents/mubit-recall.md declares "${forbidden}" — plugin agents cannot declare it; it will be silently ignored`);
   }
 });
 
@@ -255,13 +255,13 @@ test('every tools: entry across skills and agents is fully qualified', () => {
       granted++;
       assert.ok(t.startsWith(QUALIFIED_PREFIX),
         `${rel}: tools entry ${JSON.stringify(t)} must use the ${QUALIFIED_PREFIX} prefix — ` +
-        'bare mcp__<server>__<tool> does not match a plugin-provided server (§3.2)');
+        'bare mcp__<server>__<tool> does not match a plugin-provided server');
     }
   }
-  assert.ok(granted > 0, 'no skill or agent granted any MCP tool — at least recall/remember/forget need them (§9)');
+  assert.ok(granted > 0, 'no skill or agent granted any MCP tool — at least recall/remember/forget need them');
 });
 
-// §12.7 — the rename trap: an MCP tool renamed upstream silently drops out of every
+// The rename trap: an MCP tool renamed upstream silently drops out of every
 // skill that referenced it, and the skill stops working with no error anywhere.
 test('every tool named by a skill or agent exists in the bundled MCP server', () => {
   const real = new Set(realToolNames());
@@ -282,40 +282,40 @@ test('every tool named by a skill or agent exists in the bundled MCP server', ()
 });
 
 // ---------------------------------------------------------------------------
-// §9 — content guards
+// Content guards
 // ---------------------------------------------------------------------------
 
-// §9.1 — the anti-fan-out paragraph is not stylistic. Without it a model treats a memory
+// The anti-fan-out paragraph is not stylistic. Without it a model treats a memory
 // tool the way it treats grep and issues six queries at ~0.6s each, for a question the
 // injected context already answered.
 test('recall/SKILL.md carries the anti-fan-out guidance', () => {
   const { body } = loadSkill('recall');
   assert.match(body, /\bone\b[\s\S]{0,60}\b(broad|mubit_recall)\b/i,
-    'recall must instruct one broad call, not several narrow ones (§9.1)');
+    'recall must instruct one broad call, not several narrow ones');
   assert.match(body, /two calls[\s\S]{0,40}ceiling/i,
-    'recall must state that two calls is the ceiling (§9.1)');
+    'recall must state that two calls is the ceiling');
   assert.match(body, /never fan out|do not fan out|fan-out/i,
-    'recall must forbid fanning out across sub-topics (§9.1)');
+    'recall must forbid fanning out across sub-topics');
   assert.match(body, /parallel/i,
-    'recall must name parallel sub-topic searches as the thing not to do (§9.1)');
+    'recall must name parallel sub-topic searches as the thing not to do');
   // The injected context is the reason most invocations are unnecessary at all.
   assert.match(body, /already[\s\S]{0,20}inject/i,
-    'recall must say memory was already injected this turn, so the model reads before searching (§9.1)');
+    'recall must say memory was already injected this turn, so the model reads before searching');
 });
 
-// §1.5/§9.2 — ingest returns when the write is QUEUED, not stored. Without this warning
+// Ingest returns when the write is QUEUED, not stored. Without this warning
 // the model saves a lesson, immediately searches for it, finds nothing, and concludes
 // memory is broken.
 test('remember/SKILL.md warns that mubit_learned returns when the write is queued, not stored', () => {
   const { body } = loadSkill('remember');
-  assert.match(body, /queued/i, 'remember must say the write is queued (§9.2)');
+  assert.match(body, /queued/i, 'remember must say the write is queued');
   assert.match(body, /not stored|not[\s\S]{0,20}\bstored\b/i,
-    'remember must say queued is NOT stored (§9.2)');
+    'remember must say queued is NOT stored');
   assert.match(body, /do not|don't/i,
-    'remember must tell the model not to immediately search for what it just saved (§9.2)');
+    'remember must tell the model not to immediately search for what it just saved');
 });
 
-// §1.4/§9.3 — Mubit extracts lessons on its own as it ingests, but those keep the scope they
+// Mubit extracts lessons on its own as it ingests, but those keep the scope they
 // were extracted at. Only the explicit reflect path widens scope, which is the entire reason
 // this skill (and reflectOnEnd) exist. Without that paragraph the model sees lessons
 // accumulating and concludes the explicit call is redundant.
@@ -327,11 +327,11 @@ test('remember/SKILL.md warns that mubit_learned returns when the write is queue
 test('reflect/SKILL.md explains that background extraction never widens scope', () => {
   const { body } = loadSkill('reflect');
   assert.match(body, /\brun\b[\s\S]{0,120}\bscope\b|\bscope\b[\s\S]{0,120}\brun\b/i,
-    'reflect must say that background-extracted lessons stay at run scope (§1.4)');
+    'reflect must say that background-extracted lessons stay at run scope');
   assert.match(body, /invisible to the next session|not visible|next session/i,
-    'reflect must state the consequence: a run-scoped lesson does not reach the next session (§1.4)');
+    'reflect must state the consequence: a run-scoped lesson does not reach the next session');
   assert.match(body, /only[\s\S]{0,80}explicit|explicit[\s\S]{0,80}(widen|promot|reserved)/i,
-    'reflect must say that only the explicit path widens a lesson\'s scope (§1.4)');
+    'reflect must say that only the explicit path widens a lesson\'s scope');
 });
 
 // The published plugin describes a hosted instance and nothing else. Self-hosting is not a
@@ -349,7 +349,7 @@ test('setup/SKILL.md configures a hosted instance in two settings, and installs 
   assert.match(body, /endpoint/i, 'setup must tell the user to set an endpoint');
   assert.match(body, /mbt_|api\s*key/i, 'setup must tell the user to set an API key');
   assert.match(body, /never\s+(attempt\s+to\s+)?install|do not install|don't install/i,
-    'setup must state that it never installs anything — a memory plugin running installers is a trust failure (§9.3)');
+    'setup must state that it never installs anything — a memory plugin running installers is a trust failure');
 
   // Where the two settings come from, and how they get set: a Mubit account reached through
   // `/mubit-memory:auth` or the `/plugin` config UI. If setup ever grows a third path, it has
@@ -361,28 +361,28 @@ test('setup/SKILL.md configures a hosted instance in two settings, and installs 
     'setup must say where an API key comes from: a Mubit account, not a component the user runs');
 });
 
-// §9.3/§4.7 — each ConnState has a distinct fix, so doctor reports the typed state
+// Each ConnState has a distinct fix, so doctor reports the typed state
 // verbatim instead of paraphrasing it into "something went wrong".
 test('doctor/SKILL.md names all five typed connection states verbatim', () => {
   const { body } = loadSkill('doctor');
   for (const state of ['ready', 'unreachable', 'server_error', 'auth_failed', 'not_responding']) {
     assert.ok(body.includes(state),
-      `doctor/SKILL.md must report the typed ConnState "${state}" verbatim — each has a distinct fix (§4.7, §9.3)`);
+      `doctor/SKILL.md must report the typed ConnState "${state}" verbatim — each has a distinct fix`);
   }
 });
 
-// §9.3 — forget deletes irreversibly, and a *wrong* lesson is usually better handled with
+// Forget deletes irreversibly, and a *wrong* lesson is usually better handled with
 // a negative mubit_outcome, which the promotion pipeline acts on.
 test('forget/SKILL.md warns that deletion is not undoable and offers mubit_outcome instead', () => {
   const { body } = loadSkill('forget');
   assert.match(body, /not undoable|cannot be undone|irreversible|no undo/i,
-    'forget must warn that deletion is not undoable (§9.3)');
+    'forget must warn that deletion is not undoable');
   assert.match(body, /mubit_outcome/,
-    'forget must point at mubit_outcome as the better tool for a wrong (rather than unwanted) lesson (§9.3)');
+    'forget must point at mubit_outcome as the better tool for a wrong (rather than unwanted) lesson');
 });
 
 // ---------------------------------------------------------------------------
-// §9 — auth
+// Auth
 // ---------------------------------------------------------------------------
 
 /**
@@ -424,10 +424,10 @@ test('auth/SKILL.md is user-invocable', () => {
 test('auth/SKILL.md says it never installs anything', () => {
   const { body } = loadSkill('auth');
   assert.match(body, /never\s+(attempt\s+to\s+)?install|do not install|don't install/i,
-    'a memory plugin running installers is a trust failure (§9.3)');
+    'a memory plugin running installers is a trust failure');
 });
 
-// §12.1: the three outcomes have different fixes, and the exit codes exist so the skill
+// The three outcomes have different fixes, and the exit codes exist so the skill
 // can tell them apart without parsing prose.
 test('auth/SKILL.md maps the exit codes to what the user should do', () => {
   const { body } = loadSkill('auth');
@@ -441,7 +441,7 @@ test('auth/SKILL.md maps the exit codes to what the user should do', () => {
 test('auth/SKILL.md warns that /reload-plugins does not fire SessionStart', () => {
   const { body } = loadSkill('auth');
   assert.match(body, /reload-plugins/,
-    'authenticating mid-session leaves no run id until a new session starts (§9.3)');
+    'authenticating mid-session leaves no run id until a new session starts');
   assert.match(body, /SessionStart/,
     'naming the event is what makes the advice checkable rather than folklore');
 });
@@ -509,7 +509,7 @@ for (const [name, script] of [
 }
 
 // ---------------------------------------------------------------------------
-// §9 — dashboard
+// Dashboard
 // ---------------------------------------------------------------------------
 
 /**
@@ -566,18 +566,18 @@ test('dashboard/SKILL.md states the loopback bind, the token and the key boundar
   assert.match(body, /token/i, 'every request needs one');
   assert.match(body, /never leaves|proxied/i, 'the API key does not reach the browser');
   assert.match(body, /never\s+(attempt\s+to\s+)?install|do not install|don't install/i,
-    'a memory plugin running installers is a trust failure (§9.3)');
+    'a memory plugin running installers is a trust failure');
 });
 
-// §9.3 — setup is the diagnostic; auth is the fix. Setup pointing at the console alone
+// Setup is the diagnostic; auth is the fix. Setup pointing at the console alone
 // leaves the user doing seven manual steps the plugin can do for them.
 test('setup/SKILL.md sends the user to /mubit-memory:auth', () => {
   const { body } = loadSkill('setup');
   assert.match(body, /\/mubit-memory:auth/,
-    'setup diagnoses; auth fixes. Setup must name it (§9.3)');
+    'setup diagnoses; auth fixes. Setup must name it');
 });
 
-// §9.2 — what `mubit_learned` actually writes.
+// What `mubit_learned` actually writes.
 //
 // This paragraph was true and is now false. The bundled SDK hard-codes
 // `lesson_scope: "session"`, and the control plane reads every scope but `run` across runs —
@@ -596,7 +596,7 @@ test('remember/SKILL.md states the scope mubit_learned actually writes', () => {
 
   assert.ok(para,
     'remember/SKILL.md no longer has a paragraph saying what scope mubit_learned writes at — '
-    + 'that sentence is the model\'s only account of where its lesson went (§9.2)');
+    + 'that sentence is the model\'s only account of where its lesson went');
 
   // The scope is a setting, not a constant, and the paragraph has to say so: naming one value
   // as if it were fixed is how this sentence went stale the last time. It must name the
@@ -635,11 +635,11 @@ test('doctor/SKILL.md routes a cross-session lesson complaint at the scope ceili
 test('remember/SKILL.md names the setting that widens what an agent may write', () => {
   const { body } = loadSkill('remember');
   assert.match(body, /mcpLessonScope|MUBIT_MCP_LESSON_SCOPE/,
-    'remember/SKILL.md does not name the setting that raises the scope ceiling (§6.2)');
+    'remember/SKILL.md does not name the setting that raises the scope ceiling');
 });
 
 // ---------------------------------------------------------------------------
-// §9 — the three skills that carry a promoted tool
+// The three skills that carry a promoted tool
 // ---------------------------------------------------------------------------
 
 /**
@@ -656,7 +656,7 @@ test('remember/SKILL.md names the setting that widens what an agent may write', 
 test('strategies/SKILL.md separates the pattern from the lessons it is a pattern over', () => {
   const { body } = loadSkill('strategies');
   assert.match(body, /across/i,
-    'strategies must say the answer is a pattern *across* lessons, not one of them (§9)');
+    'strategies must say the answer is a pattern *across* lessons, not one of them');
   assert.match(body, /admin\.mjs lessons/,
     'strategies must name `admin.mjs lessons` as the command that reads the individual lessons — '
     + 'the two are near-synonyms until one of them says so');
@@ -666,7 +666,7 @@ test('strategies/SKILL.md separates the pattern from the lessons it is a pattern
 // headline has written a checkpoint that restores nothing.
 test('checkpoint/SKILL.md says the snapshot is stored verbatim, and is run state not knowledge', () => {
   const { body } = loadSkill('checkpoint');
-  assert.match(body, /verbatim/i, 'checkpoint must say the snapshot is stored verbatim (§9)');
+  assert.match(body, /verbatim/i, 'checkpoint must say the snapshot is stored verbatim');
   assert.match(body, /unsummaris|unsummariz|not summaris|not summariz/i,
     'checkpoint must say nothing summarises it — a one-line snapshot restores nothing');
   assert.match(body, /run state, not knowledge/i,
@@ -682,7 +682,7 @@ test('checkpoint/SKILL.md says the snapshot is stored verbatim, and is run state
 test('memory-health/SKILL.md states the store/connection split against mubit_status', () => {
   const { body } = loadSkill('memory-health');
   assert.match(body, /mubit_status/,
-    'memory-health must name mubit_status — it is the tool it will be confused with (§9)');
+    'memory-health must name mubit_status — it is the tool it will be confused with');
   assert.match(body, /store/i, 'memory-health must say it inspects the store');
   assert.match(body, /connection/i,
     'memory-health must say mubit_status inspects the connection; without the second half the '
@@ -690,7 +690,7 @@ test('memory-health/SKILL.md states the store/connection split against mubit_sta
 });
 
 // ---------------------------------------------------------------------------
-// §9 — activity
+// Activity
 // ---------------------------------------------------------------------------
 
 /**
@@ -794,7 +794,7 @@ test('activity/SKILL.md routes the per-prompt question at the dashboard, not at 
 });
 
 // ---------------------------------------------------------------------------
-// §9 — pin
+// Pin
 // ---------------------------------------------------------------------------
 
 /**
@@ -859,11 +859,11 @@ test('pin/SKILL.md states the caps and why a pin is expensive', () => {
     + 'reason gets worked around by shortening the user\'s words');
 });
 
-// §9.3 — the trust rule every script-running skill states.
+// The trust rule every script-running skill states.
 test('pin/SKILL.md says it never installs anything, and is not a permission boundary', () => {
   const { body } = loadSkill('pin');
   assert.match(body, /never\s+(attempt\s+to\s+)?install|do not install|don't install/i,
-    'a memory plugin running installers is a trust failure (§9.3)');
+    'a memory plugin running installers is a trust failure');
   assert.match(body, /permission/i,
     'a pin is text in front of the model, not a boundary — a user who reads it as one will '
     + 'stop using the permission system for something that actually has to hold');
@@ -948,7 +948,7 @@ test('setup/SKILL.md offers the /dashboard alias without a pre-executed command'
 });
 
 // ---------------------------------------------------------------------------
-// §9 — the four skills that run bin/admin.mjs
+// The four skills that run bin/admin.mjs
 // ---------------------------------------------------------------------------
 
 /**
