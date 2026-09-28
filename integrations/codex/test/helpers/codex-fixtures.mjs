@@ -627,28 +627,35 @@ export function sessionEnd(over = {}) {
  *
  * `item.id` is the `tool_use_id` the payload carries, which is what makes the two joinable.
  *
+ * `cmd` names the shell command the way a test's `PostToolUse` names it, and fills both
+ * `command` and `parsed_cmd` from it; `turnId` and `threadId` put the line in a session other
+ * than the builders' default one. All three are optional, and leaving them out writes the line
+ * exactly as recorded.
+ *
  * @param {{toolUseId: string, exitCode?: number, status?: string, secs?: number,
- *          nanos?: number, command?: string[], stdout?: string, stderr?: string}} o
+ *          nanos?: number, command?: string[], cmd?: string, stdout?: string, stderr?: string,
+ *          turnId?: string, threadId?: string}} o
  * @returns {string} one JSONL line, no trailing newline
  */
 export function rolloutCommandCompleted(o) {
   const stdout = o.stdout ?? '';
   const exitCode = o.exitCode ?? 0;
+  const cmd = o.cmd ?? 'sh -c "echo out; exit 9"';
   return JSON.stringify({
     timestamp: '2026-08-21T16:32:10.831Z',
     ordinal: 13,
     type: 'event_msg',
     payload: {
       type: 'item_completed',
-      thread_id: SESSION_ID,
-      turn_id: TURN_ID,
+      thread_id: o.threadId ?? SESSION_ID,
+      turn_id: o.turnId ?? TURN_ID,
       item: {
         type: 'CommandExecution',
         id: o.toolUseId,
         process_id: '71027',
-        command: o.command ?? ['/bin/zsh', '-c', 'sh -c "echo out; exit 9"'],
+        command: o.command ?? ['/bin/zsh', '-c', cmd],
         cwd: 'file:///tmp/codex/proj',
-        parsed_cmd: [{ type: 'unknown', cmd: 'sh -c "echo out; exit 9"' }],
+        parsed_cmd: [{ type: 'unknown', cmd }],
         source: 'unified_exec_startup',
         status: o.status ?? (exitCode === 0 ? 'completed' : 'failed'),
         stdout,
@@ -666,6 +673,43 @@ export function rolloutCommandCompleted(o) {
 
 /** The `tool_use_id` the turn-scoped builders use, so a rollout line can be joined to them. */
 export const FIXTURE_TOOL_USE_ID = TOOL_USE_ID;
+
+/**
+ * The line a 0.149+ rollout writes when the model calls its `exec` tool: a
+ * `response_item/custom_tool_call` named `exec`, whose `input` is the **script** the model
+ * wrote to drive its commands — the shape `lib/codex-import.mjs` documents and skips.
+ *
+ * It is not the command. Each command the script runs gets its own `item_completed`
+ * `CommandExecution` (`rolloutCommandCompleted`), whose `id` is the `tool_use_id` the hook
+ * sees; the script's `call_id` is an id of its own. A reader that took the script for the call
+ * would join on the wrong id — and read the script's output, below, as the command's outcome.
+ *
+ * @param {{callId: string, script: string}} o
+ * @returns {string} one JSONL line, no trailing newline
+ */
+export function rolloutExecScript(o) {
+  return JSON.stringify({
+    timestamp: '2026-08-21T16:32:10.402Z',
+    type: 'response_item',
+    payload: { type: 'custom_tool_call', status: 'completed', call_id: o.callId, name: 'exec', input: o.script },
+  });
+}
+
+/**
+ * The script's own output line, written when the whole script has finished. It says
+ * `Script completed` whether or not a command inside it failed, which is why the outcome of a
+ * command is read from its `CommandExecution` item and never from here.
+ *
+ * @param {{callId: string}} o
+ * @returns {string} one JSONL line, no trailing newline
+ */
+export function rolloutExecScriptOutput(o) {
+  return JSON.stringify({
+    timestamp: '2026-08-21T16:32:11.207Z',
+    type: 'response_item',
+    payload: { type: 'custom_tool_call_output', call_id: o.callId, output: [{ type: 'input_text', text: 'Script completed\n' }] },
+  });
+}
 
 /** Every builder, by event name — so a test can table-drive all eleven. */
 export const BUILDERS = Object.freeze({
@@ -704,15 +748,28 @@ export const BUILDERS = Object.freeze({
  * An entry of `{hookPrompt: reason}` writes what a blocked Stop hook leaves instead — see
  * `rolloutHookPrompt`.
  *
- * @param {Array<{role: string, text: string | string[]} | HookPromptEntry>} [messages]
+ * An entry of `{line}` is written verbatim, in its place: that is how a tool call gets into
+ * the file, as the lines `rolloutExecScript`, `rolloutCommandCompleted` and
+ * `rolloutExecScriptOutput` build.
+ *
+ * `complete: false` leaves off the turn's closing lines, which is the file as a hook reads it
+ * mid-turn — `PostToolUse` runs before the turn is over. `sessionId` names the thread in the
+ * `session_meta` line.
+ *
+ * @param {Array<{role: string, text: string | string[]} | HookPromptEntry | {line: string}>} [messages]
+ * @param {{complete?: boolean, sessionId?: string}} [opts]
  * @returns {string}
  */
-export function rolloutJsonl(messages = []) {
+export function rolloutJsonl(messages = [], opts = {}) {
   const lines = [
-    JSON.stringify({ type: 'session_meta', payload: { session_id: SESSION_ID, cwd: '/tmp/codex/proj', cli_version: '0.146.0' } }),
+    JSON.stringify({ type: 'session_meta', payload: { session_id: opts.sessionId ?? SESSION_ID, cwd: '/tmp/codex/proj', cli_version: '0.146.0' } }),
     JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: TURN_ID } }),
   ];
   for (const m of messages) {
+    if ('line' in m) {
+      lines.push(m.line);
+      continue;
+    }
     if ('hookPrompt' in m) {
       lines.push(...rolloutHookPrompt(m.hookPrompt, { lead: m.lead, attrs: m.attrs, id: m.id ?? `msg_${lines.length}` }));
       continue;
@@ -732,6 +789,7 @@ export function rolloutJsonl(messages = []) {
       lines.push(JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message } }));
     }
   }
+  if (opts.complete === false) return `${lines.join('\n')}\n`;
   lines.push(JSON.stringify({ type: 'response_item', payload: { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'gAAAA…' } }));
   lines.push(JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: TURN_ID } }));
   return `${lines.join('\n')}\n`;
