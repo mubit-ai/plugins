@@ -56,17 +56,15 @@ already been shown is printed as its id and first clause, marked `(seen earlier)
 
 ## Why the explicit call exists at all
 
-Mubit already extracts lessons on its own, in the background, as it ingests. It does that
-perfectly well — and then stops there. Lessons extracted that way keep the scope they were
-extracted at, typically `run`, and **a `run`-scoped lesson is invisible to the next session**.
+A lesson drawn from a run's activity starts at `run` scope, and **a `run`-scoped lesson is
+invisible to the next session**. (A `mcp__mubit__mubit_learned` write is different: it takes the
+`mcpLessonScope` setting, `session` by default.) Lessons drawn from activity reach later
+sessions only after an explicit reflect — this skill, or the one `SessionEnd` issues. Without
+one, the store can look busy, lessons accumulating steadily, while nothing reaches a future
+session.
 
-The consequence is concrete: the store can look busy, lessons accumulating steadily, while
-nothing ever crosses the boundary into a future session. Widening a lesson's scope is
-reserved for the explicit reflect path — this skill, and the one `SessionEnd` issues.
-
-Widening is still gradual once a lesson is on that path. Rules are never scope-promoted, since
-they are enforced as written; anything else has to establish itself before it travels. Expect
-lessons to widen over several sessions, not on the first reflect.
+Even then it is gradual: expect lessons to reach later sessions over several sessions, not on
+the first reflect.
 
 ## When to invoke it
 
@@ -74,11 +72,11 @@ lessons to widen over several sessions, not on the first reflect.
 That covers routine hygiene. Invoke this skill for a **mid-session checkpoint** — a long
 session that has just finished a real chunk of work, a debugging arc that ended in something
 worth keeping, or the point where the user is about to compact and wants the lessons banked
-first. Do not call it every few turns: it is an LLM-backed extraction pass over the run, and
-calling it on a run that has barely changed costs time and returns the same lessons.
+first. Do not call it every few turns: it is slow, and calling it on a run that has barely
+changed costs time and returns the same lessons.
 
 One timing detail worth knowing before you read a zero as a failure: reflection only sees
-items the server has already **indexed**. A reflect fired immediately after a burst of
+items that are already **searchable**. A reflect fired immediately after a burst of
 captures or an explicit `mubit-memory:remember` can honestly report `lessons_stored: 0`
 where the same run reflected about a minute later returns them. If you have just written
 something you expect to be reflected on, give ingest a moment rather than reflecting twice.

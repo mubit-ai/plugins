@@ -26,7 +26,7 @@ Two surfaces, one memory.
   (you never ask)        │  SessionStart · UserPromptSubmit ×2 · PostToolUse ×2 · Failure     │
                          │  Stop · SubagentStop · PreCompact · PostCompact · SessionEnd       │
                          │                                                                   │
-  deliberate   ─────────►│  MCP server → 10 tools the model calls on purpose                  │
+  deliberate   ─────────►│  MCP server → tools the model calls on purpose                     │
   (the model asks)       │  mubit_recall · mubit_learned · mubit_outcome · mubit_reflect · …  │
                          └───────────────────────────────────────────────────────────────────┘
                                        │                                    │
@@ -92,11 +92,9 @@ helpers:
 | `peek [section]` | prints the plugin's local state — `peek --help` lists sections |
 | `runid ['<payload json>']` | derives the run id without running a hook |
 
-It also exports `LAB_RUN_ID`. The fake instance reads it to decide which of its lessons belong
-to *your* run — it cannot work that out on its own, because the request that reads the lesson
-feed names no run at all, and the id is a hash of the project path that differs per worktree.
-Start the fake instance from a shell that has sourced `env.sh`, or Lab 11b will show you one
-row fewer than it should.
+It also exports `LAB_RUN_ID`, the run id these settings derive — a hash of the project path,
+so it differs per worktree. The fake instance uses it to mark which of its sample lessons are
+*yours*, so start it from a shell that has sourced `env.sh`.
 
 Nothing touches your real `~/.claude` data. To wipe and start again:
 `node labs/setup.mjs --reset && node labs/setup.mjs`.
@@ -114,14 +112,14 @@ runid
 ```
 strategy    per-directory
 projectDir  …/labs/.work/demo-app
-run_id      cc-demo-app-1ede9c0e
+run_id      cc-demo-app-<hash8>
 agent_id    claude-code-2f183a4e
 ```
 
 `cc-<slug>-<hash8>` — the slug is the directory name, the hash covers the **git toplevel**. Two
-terminals in one repo share a run; two repos that happen to share a directory name do not. Your
-hash will not match the one printed above, and that is exactly the point: it is a function of
-the absolute path, so this checkout and a copy of it elsewhere are different runs.
+terminals in one repo share a run; two repos that happen to share a directory name do not. The
+hash is left out above because yours is your own: it is a function of the absolute path, so
+this checkout and a copy of it elsewhere are different runs.
 
 Now try the other three strategies:
 
@@ -132,7 +130,7 @@ MUBIT_CC_RUN_STRATEGY=static           runid '{"session_id":"s3"}'
 ```
 
 ```
-cc-demo-app-main-6a4f0336                      ← branch is in the name AND the hash
+cc-demo-app-main-<hash8>                       ← branch is in the name AND the hash
 cc-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d        ← one conversation, one run
 REFUSED: MUBIT_CC_RUN_STRATEGY=static requires MUBIT_CC_RUN_ID…
 ```
@@ -168,15 +166,14 @@ hook session-start 01-session-start.json
 
 Terminal A shows three calls in order: `GET /v2/core/health`, then
 `POST /v2/control/agents/register`, then `POST /v2/control/activity` — the standing-lessons
-read goes to the activity feed, not the route named after lessons, for the reason Lab 11a
-demonstrates: the lessons route pages before it filters. A fourth call, `POST
+read goes to the activity feed, not the route named after lessons (Lab 11a). A fourth call, `POST
 /v2/control/context`, lands a beat later from a **detached child** — session start prefetches
 the resume block Lab 3 will inject, so the first prompt does not pay for its assembly.
 Terminal B prints what the model will see:
 
 ```json
-{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"# Mubit memory is active\n\nRun: cc-demo-app-1ede9c0e (hosted)\nRelevant memory is injected automatically before each of your turns — do not search for it preemptively.\n…"},
- "systemMessage":"mubit: hosted · run cc-demo-app-1ede9c0e · 2 global lessons"}
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"# Mubit memory is active\n\nRun: cc-demo-app-<hash8> (hosted)\nRelevant memory is injected automatically before each of your turns — do not search for it preemptively.\n…"},
+ "systemMessage":"mubit: hosted · run cc-demo-app-<hash8> · 2 global lessons"}
 ```
 
 Three things worth stopping on:
@@ -189,9 +186,6 @@ Three things worth stopping on:
   lesson list costs the lesson list, not the steer block — the one thing this hook may never do
   is fail to speak.
 
-Note the standing-lessons read carries **no `run_id`**: absent means all runs, which is
-exactly what "global lessons" wants.
-
 ```bash
 peek marker
 ```
@@ -200,7 +194,7 @@ peek marker
 
 ```bash
 echo '{"session_id":"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"}' | node "$CLAUDE_PLUGIN_ROOT/bin/statusline.mjs"
-# ● mubit: cc-demo-app-1ede9c0e · hosted · recall 3/60 tok · lessons 2g
+# ● mubit: cc-demo-app-<hash8> · hosted · recall 3/60 tok · lessons 2g
 ```
 
 **Read:** `hooks/src/session-start.mjs`.
@@ -222,12 +216,12 @@ hook stage-prompt  02-prompt.json
 prefetched (where earlier work on this project left off), then the recall proper:
 
 ```
-<mubit-resume run="cc-demo-app-1ede9c0e" sources="1" tokens="21">
+<mubit-resume run="cc-demo-app-<hash8>" sources="1" tokens="21">
 Assembled from memory at the start of this session …
 ## Active rules
 - Poll the ingest job; "queued" is not "stored".
 </mubit-resume>
-<mubit-memory run="cc-demo-app-1ede9c0e" sources="3" tokens="60">
+<mubit-memory run="cc-demo-app-<hash8>" sources="3" tokens="60">
 Recalled from memory of earlier work — it may be incomplete or out of date, …
 ## Active rules
 - Ingest returns when queued, not when stored; poll the job id.
@@ -245,19 +239,19 @@ POST /v2/control/query   mode=direct_bypass  lane=semantic_search  evidence_only
 ```
 
 **The ladder is the most important design decision in the plugin.** The obvious implementation
-— ask the server for a ready-made context block — costs **two LLM calls per prompt**, in front
-of every keystroke, forever. So:
+— ask the server for a ready-made context block — is the slow path, and it would sit in front of
+every keystroke, forever. So:
 
-| Rung | Request | LLM calls | Entered when |
-| --- | --- | --- | --- |
-| 1 | `query{mode:"direct_bypass", evidence_only:true}` | **0** | always — the primary path |
-| 2 | `query{mode:"agent_routed"}` | 1 | rung 1 returned **403** (policy, not fault) **and** you opted in with `MUBIT_CC_RECALL_FALLBACK=agent_routed` — by default a denial goes dark instead, because rung 2's LLM call would run per prompt |
-| 3 | `context{mode:"sections"}` | **2** | only if you opt in with `recallAssemble: server` |
+| Rung | Request | Entered when |
+| --- | --- | --- |
+| 1 | `query{mode:"direct_bypass", evidence_only:true}` | always — the primary path |
+| 2 | `query{mode:"agent_routed"}` | rung 1 returned **403** (policy, not fault) **and** you opted in with `MUBIT_CC_RECALL_FALLBACK=agent_routed` — by default a denial goes dark instead, because rung 2 takes seconds on every prompt |
+| 3 | `context{mode:"sections"}` | only if you opt in with `recallAssemble: server` |
 
-Rung 1 returns raw `evidence[]`; `lib/assemble.mjs` renders it into sections client-side, in the
-server's own order, for free. That is why the block above has `## Active rules` before
-`## Lessons` even though the lesson could score higher — section order outranks score, because
-the server does it that way and the two must be indistinguishable.
+Rung 1 returns raw `evidence[]`; `lib/assemble.mjs` renders it into sections locally. That is
+why the block above has `## Active rules` before `## Lessons` even though the lesson could score
+higher — section order outranks score, so a locally assembled block reads the same as one
+assembled by the server.
 
 Now the state both hooks touched:
 
@@ -314,7 +308,7 @@ Terminal A stays silent through all four: **capture never touches the network.**
 file per item into `runs/<run_id>/spool/` and stops.
 
 ```
-cc-demo-app-1ede9c0e   2 item(s) pending
+cc-demo-app-<hash8>   2 item(s) pending
   item_id   cc-toolu_lab_0001
   intent    trace   importance medium
   env_tags  tool:claude-code repo:demo-app branch:main
@@ -340,9 +334,7 @@ Six things happened there:
 5. **The failure is graded `high`** while the successful edit is `medium`. A failed approach is
    the highest-value thing a coding agent can remember — it is the one class of knowledge the
    model cannot re-derive by reading the code.
-6. **Every item carries an `intent`.** Items arriving without one cost the server an LLM call
-   *per item* to classify. At tool-call frequency, that is the difference between a plugin you
-   leave on and one you uninstall.
+6. **Every item carries an `intent`**, set locally from the tool and its outcome.
 
 **Break it:** try to capture the plugin talking to itself —
 
@@ -354,20 +346,6 @@ peek spool     # unchanged
 
 Self-reference suppression. Without it the plugin records its own traffic, recalls it, then
 records the recall.
-
-**Find the gap** (a real one, worth understanding):
-
-```bash
-node --input-type=module -e "
-import { redactText } from '$CLAUDE_PLUGIN_ROOT/lib/redact.mjs';
-for (const s of ['DATABASE_PASSWORD=hunter2', 'export DATABASE_PASSWORD=hunter2', 'env: DATABASE_PASSWORD=hunter2'])
-  console.log(JSON.stringify(s), '->', JSON.stringify(redactText(s, {redact:true}, 'output').text));
-"
-```
-
-The first two redact; the third does not. Read `ASSIGNMENT_RE` in `lib/redact.mjs` and work out
-why a preceding `name:` swallows the assignment behind it. This is why stage 2 (drop whole
-paths) exists rather than trusting stage 1 to catch everything.
 
 **Read:** `hooks/src/capture.mjs`, `lib/redact.mjs`, `lib/classify.mjs`, `lib/spool.mjs`.
 
@@ -395,7 +373,7 @@ POST /v2/control/ingest
 POST /v2/control/outcome
     outcome=success  signal=0.2  reference_id=global
     entry_ids=[les_g2, les_g1, ref_rule_1, ref_lesson_1, ref_fact_1]
-    idempotency_key=cc-outcome-cc-demo-app-1ede9c0e-p_lab_0001
+    idempotency_key=cc-outcome-cc-demo-app-<hash8>-p_lab_0001
 ```
 
 Five ids, not three: the turn reinforces the **injected standing lessons** (`les_g2`,
@@ -434,7 +412,7 @@ node "$HOOKS/drain.mjs" < labs/payloads/02-prompt.json     # nothing left to sen
 
 ---
 
-## Lab 6 — SessionEnd: the only path that widens a lesson's scope
+## Lab 6 — SessionEnd: reflect, and what reaches the next session
 
 ```bash
 hook session-end 08-session-end.json
@@ -451,18 +429,16 @@ Order is the design: **drain inline → flush pending outcomes → reflect → h
 
 - The drain commits *before* reflect is attempted, because a failing reflect may never cost
   captures that were already accepted.
-- Outcomes go out *before* reflect, because `include_step_outcomes` folds those signals into
-  the evidence and the negative ones produce the best lessons.
+- Outcomes go out *before* reflect, so reflect can include them.
 - The flush runs in a **detached child** — the hook process answers the host immediately and
   the child finishes the sends on its own clock, so a host that tears the session down the
   moment the hook returns cannot kill the flush mid-send. (Earlier builds ran it inline for
   the opposite fear — that a detached child would be reaped — and lost reflects to impatient
   teardowns; `test/session-end-detach.test.mjs` in the main suite pins the current answer.)
 
-Why reflect matters: Mubit extracts lessons on its own as it ingests, but those keep the scope
-they were extracted at, and a `run`-scoped lesson is invisible to your next session.
-`POST /v2/control/reflect` is the only call that can widen that. `reflectOnEnd: false` is not a
-latency knob — it is opting out of cross-session memory.
+Why reflect matters: lessons learned in a run reach later sessions only after
+`POST /v2/control/reflect` at session end. `reflectOnEnd: false` is not a latency knob — it is
+opting out of cross-session memory.
 
 **Break it:** run it a second time.
 
@@ -494,23 +470,18 @@ The probe speaks real stdio MCP: spawn, `initialize`, `notifications/initialized
 `tools/list`, `tools/call` — exactly what Claude Code does.
 
 ```
-server    mubit-memory 0.12.5
-tools     13
-  · mubit_archive
-  · mubit_checkpoint
+server    mubit-memory <version>
+tools     <n>
+  · mubit_recall
+  · mubit_learned
   …
 mubit_status →
 { "status": "connected", "endpoint": "http://127.0.0.1:8787",
-  "default_session": "cc-demo-app-1ede9c0e" }
+  "default_session": "cc-demo-app-<hash8>" }
 ```
 
 **`default_session` is the same run id Lab 1 derived.** That is the whole job of
-`mcp/src/launch.mjs`. The upstream server reads its config at *module scope*:
-
-```js
-const DEFAULT_SESSION_ID = process.env.MUBIT_DEFAULT_SESSION_ID || "default";
-```
-
+`mcp/src/launch.mjs`. The upstream server reads its environment once, when it is imported.
 So the launcher resolves config, derives the run id with the **same** `lib/runid.mjs` the hooks
 use, writes five env vars, and *only then* does `await import('./server.js')`. Setting any of
 them one line later is indistinguishable from not setting them at all. Ordering is a
@@ -521,11 +492,8 @@ pre-prompt recall never reads — which is exactly what happens under
 `runStrategy: per-conversation`, because an MCP server starts once per session and is never
 handed a `session_id`. It falls back to `per-directory` and says so on stderr.
 
-Note the tool count: **13**, not the 21 an older bundle served. The committed
-`mcp/dist/server.js` used to come from a published `@mubit-ai/mcp` that predated the allowlist
-patch, so `MUBIT_MCP_TOOLS` was inert and the probe printed every tool the server had. It is
-now built from the in-repo package. The lesson outlived the bug: a shipped artefact can
-disagree with its own README, and probing is the only way you find out.
+Note the tool count: it is whatever the server actually serves for this configuration.
+Probing is the only way to see that from outside, rather than trusting a README's list.
 
 **Read:** `mcp/src/launch.mjs`, `.mcp.json`, `scripts/mcp-probe.mjs`.
 
@@ -547,7 +515,7 @@ peek policy
 First prompt: `403` on `direct_bypass` — and **nothing else**. `{"suppressOutput":true}`,
 no injection, and the verdict cached to `policy/<endpoint_hash>.json` with a 24 h TTL; the
 second prompt does not even probe. The descent the ladder table shows is **opt-in**: rung 2
-costs one LLM call per prompt, so the plugin will not walk down to it on its own. Watch it
+takes seconds on every prompt, so the plugin will not walk down to it on its own. Watch it
 with the fallback enabled:
 
 ```bash
@@ -666,8 +634,8 @@ cd integrations/claude-code && npm test        # ~32 s, ~1560 assertions, no net
 richer version of `labs/fake-mubit.mjs` (per-route replies, delays, hangs, request assertions),
 and `runHook()` spawns hooks exactly as Claude Code does. Every design decision described above
 has a test that pins it — `prompt-recall`'s test asserts rung 3 is *never* reached by default,
-because it is the first thing a well-meaning maintainer would "simplify" into place at two LLM
-calls per prompt.
+because it is the first thing a well-meaning maintainer would "simplify" into place, and it is
+the slowest path.
 
 Pick one behaviour you found surprising in Labs 1–9 and find the test that pins it. Then change
 the implementation to break it and watch which test fails. (One timing-sensitive test can flake
@@ -695,7 +663,7 @@ both of which matter here.
 environment, so pointing it at a real instance means exporting a real credential into a shell.
 This driver sets `MUBIT_CC_DATA_DIR` and stops, and lets the launcher's own `loadConfig()`
 resolve the stored credential the way it does in a real session. Nothing reads the key,
-nothing prints it. That is what makes Drill E safe.
+nothing prints it. That is what makes 11e safe.
 
 **It shows the routes.** `--routes` diffs `labs/.work/requests.ndjson` across the call.
 
@@ -706,42 +674,17 @@ routes dialled by that call:
   POST /v2/control/activity → 200
 ```
 
-Not `/v2/control/lessons` — the route whose name matches the tool. The reason is paging order.
-The lessons route pages *before* it filters, so `{scope:'global', limit:5}` asks for five rows
-and then keeps whichever of those five happen to be global: on an account with any history,
-reliably none. The activity feed collects and sorts *before* it pages, so a small limit costs
-you the oldest rows and never the newest.
+Not `/v2/control/lessons` — the route whose name matches the tool. The catalogue reads the
+activity feed. Both routes answer `200`, so only the wire tells you which one a tool was on.
 
-That is a false negative rather than an error, which is the dangerous kind. Both routes answer
-`200`. Only the wire tells you which one you were on.
-
-### 11b — Where the run boundary actually falls
-
-The fake instance holds five lessons. Four come back:
-
-| id | scope | wrote it | in a default read? |
-| --- | --- | --- | --- |
-| `les_r1` | `run` | you | yes — it is yours |
-| `les_s1` | `session` | you | yes |
-| `les_g1` | `global` | another run | yes — global reaches |
-| `les_g2` | `global` | another run | yes |
-| `les_r2` | `run` | another run | **no** |
-
-`les_r2` is the whole test. A run-scoped lesson belongs to the run that wrote it, and a
-catalogue that shows you someone else's is not confined. Ask for a scope explicitly and the
-boundary moves on purpose:
+### 11b — A catalogue that says what it showed
 
 ```bash
-mcp mubit_lessons '{"scope":"global"}' --routes    # 2 rows, both from the other run
+mcp mubit_lessons '{"scope":"global"}' --routes
 ```
 
 Note what rides beside the rows: a `mubit_lessons_guard` object saying what was shown and what
-matched. A catalogue that cannot say what it excluded is not one you can act on.
-
-**The trap worth knowing.** Rows carry a run id in two spellings — bare on `run_id`, and
-namespaced inside the metadata's `source_run_id`. "Is this mine?" has to be the union of both.
-Compare against one and you drop half your own rows, and the failure looks like an empty
-account rather than a bug.
+matched. A catalogue that cannot say what it left out is not one you can act on.
 
 ### 11c — A partial answer that says so
 
@@ -773,12 +716,12 @@ hook session-start 01-session-start.json
 
 Not "0 global lessons". Zero is a claim; this is a listing that ran out.
 
-### 11d — The write path reaches the widening authority
+### 11d — An MCP write still earns a reflect
 
-Reflect is the only call that can widen a lesson's scope past `run`, and session end decides
-whether to make it. That decision used to read the hook-side spool alone — so a session whose
-only memory activity went through the MCP looked, from session end, like a session that did
-nothing.
+Reflect at session end is what carries a run's lessons into later sessions, and session end
+decides whether to make it. That decision used to read the hook-side spool alone — so a session
+whose only memory activity went through the MCP looked, from session end, like a session that
+did nothing.
 
 Drive it: a session that opens, writes one lesson through the MCP, and captures nothing.
 
@@ -802,9 +745,8 @@ guard records a successful MCP ingest, and session end counts it. Delete `mcp.in
 the marker between the two commands and the reflect disappears — worth doing once, because it
 is the shortest proof that the two surfaces are joined by that one field and nothing else.
 
-**`mubit_learned` takes `text`, not `content`.** Easy hours to lose. A rejected write can also
-land a malformed lesson that renders in every later session's steer block, so check what you
-wrote rather than only whether the call returned.
+**`mubit_learned` takes `text`, not `content`.** Easy hours to lose. Check what you wrote
+rather than only whether the call returned.
 
 ### 11e — The same commands against a real instance
 
@@ -817,11 +759,6 @@ node labs/mcp-drive.mjs --live \
 `--live` deletes the lab's endpoint and key from the child environment so the stored
 credential decides both. Deleting rather than blanking is the trick: an empty string is still
 a value, and config resolution would take it.
-
-Two things only a real instance shows. Its lessons carry promotion metadata, or — more
-usefully — visibly do not, which is a different fact from "no candidates" and is what
-`scripts/scope-audit.mjs` exists to distinguish. And the run-id spelling above is genuinely
-two-valued in stored data, where a fixture only has whatever spelling its author typed.
 
 **Why not the test harness?** `test/helpers/harness.mjs` overrides `MUBIT_API_KEY` with a
 fixture and `HOME` with a temp directory, which is correct for tests and fatal for a live
