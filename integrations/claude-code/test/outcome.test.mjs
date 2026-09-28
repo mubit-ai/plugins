@@ -425,3 +425,196 @@ describe('outcomeRequest — the body both hooks put on the wire', () => {
     assert.equal(body.reference_id, 'global', 'reference_id must still be non-empty (§1.3)');
   });
 });
+
+// ===========================================================================
+// Per-entry credit — only the entries the reply actually used
+// ===========================================================================
+
+/** `used_evidence` as `capture --stop` writes it with the per-entry signal. */
+function entryEvidence(entries, over = {}) {
+  return {
+    ...evidence(Object.values(entries).some((e) => e.used === true)),
+    entry_method: 'memory-term-echo/v2-entry',
+    entries,
+    ...over,
+  };
+}
+
+const USE = (used, n = 3) => ({ used, matched: used ? ['a', 'b'].slice(0, n) : [], candidates: 8 });
+
+describe('decideOutcome — per-entry credit', () => {
+  it('credits only the entries the reply used', async () => {
+    const { decideOutcome, SIGNAL_SUCCESS } = await O();
+    const d = decideOutcome(turn({
+      used_evidence: entryEvidence({ ref_rule_1: USE(false), ref_lesson_1: USE(true) }),
+    }));
+    assert.equal(d.post, true);
+    assert.equal(d.outcome, 'success');
+    assert.equal(d.signal, SIGNAL_SUCCESS);
+    assert.deepEqual(d.entryIds, ['ref_lesson_1']);
+  });
+
+  it('a failed turn posts the failure against the used entries only', async () => {
+    const { decideOutcome, SIGNAL_FAILURE } = await O();
+    const d = decideOutcome(turn({
+      outcome: 'failure',
+      failure_reason: 'tool_failure',
+      used_evidence: entryEvidence({ ref_rule_1: USE(true), ref_lesson_1: USE(false) }),
+    }));
+    assert.equal(d.outcome, 'failure');
+    assert.equal(d.signal, SIGNAL_FAILURE);
+    assert.deepEqual(d.entryIds, ['ref_rule_1']);
+    assert.match(d.rationale ?? '', /failed tool call/);
+  });
+
+  it('no entry used but some measured → neutral with an empty entry_ids', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      used_evidence: entryEvidence({ ref_rule_1: USE(false), ref_lesson_1: USE(null) }),
+    }));
+    assert.equal(d.post, true);
+    assert.equal(d.outcome, 'neutral');
+    assert.equal(d.signal, 0);
+    assert.deepEqual(d.entryIds, []);
+  });
+
+  it('every entry unmeasurable → today\'s behaviour on the recalled ids', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      used_evidence: entryEvidence({ ref_rule_1: USE(null), ref_lesson_1: USE(null) },
+        { used: undefined, reason: 'no_distinct_terms' }),
+    }));
+    assert.equal(d.outcome, 'success');
+    assert.deepEqual(d.entryIds, RECALLED);
+  });
+
+  it('entries Claude already gave a verdict on are left to that verdict', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      explicit_ids: ['ref_lesson_1'],
+      used_evidence: entryEvidence({ ref_rule_1: USE(true), ref_lesson_1: USE(true) }),
+    }));
+    assert.deepEqual(d.entryIds, ['ref_rule_1']);
+  });
+
+  it('nothing left after the explicit verdicts → no post', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      explicit_ids: ['ref_lesson_1', 'ref_rule_1'],
+      used_evidence: entryEvidence({ ref_rule_1: USE(true), ref_lesson_1: USE(true) }),
+    }));
+    assert.deepEqual(d, { post: false, reason: 'explicit_only' });
+  });
+
+  it('nothing echoed but Claude judged some entries itself → no neutral record contradicting it', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      explicit_ids: ['ref_lesson_1'],
+      used_evidence: entryEvidence({ ref_rule_1: USE(false), ref_lesson_1: USE(false) }),
+    }));
+    assert.deepEqual(d, { post: false, reason: 'explicit_only' });
+  });
+
+  it('a used standing lesson is credited even when nothing was recalled this turn', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      recalled: [],
+      used_evidence: entryEvidence({ standing_1: USE(true) }),
+    }));
+    assert.equal(d.post, true);
+    assert.deepEqual(d.entryIds, ['standing_1']);
+  });
+
+  it('nothing recalled and no entries is still nothing_injected', async () => {
+    const { decideOutcome } = await O();
+    assert.equal(decideOutcome(turn({ recalled: [], used_evidence: entryEvidence({}) })).reason,
+      'nothing_injected');
+  });
+
+  it('the api_error, already_sent and attempts rows still come first', async () => {
+    const { decideOutcome, MAX_OUTCOME_ATTEMPTS } = await O();
+    const ev = entryEvidence({ ref_lesson_1: USE(true) });
+    assert.equal(decideOutcome(turn({ used_evidence: ev, api_error: 'rate_limit' })).reason, 'api_failed');
+    assert.equal(decideOutcome(turn({ used_evidence: ev, outcome_sent_at: 1 })).reason, 'already_sent');
+    assert.equal(decideOutcome(turn({ used_evidence: ev, outcome_attempts: MAX_OUTCOME_ATTEMPTS })).reason,
+      'attempts_exhausted');
+  });
+
+  it('the rationale names the per-entry method and the counts', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      used_evidence: entryEvidence({ ref_rule_1: USE(false), ref_lesson_1: USE(true), ref_fact_1: USE(null) }),
+    }));
+    assert.match(d.rationale ?? '', /memory-term-echo\/v2-entry/);
+    assert.match(d.rationale ?? '', /1 of 3/);
+  });
+
+  it('without entries the decision is exactly today\'s', async () => {
+    const { decideOutcome } = await O();
+    const t = turn({ used_evidence: evidence(true) });
+    const d = decideOutcome(t);
+    assert.deepEqual(d.entryIds, RECALLED);
+    assert.equal(d.outcome, 'success');
+    assert.equal(d.rationale, decideOutcome({ ...t }).rationale);
+    assert.doesNotMatch(d.rationale ?? '', /v2-entry/);
+  });
+
+  it('a tool failure without per-entry data says so in the rationale', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({ outcome: 'failure', failure_reason: 'tool_failure' }));
+    assert.equal(d.outcome, 'failure');
+    assert.match(d.rationale ?? '', /failed tool call/);
+  });
+});
+
+// ===========================================================================
+// Corrections — the user's next prompt said this turn went wrong
+// ===========================================================================
+
+describe('decideCorrection', () => {
+  it('posts a failure against the used entries minus the explicit ones', async () => {
+    const { decideCorrection, SIGNAL_FAILURE } = await O();
+    const d = decideCorrection(turn({
+      explicit_ids: ['ref_rule_1'],
+      used_evidence: entryEvidence({ ref_rule_1: USE(true), ref_lesson_1: USE(true), ref_fact_1: USE(false) }),
+    }));
+    assert.equal(d.post, true);
+    assert.equal(d.outcome, 'failure');
+    assert.equal(d.signal, SIGNAL_FAILURE);
+    assert.deepEqual(d.entryIds, ['ref_lesson_1']);
+    assert.match(d.rationale ?? '', /corrected/);
+  });
+
+  it('posts nothing without used entries, twice, or for an API-failed turn', async () => {
+    const { decideCorrection } = await O();
+    const ev = entryEvidence({ ref_lesson_1: USE(true) });
+    assert.equal(decideCorrection(null).post, false);
+    assert.equal(decideCorrection(turn()).post, false);
+    assert.equal(decideCorrection(turn({ used_evidence: entryEvidence({ ref_lesson_1: USE(false) }) })).post, false);
+    assert.equal(decideCorrection(turn({ used_evidence: ev, correction_sent_at: 1 })).post, false);
+    assert.equal(decideCorrection(turn({ used_evidence: ev, api_error: 'overloaded' })).post, false);
+    assert.equal(decideCorrection(turn({ used_evidence: ev, explicit_ids: ['ref_lesson_1'] })).post, false);
+  });
+
+  it('the correction key is its own, so it never collides with the Stop outcome', async () => {
+    const { correctionIdempotencyKey, outcomeIdempotencyKey } = await O();
+    assert.equal(correctionIdempotencyKey(RUN_ID, PROMPT_ID), `cc-correction-${RUN_ID}-${PROMPT_ID}`);
+    assert.notEqual(correctionIdempotencyKey(RUN_ID, PROMPT_ID), outcomeIdempotencyKey(RUN_ID, PROMPT_ID));
+  });
+
+  it('correctionRequest addresses the record like outcomeRequest, with the correction key', async () => {
+    const { correctionRequest, decideCorrection, RUN_LEVEL_REFERENCE } = await O();
+    const decision = decideCorrection(turn({ used_evidence: entryEvidence({ ref_lesson_1: USE(true) }) }));
+    const body = correctionRequest({ runId: RUN_ID, agentId: 'agent-1', promptId: PROMPT_ID, decision });
+    assert.deepEqual(body, {
+      run_id: RUN_ID,
+      reference_id: RUN_LEVEL_REFERENCE,
+      outcome: 'failure',
+      signal: -0.3,
+      rationale: decision.rationale,
+      agent_id: 'agent-1',
+      entry_ids: ['ref_lesson_1'],
+      idempotency_key: `cc-correction-${RUN_ID}-${PROMPT_ID}`,
+    });
+  });
+});

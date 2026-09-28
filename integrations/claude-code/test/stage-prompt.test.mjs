@@ -328,3 +328,154 @@ test('a run id needing flattening lands on the segment every module uses', async
   assert.ok(existsSync(staged), `the turn is not at ${staged}`);
   assert.equal(readJsonFile(staged).prompt, PROMPT);
 });
+
+// ---------------------------------------------------------------------------
+// The session scorecard: one `prompt` row per prompt, and the correction trigger
+// ---------------------------------------------------------------------------
+
+const PREV = '99999999-8888-7777-6666-555555555555';
+const logPath = (dataDir) => join(dataDir, 'scorecard', `${SESSION_ID}.jsonl`);
+
+/** @param {string} dataDir @param {Record<string, any>[]} rows */
+function seedLog(dataDir, rows) {
+  mkdirSync(join(dataDir, 'scorecard'), { recursive: true });
+  writeFileSync(logPath(dataDir), rows.map((r) => JSON.stringify({ v: 1, at: Date.now(), ...r })).join('\n') + '\n');
+}
+
+/** @param {string} dataDir */
+function logRows(dataDir) {
+  if (!existsSync(logPath(dataDir))) return [];
+  return readFileSync(logPath(dataDir), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+const prevTurn = (over = {}) => ({
+  kind: 'turn', prompt_id: PREV, run_id: RUN_ID, lessons: {}, used_refs: ['ref_lesson_1'],
+  ended_with_question: false, ...over,
+});
+
+const correctSpawns = (file) => drainSpawns(file).filter((s) => s.argv.includes('--correct'));
+
+test('stage-prompt: appends a prompt row to the session log', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  assertHookContract(await runHook('stage-prompt', userPromptSubmit({ prompt: PROMPT }), {
+    env: staticEnv(dataDir, server),
+  }));
+  const rows = logRows(dataDir);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, 'prompt');
+  assert.equal(rows[0].prompt_id, PROMPT_ID);
+  assert.equal(rows[0].correction, false);
+  assert.equal(rows[0].slash, false);
+  assert.equal(server.requests.length, 0);
+});
+
+test('stage-prompt: a slash command is marked slash and is never a correction', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedLog(dataDir, [prevTurn()]);
+  const { env, file } = withSpy(staticEnv(dataDir, server));
+  await runHook('stage-prompt', userPromptSubmit({ prompt: '/clear' }), { env });
+  const row = logRows(dataDir).at(-1);
+  assert.equal(row.slash, true);
+  assert.equal(row.correction, false);
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(correctSpawns(file).length, 0);
+});
+
+test('stage-prompt: a correction of a turn that used memory spawns drain --correct for it', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  holdDrainLock(dataDir);
+  seedLog(dataDir, [
+    { kind: 'prompt', prompt_id: PREV, correction: false, slash: false },
+    prevTurn(),
+  ]);
+  const { env, file } = withSpy(staticEnv(dataDir, server));
+  assertHookContract(await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), { env }));
+
+  assert.equal(logRows(dataDir).at(-1).correction, true);
+  const spawns = await waitForSpawn(file);
+  const argv = correctSpawns(file)[0]?.argv ?? [];
+  assert.ok(argv.length, `no drain --correct spawned: ${JSON.stringify(spawns)}`);
+  assert.equal(argv[argv.indexOf('--correct') + 1], PREV);
+  assert.equal(argv[argv.indexOf('--run') + 1], RUN_ID);
+});
+
+test('stage-prompt: a correction of a turn that used nothing is recorded but posts nothing', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedLog(dataDir, [prevTurn({ used_refs: [] })]);
+  const { env, file } = withSpy(staticEnv(dataDir, server));
+  await runHook('stage-prompt', userPromptSubmit({ prompt: 'that didn\'t work' }), { env });
+  assert.equal(logRows(dataDir).at(-1).correction, true);
+  await new Promise((res) => setTimeout(res, 250));
+  assert.equal(correctSpawns(file).length, 0);
+});
+
+test('stage-prompt: never a correction across a /clear', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedLog(dataDir, [prevTurn(), { kind: 'start', source: 'clear', lessons: {}, refs: [], tokens: 0 }]);
+  const { env, file } = withSpy(staticEnv(dataDir, server));
+  await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), { env });
+  assert.equal(logRows(dataDir).at(-1).correction, false);
+  await new Promise((res) => setTimeout(res, 250));
+  assert.equal(correctSpawns(file).length, 0);
+});
+
+test('stage-prompt: a bare "no" answering a question is not a correction', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedLog(dataDir, [prevTurn({ ended_with_question: true })]);
+  await runHook('stage-prompt', userPromptSubmit({ prompt: 'no' }), { env: staticEnv(dataDir, server) });
+  assert.equal(logRows(dataDir).at(-1).correction, false);
+});
+
+test('stage-prompt: with implicit outcomes off the correction is recorded but not posted', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedLog(dataDir, [prevTurn()]);
+  const { env, file } = withSpy(staticEnv(dataDir, server, { MUBIT_CC_OUTCOME_MODE: 'explicit' }));
+  await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), { env });
+  assert.equal(logRows(dataDir).at(-1).correction, true);
+  await new Promise((res) => setTimeout(res, 250));
+  assert.equal(correctSpawns(file).length, 0);
+});
+
+test('stage-prompt: this prompt\'s own turn row is not the previous turn', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedLog(dataDir, [prevTurn({ prompt_id: PROMPT_ID })]);
+  await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), { env: staticEnv(dataDir, server) });
+  assert.equal(logRows(dataDir).at(-1).correction, false);
+});
+
+test('stage-prompt: with capture off nothing is appended', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  await runHook('stage-prompt', userPromptSubmit({ prompt: PROMPT }), {
+    env: staticEnv(dataDir, server, { MUBIT_CC_CAPTURE: 'false' }),
+  });
+  assert.deepEqual(logRows(dataDir), []);
+});
+
+test('stage-prompt: a long session log stays inside the budget', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  const rows = [];
+  for (let i = 0; i < 4000; i++) {
+    rows.push({ kind: 'tool', prompt_id: `p${i % 50}`, failed: false, intent: 'exec' });
+    if (i % 80 === 0) rows.push(prevTurn({ prompt_id: `p${i}` }));
+  }
+  seedLog(dataDir, rows);
+  const r = await runHook('stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }), {
+    env: staticEnv(dataDir, server),
+  });
+  assertHookContract(r);
+  assert.equal(logRows(dataDir).at(-1).correction, true);
+  await assertWithinBudget('stage-prompt with a long log', BUDGET_MS, r.ms, async () => (await runHook(
+    'stage-prompt', userPromptSubmit({ prompt: "no, that's wrong" }),
+    { env: staticEnv(dataDir, server) },
+  )).ms);
+});
