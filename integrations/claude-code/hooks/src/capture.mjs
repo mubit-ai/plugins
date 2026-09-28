@@ -280,20 +280,18 @@ function capture(rawPayload, cfg, mode) {
   const runId = attempt(() => deriveRunId(cfg, payload), '');
   if (!runId) return null;
 
-  // The outcome review this hook asked for on this turn, while it is still open.
-  const pending = mode === 'stop' || mode === 'stop-failure'
-    ? attempt(() => {
-      const t = readTurn(cfg, runId, turnKey(payload));
-      return reviewPending(t) ? t : null;
-    }, null)
+  const turn = mode === 'stop' || mode === 'stop-failure'
+    ? attempt(() => readTurn(cfg, runId, turnKey(payload)), null)
     : null;
-  // A Stop that follows the review: its reply is the one-line review, not an answer, so it is
-  // neither stored as the turn's Q/A nor re-measured — unless a message queued during the
-  // review was answered in the same continuation (stage-prompt stamps `queued_at`).
-  const followUp = mode === 'stop' && payload.stop_hook_active === true && !!pending;
+  // The outcome review this hook asked for on this turn, while it is still open.
+  const pending = mode === 'stop-failure' && reviewPending(turn) ? turn : null;
+  // Any Stop of a turn this hook reviewed follows the review whatever `stop_hook_active` says
+  // (Codex has no block cap): neither stored nor re-measured, unless it answers a queued message.
+  const followUp = mode === 'stop' && Number(turn?.review_requested_at) > 0;
   const afterReview = followUp ? stripReviewLine(str(payload.last_assistant_message) || str(payload.message)) : '';
-  const answered = followUp && !!afterReview
-    && Number(pending?.queued_at) > Number(pending?.review_requested_at);
+  const answered = followUp && !!afterReview && queuedSinceReview(turn);
+  // The continuation after another hook's block is still work on the prompt.
+  const continued = mode === 'stop' && !followUp && payload.stop_hook_active === true;
 
   // 4-6. classify, build the text, redact.
   //
@@ -322,7 +320,7 @@ function capture(rawPayload, cfg, mode) {
   //    moment its attribution can be recorded. Every other mode drains only on a trigger,
   //    because one detached node process per tool call is the cost this design avoids.
   if (mode === 'stop') {
-    const closed = attempt(() => closeTurn(cfg, runId, payload, { followUp, answered }), null);
+    const closed = attempt(() => closeTurn(cfg, runId, payload, { followUp, answered, continued }), null);
     const summary = closed ? attempt(() => foldScorecard(closed.rows, closed.promptId), null) : null;
     const review = attempt(() => reviewFor(cfg, payload, closed, summary), null);
     if (review) {
@@ -911,22 +909,25 @@ function readTurn(cfg, runId, promptId) {
  * verdict inputs the session log holds for this prompt (Claude's `mubit_outcome` calls, the
  * last non-read-only tool call), and appends the scorecard's `turn` row.
  *
- * `apiError` is `StopFailure`'s half: it turns the used-signal off. `followUp` is the Stop
+ * `apiError` is `StopFailure`'s half: it turns the used-signal off. `followUp` is a Stop
  * after the outcome review: the reply is the review line, so the first Stop's measurement is
  * kept and only the verdicts are merged. `answered` is a follow-up whose continuation also
- * answered a queued message: that answer is measured and merged into the first. `reviewError`
- * is a review round trip that ended on an API error.
+ * answered a queued message: that answer is measured and merged into the first. `continued`
+ * is the Stop after another hook's block: its use is merged into the first reply's.
+ * `reviewError` is a review round trip that ended on an API error.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {Record<string, any>} payload
- * @param {{apiError?: string, followUp?: boolean, answered?: boolean, reviewError?: string}} [opts]
+ * @param {{apiError?: string, followUp?: boolean, answered?: boolean, continued?: boolean,
+ *   reviewError?: string}} [opts]
  * @returns {{turn: Record<string, any>, rows: Record<string, any>[], promptId: string}|null}
  */
 function closeTurn(cfg, runId, payload, opts = {}) {
   const apiError = str(opts.apiError);
   const followUp = opts.followUp === true;
   const answered = followUp && opts.answered === true;
+  const continued = !followUp && opts.continued === true;
   const reviewError = str(opts.reviewError);
   const promptId = turnKey(payload);
   const p = turnPath(cfg, runId, promptId);
@@ -961,7 +962,7 @@ function closeTurn(cfg, runId, payload, opts = {}) {
       const fresh = v1 || entries
         ? { ...(v1 ?? {}), ...(entries ? { entry_method: ENTRY_SIGNAL_METHOD, entries } : {}) }
         : null;
-      evidence = answered ? mergeEvidence(prevEvidence, fresh) : fresh;
+      evidence = answered || continued ? mergeEvidence(prevEvidence, fresh) : fresh;
     }
   }
   const explicit = attempt(() => explicitFor(rows, promptId, base), { ids: [], byRef: {} });
@@ -1019,7 +1020,7 @@ function closeTurn(cfg, runId, payload, opts = {}) {
 }
 
 /**
- * The first reply's evidence with the queued answer's merged in: per entry, a use wins over a
+ * The first reply's evidence with a later reply's merged in: per entry, a use wins over a
  * miss and a miss over "could not tell"; the turn-level signal likewise.
  *
  * @param {Record<string, any>|null} prev
@@ -1149,6 +1150,15 @@ function lastActingToolFailed(rows, promptId) {
 /** @param {Record<string, any>|null} turn @returns {boolean} */
 function reviewPending(turn) {
   return !!turn && Number(turn.review_requested_at) > 0 && !(Number(turn.review_closed_at) > 0);
+}
+
+/**
+ * A message queued after the review was asked for and after it last closed.
+ * @param {Record<string, any>|null} turn @returns {boolean}
+ */
+function queuedSinceReview(turn) {
+  const q = Number(turn?.queued_at);
+  return q > Number(turn?.review_requested_at) && q > (Number(turn?.review_closed_at) || 0);
 }
 
 // ---------------------------------------------------------------------------
