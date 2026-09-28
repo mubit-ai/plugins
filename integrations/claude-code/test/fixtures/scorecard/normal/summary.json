@@ -1,0 +1,17 @@
+{
+  "prompts": 3,
+  "lessonPrompts": 3,
+  "learned": 1,
+  "tokens": 810,
+  "lessons": { "shown": 5, "used": 4, "notUsed": 1, "unknown": 0, "worked": 3, "failed": 0, "waiting": 1 },
+  "thisTurn": {
+    "promptId": "p3",
+    "shown": 1,
+    "used": ["cache node_modules by lockfile hash"],
+    "checkable": true,
+    "lessons": [
+      { "ref": "ref-l3", "handle": "m6pjp", "title": "cache node_modules by lockfile hash", "pointer": false, "used": true, "explicit": "" }
+    ]
+  },
+  "review": { "failed": [], "neverUsed": 0 }
+}

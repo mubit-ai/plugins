@@ -54,7 +54,7 @@ const USER_CONFIG_KEYS = [
   'endpoint', 'apiKey', 'userId', 'runStrategy', 'capture', 'recall', 'redact',
   'recallTokenBudget', 'recallAssemble', 'reflectOnEnd', 'outcomeMode', 'statusLine',
   'mcpTools', 'preToolWarnings', 'resumeBlock',
-  'pins',
+  'pins', 'sessionScore', 'outcomeReview',
 ];
 
 // ---------------------------------------------------------------------------

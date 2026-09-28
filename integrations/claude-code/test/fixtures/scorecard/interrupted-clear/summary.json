@@ -1,0 +1,18 @@
+{
+  "prompts": 4,
+  "lessonPrompts": 4,
+  "learned": 0,
+  "tokens": 1030,
+  "lessons": { "shown": 4, "used": 1, "notUsed": 2, "unknown": 1, "worked": 1, "failed": 0, "waiting": 0 },
+  "thisTurn": {
+    "promptId": "p4",
+    "shown": 2,
+    "used": [],
+    "checkable": true,
+    "lessons": [
+      { "ref": "ref-s1", "handle": "mdf8t", "title": "never force-push to main", "pointer": false, "used": false, "explicit": "" },
+      { "ref": "ref-l3", "handle": "m6pjp", "title": "tag releases with a v prefix", "pointer": false, "used": false, "explicit": "" }
+    ]
+  },
+  "review": { "failed": [], "neverUsed": 0 }
+}

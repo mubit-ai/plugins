@@ -1,0 +1,6 @@
+mubit · this session · lessons on 4 of 4 prompts · +2 learned · memory added 3.6k tok
+  6 lessons shown
+  ├ 5 used      1 worked · 3 failed · 1 waiting on your reply
+  └ 1 not used
+  this turn: used "run migrations before seeding"
+  review: "pin node to 20 in CI" failed on prompt 3 · +2 more failed · 1 lesson shown 3+ times and never used

@@ -1,0 +1,25 @@
+{
+  "prompts": 4,
+  "lessonPrompts": 4,
+  "learned": 2,
+  "tokens": 3600,
+  "lessons": { "shown": 6, "used": 5, "notUsed": 1, "unknown": 0, "worked": 1, "failed": 3, "waiting": 1 },
+  "thisTurn": {
+    "promptId": "p5",
+    "shown": 2,
+    "used": ["run migrations before seeding"],
+    "checkable": true,
+    "lessons": [
+      { "ref": "ref-n", "handle": "mqatv", "title": "prefer rg over grep", "pointer": true, "used": false, "explicit": "" },
+      { "ref": "ref-d", "handle": "mtavv", "title": "run migrations before seeding", "pointer": false, "used": true, "explicit": "" }
+    ]
+  },
+  "review": {
+    "failed": [
+      { "ref": "ref-c", "title": "pin node to 20 in CI", "prompt": 3 },
+      { "ref": "ref-b", "title": "restart the dev server after env changes", "prompt": 2 },
+      { "ref": "ref-a", "title": "use npm ci in CI", "prompt": 1 }
+    ],
+    "neverUsed": 1
+  }
+}

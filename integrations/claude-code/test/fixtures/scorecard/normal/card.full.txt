@@ -1,0 +1,5 @@
+mubit · this session · lessons on 3 of 3 prompts · +1 learned · memory added 810 tok
+  5 lessons shown
+  ├ 4 used      3 worked · 1 waiting on your reply
+  └ 1 not used
+  this turn: used "cache node_modules by lockfile hash"

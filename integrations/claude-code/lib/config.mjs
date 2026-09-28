@@ -73,7 +73,7 @@ const CACHE_TTL_MS = 300 * 1000;
  * spend the 300 s TTL after an upgrade with the feature silently off, and the one report that
  * reached anybody would be "it works on a fresh machine".
  */
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 /** §4.1: env_tags ride on every ingested item, so the cap is a payload-size guarantee. */
 const MAX_ENV_TAGS = 8;
@@ -487,8 +487,15 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   const sessionEndDetach = bool(pick('sessionEndDetach', 'MUBIT_CC_SESSION_END_DETACH'), true);
   const outcomeMode = enumOf(pick('outcomeMode', 'MUBIT_CC_OUTCOME_MODE'),
     ['off', 'implicit', 'explicit'], 'implicit');
-  // The one setting whose *default* depends on the host, and the only place in `lib/` that
-  // knows there is more than one.
+  // The per-turn scorecard under Claude's reply. Off on Codex, where the card is untested.
+  const sessionScore = enumOf(pick('sessionScore', 'MUBIT_CC_SESSION_SCORE'),
+    ['off', 'compact', 'full'], host(e) === 'codex' ? 'off' : 'full');
+  // How hard Claude is asked to credit lessons by id. `stop` needs a Stop-hook continuation,
+  // which has never been observed on Codex, so that host defaults to the nudge alone.
+  const outcomeReview = enumOf(pick('outcomeReview', 'MUBIT_CC_OUTCOME_REVIEW'),
+    ['off', 'nudge', 'stop'], host(e) === 'codex' ? 'nudge' : 'stop');
+  // A setting whose *default* depends on the host; this function is the only place in `lib/`
+  // that knows there is more than one.
   //
   // Codex's status line is a declarative list of built-in item ids: there is no command hook
   // and nothing scriptable to render into. Leaving the default `true` there would have the
@@ -628,6 +635,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
