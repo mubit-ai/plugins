@@ -22,9 +22,9 @@
   "_provenance": {
     "kind": "the plugin's own output contract",
     "verified_subset": "test/fixtures/observed/output-acceptance.json",
-    "codex_version_last_checked": "codex-cli 0.149.0",
-    "checked": "2026-08-24",
-    "recheck": "node test/helpers/codex-record.mjs --update --probe <key>"
+    "codex_version_last_checked": "codex-cli 0.154.0",
+    "checked": "2026-09-28",
+    "recheck": "node test/helpers/codex-record.mjs --update --probe <name>"
   },
   "capabilities": {
     "_comment": [

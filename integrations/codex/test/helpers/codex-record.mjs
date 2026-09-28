@@ -282,7 +282,7 @@ export function hostVerdicts(printed, event) {
  * - `{}` otherwise.
  */
 const RECORDER = `
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const HOME = dirname(fileURLToPath(import.meta.url));
@@ -307,8 +307,13 @@ const stop = process.env.REC_STOP_OUTPUT || '';
 if (all) {
   answer = JSON.parse(all);
 } else if (name === 'Stop' && stop) {
-  const marker = join(HOME, 'stop-probed');
-  if (!existsSync(marker)) { writeFileSync(marker, ''); answer = JSON.parse(stop); }
+  // Created exclusively, so only the first Stop blocks even if two race here.
+  let first = false;
+  try {
+    writeFileSync(join(HOME, 'stop-probed'), '', { flag: 'wx' });
+    first = true;
+  } catch (err) { if (err.code !== 'EEXIST') throw err; }
+  if (first) answer = JSON.parse(stop);
 } else if (name === 'PermissionRequest' && /^mcp__mubit__/.test(String(p.tool_name))) {
   answer = { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } };
 }
@@ -419,12 +424,17 @@ async function seedRecorderHome() {
   }
 }
 
-/** A throwaway project for the session to run in. */
+/** A throwaway project for the session to run in, removed again if seeding it fails. */
 function seedProject() {
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'mubit-record-proj-')));
-  writeFileSync(join(project, 'note.txt'), 'hello\n');
-  spawnSync('git', ['init', '-q'], { cwd: project });
-  return project;
+  try {
+    writeFileSync(join(project, 'note.txt'), 'hello\n');
+    spawnSync('git', ['init', '-q'], { cwd: project });
+    return project;
+  } catch (err) {
+    rmSync(project, { recursive: true, force: true });
+    throw err;
+  }
 }
 
 /**
@@ -472,8 +482,9 @@ function fileVerdict(output, verdict, version, probeName) {
 async function update(probeName, verbose) {
   const probe = probeName ? probeOf(probeName) : null;
   const { home, granted, version } = await seedRecorderHome();
-  const project = seedProject();
+  let project = '';
   try {
+    project = seedProject();
     const out = join(home, 'recorded');
     process.stderr.write(`[record] ${version}, ${granted} handlers trusted\n`);
     const run = spawnSync('codex', [
@@ -510,7 +521,7 @@ async function update(probeName, verbose) {
       fileVerdict(probe.output, verdict, version, probeName);
     }
   } finally {
-    rmSync(project, { recursive: true, force: true });
+    if (project) rmSync(project, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
 }
@@ -518,7 +529,13 @@ async function update(probeName, verbose) {
 /** `--tui-home`: a recorder home to drive by hand, left in place for the caller. */
 async function tuiHome() {
   const { home, granted, version } = await seedRecorderHome();
-  const project = seedProject();
+  let project;
+  try {
+    project = seedProject();
+  } catch (err) {
+    rmSync(home, { recursive: true, force: true });
+    throw err;
+  }
   process.stderr.write([
     `[record] ${version}, ${granted} handlers trusted`,
     '',

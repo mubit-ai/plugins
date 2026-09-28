@@ -33,6 +33,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as h from '../../../claude-code/test/helpers/harness.mjs';
+import { recordingName } from './codex-record.mjs';
 
 /** Absolute path to `integrations/codex/`. */
 export const CODEX_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -126,8 +127,9 @@ export function isOutputTitle(title) {
 /**
  * The recorded payload for one event, or `null` if that event has no recording.
  *
- * `null` is a real answer here rather than an error: five of the eleven events do not fire in
- * a scripted one-turn session, so their absence is expected and documented. What must never
+ * `null` is a real answer here rather than an error: four of the eleven registered events —
+ * `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop` — do not fire in any session
+ * the recorder drives, so their absence is expected and documented. What must never
  * happen is the whole corpus going missing and every check below passing vacuously — which is
  * why `codex-payload.test.mjs` asserts the covered set by name.
  */
@@ -139,13 +141,7 @@ export function observedPayload(event) {
   return parsed;
 }
 
-/**
- * Every event with at least one recording, sorted, one name each.
- *
- * An event can have several recordings — `<Event>.json` for the plain case and
- * `<Event>.<variant>.json` for a shape the plain one does not show — so this answers with the
- * event names, not the file names: `PostToolUse.mcp.json` is a `PostToolUse` recording.
- */
+/** Every event with a recording, sorted; `PostToolUse.mcp.json` counts as `PostToolUse`. */
 export function observedEvents() {
   const dir = join(OBSERVED_DIR, 'payloads');
   if (!existsSync(dir)) return [];
@@ -170,10 +166,11 @@ export function outputAcceptance() {
  * `tool_use_id` on `permissionRequest()`.
  *
  * An event can have more than one recording: `PostToolUse.json` is a shell call and
- * `PostToolUse.mcp.json` an MCP one, whose arguments are other keys. A value passes if it
- * invents nothing against **any** recording of its event; otherwise the errors reported are
- * those against the recording it comes closest to. A field no recording carries is refused
- * whichever one it is held to.
+ * `PostToolUse.mcp.json` an MCP one, whose arguments are other keys. A value is held to the
+ * recording its own shape is filed under (`recordingName()`), so a shell call cannot pass by
+ * borrowing an MCP call's arguments, or the reverse. Only a value the recorder files nowhere —
+ * an MCP call's `PreToolUse`, say — falls back to **any** recording of its event, and then the
+ * errors reported are those against the recording it comes closest to.
  *
  * Nested objects are walked one level, which is as deep as any Codex payload goes.
  *
@@ -183,11 +180,13 @@ export function outputAcceptance() {
  */
 export function observedKeyErrors(event, value) {
   if (value === null || typeof value !== 'object') return [];
+  const own = recordingName(value);
+  const filed = own.split('.')[0] === event ? observedPayload(own) : null;
   const dir = join(OBSERVED_DIR, 'payloads');
-  const variants = existsSync(dir)
+  const variants = filed ? [filed] : (existsSync(dir)
     ? readdirSync(dir).filter((f) => f.endsWith('.json') && f.split('.')[0] === event).sort()
       .map((f) => observedPayload(f.slice(0, -'.json'.length)))
-    : [];
+    : []);
   let best = null;
   for (const seen of variants) {
     const errs = [];
@@ -482,9 +481,6 @@ export function postToolUse(over = {}) {
  * arguments verbatim, there is a `tool_use_id`, and `tool_response` is the MCP result
  * **object** — `{content: [{type: 'text', text}]}` — where a shell call's is a bare string. A
  * call that is declined, or fails approval, produces no `PostToolUse` at all.
- *
- * The arguments and the result are built fresh on every call, so a test that mutates one
- * cannot reach the next test's payload.
  *
  * @param {Record<string, any>} [over]
  * @returns {Record<string, any>}

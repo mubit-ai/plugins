@@ -46,8 +46,9 @@ in the same hour, and they agree by construction. Nine tests can pass on a paylo
 never send. A payload the *host* wrote can say no.
 
 What a recording cannot do is prove a field optional, or reject one the host would accept but
-has not been seen sending. And five of the eleven events do not fire in a scripted one-turn
-session, so they have no recording at all — `codex-payload.test.mjs` names them rather than
+has not been seen sending. And four of the eleven registered events — `PreCompact`,
+`PostCompact`, `SubagentStart`, `SubagentStop` — do not fire in any session the recorder
+drives, so they have no recording at all. `codex-payload.test.mjs` names them rather than
 passing over them, because a gap nothing states is indistinguishable from coverage.
 
 It has already earned that twice. The first draft of `preCompact()` carried a
@@ -55,8 +56,11 @@ It has already earned that twice. The first draft of `preCompact()` carried a
 `permissionRequest()` carried a `tool_use_id`, which it has none of, and which is precisely why
 that event is treated as read-only.
 
-Re-record with `node test/helpers/codex-record.mjs --update`. It costs a model turn, which is
-why it is a script you run deliberately rather than something the suite does.
+Re-record with `node test/helpers/codex-record.mjs --update`, and a host verdict on one output
+with `--update --probe <name>`. Each costs a model turn, which is why it is a script you run
+deliberately rather than something the suite does. The two recordings only the interactive TUI
+can reach — a message queued mid-turn, and Esc — are made by hand: `--tui-home` builds a
+recorder home to drive, and `--import <file> --as <Event>[.<variant>]` files a capture from it.
 
 ## Gate map
 
