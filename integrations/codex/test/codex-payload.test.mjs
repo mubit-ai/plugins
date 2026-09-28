@@ -44,7 +44,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
-  BUILDERS, CODEX_EVENTS, OBSERVED_DIR, observedEvents, observedPayload,
+  BUILDERS, CODEX_EVENTS, OBSERVED_DIR, observedEvents, observedPayload, observedKeyErrors,
   outputAcceptance, outputCapabilities, outputRuleErrors,
   assertOutputAccepted, assertValid, schemaSlug,
   runHook, baseEnv, makeDataDir, makeProjectDir, fakeMubit,
@@ -53,6 +53,7 @@ import {
 } from './helpers/codex-fixtures.mjs';
 import {
   ALL_EVENTS as RECORDER_EVENTS, RECORDED_EVENTS as RECORDER_REACHES, normalizePayload,
+  recordingName,
 } from './helpers/codex-record.mjs';
 
 /** The host build every recording in `observed/` was made against. */
@@ -649,6 +650,118 @@ test('assertValid takes every recorded variant of an event, and still refuses an
       `assertValid refuses ${build.name}(), which reproduces a recording of ${event}.`);
     assert.throws(() => assertValid(build({ never_sent_by_the_host: true }), title, build.name),
       `assertValid took ${build.name}() with a field no recording of ${event} carries.`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A payload is held to the recording its own shape selects
+// ---------------------------------------------------------------------------
+//
+// An event with several recordings is not a pool of keys to draw from. The recorder files each
+// payload under one name — a shell call under PostToolUse.json, an MCP call under
+// PostToolUse.mcp.json — and that recording is the one the payload answers to. Only a payload
+// the recorder files nowhere falls back to whatever its event does have.
+
+/** The arguments `PostToolUse.mcp.json` recorded, which no shell call carries. */
+const MCP_ARGUMENTS = ['reference_id', 'outcome', 'entry_ids'];
+
+/** A `tool_input` of the shape the shell call was recorded with. */
+const SHELL_ARGUMENTS = () => ({ command: "sed -n '1,240p' README.md" });
+
+/** Whether `errs` refuses the field at `path` (e.g. `tool_input.command`). */
+function refuses(errs, path) {
+  return errs.some((e) => e.includes(`$.${path}`));
+}
+
+test('PostToolUse: a shell call carrying an MCP call\'s arguments is refused', () => {
+  // Each half was recorded — Bash on PostToolUse.json, these arguments on PostToolUse.mcp.json
+  // — but never together. Passing it because the MCP recording happens to carry the keys lets a
+  // hook be tested on a call no session makes.
+  const mixed = postToolUse({ tool_input: { reference_id: 'global', outcome: 'success', entry_ids: [] } });
+  assert.equal(mixed.tool_name, 'Bash', 'postToolUse() is meant to build the shell call.');
+
+  const errs = observedKeyErrors('PostToolUse', mixed);
+  for (const key of MCP_ARGUMENTS) {
+    assert.ok(refuses(errs, `tool_input.${key}`),
+      `observedKeyErrors took a Bash PostToolUse whose tool_input carries \`${key}\`, an MCP `
+      + 'argument no shell call was recorded sending. A payload that passes by borrowing keys '
+      + 'from another recording of its event is one Codex never sends, and a test built on it '
+      + `proves nothing. It reported: ${JSON.stringify(errs)}`);
+  }
+  assert.throws(
+    () => assertValid(mixed, 'post-tool-use.command.input', 'a Bash PostToolUse with MCP arguments'),
+    assert.AssertionError,
+    'assertValid took a Bash PostToolUse carrying MCP arguments, so every test that checks its '
+    + 'fixture with assertValid can build that call and go green on a payload no session sends.');
+});
+
+test('PostToolUse: an MCP call carrying the shell call\'s `command` is refused', () => {
+  // The mirror image: an MCP call is filed under PostToolUse.mcp.json, whose arguments are the
+  // tool's own. A `command` there is the shell recording's key on the wrong call.
+  const mixed = mcpPostToolUse({ tool_input: SHELL_ARGUMENTS() });
+  assert.equal(mixed.tool_name, 'mcp__mubit__mubit_outcome',
+    'mcpPostToolUse() is meant to build the call to the plugin\'s own MCP tool.');
+
+  const errs = observedKeyErrors('PostToolUse', mixed);
+  assert.ok(refuses(errs, 'tool_input.command'),
+    'observedKeyErrors took an MCP PostToolUse whose tool_input carries `command`, which only '
+    + 'the shell call was recorded sending. A hook tested on it is tested on arguments '
+    + `mubit_outcome never receives. It reported: ${JSON.stringify(errs)}`);
+  assert.throws(
+    () => assertValid(mixed, 'post-tool-use.command.input', 'an MCP PostToolUse with a shell command'),
+    assert.AssertionError,
+    'assertValid took an MCP PostToolUse carrying a shell `command`, so a test can check an MCP '
+    + 'fixture with it and go green on a call no session makes.');
+});
+
+test('every recording, and the builder that reproduces it, is taken as its event; an invented field is not', () => {
+  // The other side of the two refusals above: holding a payload to its own recording must not
+  // start refusing the recordings themselves, or the builders held to them field for field.
+  for (const { file, event, build } of RECORDINGS) {
+    const seen = recording(file);
+    assert.deepEqual(observedKeyErrors(event, seen), [],
+      `observed/payloads/${file} is refused as a ${event} payload, though the host sent it. A `
+      + 'check that refuses a recording refuses the host.');
+    assert.deepEqual(observedKeyErrors(event, build()), [],
+      `${build.name}() is refused as a ${event} payload, though it reproduces ${file}. Every test `
+      + 'built on it would fail for a payload the host does send.');
+
+    assert.ok(observedKeyErrors(event, { ...seen, never_sent_by_the_host: true }).length > 0,
+      `observedKeyErrors took ${file} with a field no recording of ${event} carries, so an `
+      + 'invented field passes as long as the rest of the payload was recorded.');
+    assert.ok(observedKeyErrors(event, build({ never_sent_by_the_host: true })).length > 0,
+      `observedKeyErrors took ${build.name}() with a field no recording of ${event} carries.`);
+
+    if (kind(seen.tool_input) === 'object') {
+      const invented = build({ tool_input: { ...build().tool_input, never_sent_by_the_host: true } });
+      assert.ok(refuses(observedKeyErrors(event, invented), 'tool_input.never_sent_by_the_host'),
+        `observedKeyErrors took ${build.name}() with an argument no recording of ${event} carries. `
+        + 'tool_input is where the variants of an event differ, so it is where a check has to look.');
+    }
+
+    if (CODEX_EVENTS.includes(event)) {
+      assert.doesNotThrow(() => assertValid(seen, `${schemaSlug(event)}.command.input`, file),
+        `assertValid refuses observed/payloads/${file}, which the host sent.`);
+    }
+  }
+});
+
+test('a payload the recorder files nowhere is still held to its event\'s recordings', () => {
+  // The recorder keeps no file for an MCP call's PreToolUse or a shell call's PermissionRequest.
+  // Having no recording of its own is not a pass: such a payload answers to the recordings its
+  // event does have, and a field none of them carries is still refused.
+  const unfiled = [
+    ['PreToolUse', preToolUse({ tool_name: 'mcp__mubit__mubit_outcome' })],
+    ['PermissionRequest', permissionRequest({ tool_name: 'Bash' })],
+  ];
+  for (const [event, payload] of unfiled) {
+    assert.equal(recordingName(payload), '',
+      `the recorder now files a ${event} for ${payload.tool_name} under a name of its own. `
+      + 'Record it, add it to RECORDINGS, and move this case to the tests above.');
+    assert.ok(observedKeyErrors(event, { ...payload, never_sent_by_the_host: true }).length > 0,
+      `observedKeyErrors took a ${event} for ${payload.tool_name} carrying a field no recording `
+      + 'of the event has, because no recording is filed under its exact shape. A payload with no '
+      + 'recording of its own would then pass whatever it carries.');
   }
 });
 
