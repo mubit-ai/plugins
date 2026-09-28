@@ -110,6 +110,11 @@ form for `mubit_outcome` and `mubit_learned` only, and `codex-setup.test.mjs` ho
 to the `codex` on PATH: the recorded tables load, and the same table with a value the host does
 not know fails to load, naming the key.
 
+Two more things the same host does with these tables, both of which setup has to work around:
+`codex mcp remove mubit` deletes every `[mcp_servers.mubit.tools.*]` table along with the
+registration, and a tools table with no `[mcp_servers.mubit]` beside it fails the whole config
+load (`invalid transport`), so Codex does not start.
+
 ## What is not covered
 
 Four of the eleven events the plugin registers do not fire in any session the recorder

@@ -21,10 +21,15 @@
  * approves the two tools the review asks for, `mubit_outcome` and `mubit_learned`, in the
  * per-tool form recorded in `fixtures/observed/mcp-tool-approval.json`, and nothing else:
  * `mubit_recall` and every other tool keep asking, another server's settings and the user's
- * own lines are left as they were, and `--no-trust` — the flag that already means "the
- * approving is mine" — leaves every approval as it found it. Those tests need `codex` too:
+ * own lines are left as they were, an `approval_mode` the user already set on either of the
+ * two is theirs and stays, and `--no-trust` — the flag that already means "the approving is
+ * mine" — leaves every approval as it found it. Those tests need `codex` too, the real one:
  * the tables sit under the server `codex mcp add` registers, and the host's own
- * `codex mcp remove` is what a re-run has to survive.
+ * `codex mcp remove` is what a re-run has to survive. On 0.154.0 that command drops every
+ * `[mcp_servers.mubit.tools.*]` table along with the registration, so whatever of them setup
+ * means to keep, it has to read before the remove and write back after the add. And a tools
+ * table with no `[mcp_servers.mubit]` beside it fails the whole file ("invalid transport"),
+ * so none is written when the registration did not land.
  */
 
 import test from 'node:test';
@@ -55,12 +60,13 @@ function makeHome(files = {}) {
  *
  * @param {string} home
  * @param {string[]} [args]
+ * @param {Record<string, string>} [env]  laid over the inherited environment, e.g. a `PATH`
  * @returns {Promise<{code: number|null, stdout: string, stderr: string}>}
  */
-function runSetup(home, args = []) {
+function runSetup(home, args = [], env = {}) {
   return new Promise((res, rej) => {
     const child = spawn(process.execPath, [join(CODEX_ROOT, 'scripts', 'setup.mjs'), CODEX_ROOT, ...args], {
-      env: { ...process.env, CODEX_HOME: home },
+      env: { ...process.env, ...env, CODEX_HOME: home },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '', stderr = '';
@@ -607,6 +613,102 @@ test('another server`s tools, and the user`s own setting for a Mubit tool, are l
     + `rest of the Mubit tools are the user's to decide, and they had decided:\n${after}`);
   const loaded = hostLoads(home);
   assert.ok(loaded.ok, `Codex cannot load the config.toml setup left:\n${loaded.said}`);
+});
+
+test('an approval_mode the user set on one of the two tools is kept, not overwritten', needsCodex, async () => {
+  // A user who wrote `approval_mode = "prompt"` on mubit_outcome asked to be asked. Setup's
+  // approval is a default for a user who has not decided, not an answer to one who has, and
+  // re-running setup after an upgrade must not quietly take the decision back. The tool the
+  // user left unset still gets the approval, and a second run changes nothing.
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    OLD_REGISTRATION,
+    '[mcp_servers.mubit.tools.mubit_outcome]',
+    'approval_mode = "prompt"',
+    '',
+  ].join('\n');
+  const home = makeHome({ 'config.toml': before });
+  const seen = [];
+  for (let i = 0; i < 2; i++) {
+    const r = await runSetup(home);
+    assert.equal(r.code, 0, `run ${i + 1} exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+    seen.push(readToml(home));
+  }
+  const want = { mubit_outcome: 'prompt', mubit_learned: APPROVAL.value };
+  assert.deepEqual(approvals(seen[0]), want,
+    'setup overwrote the approval_mode the user had set on mubit_outcome, or did not approve '
+    + `mubit_learned, which the user had left unset:\n${seen[0]}`);
+  assert.deepEqual(approvals(seen[1]), want,
+    `a second run did not leave the user's setting and the one approval where the first left them:\n${seen[1]}`);
+  const loaded = hostLoads(home);
+  assert.ok(loaded.ok, `Codex cannot load the config.toml setup left:\n${loaded.said}`);
+});
+
+/**
+ * A directory holding a `codex` that is the real one for everything except `codex mcp add`,
+ * which fails the way a refused registration does. The rest of setup, `codex mcp remove`
+ * and the trust step's `codex app-server` included, runs against the real host.
+ */
+function codexWhoseAddFails() {
+  const real = spawnSync('sh', ['-c', 'command -v codex'], { encoding: 'utf8' }).stdout.trim();
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'mubit-codex-shim-')));
+  writeFileSync(join(dir, 'codex'), [
+    '#!/bin/sh',
+    'if [ "$1" = mcp ] && [ "$2" = add ]; then echo "Error: registration refused" >&2; exit 1; fi',
+    `exec ${JSON.stringify(real)} "$@"`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  return { PATH: `${dir}:${process.env.PATH ?? ''}` };
+}
+
+test('when the MCP registration does not land, no approval table is written', needsCodex, async () => {
+  // A `[mcp_servers.mubit.tools.*]` table with no `[mcp_servers.mubit]` beside it is a server
+  // with no transport, and the host refuses the whole file for it: Codex does not start, and
+  // the user has to find the line by hand. Setup's own `codex mcp remove` has already taken the
+  // old registration, so neither the two approvals nor a user's table put back after the
+  // remove may be written unless the add succeeded.
+  const listLoads = (home) => {
+    const r = spawnSync('codex', ['mcp', 'list', '--json'], {
+      encoding: 'utf8', env: { ...process.env, CODEX_HOME: home }, timeout: 30000,
+    });
+    return { ok: r.status === 0, said: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
+  };
+  const cases = [
+    { label: 'a fresh install', fresh: true, files: { 'config.toml': 'model = "gpt-5.6-sol"\n' }, args: [] },
+    {
+      label: 'a re-run with --no-trust over a user`s own tools table',
+      files: {
+        'config.toml': [
+          OLD_REGISTRATION,
+          '[mcp_servers.mubit.tools.mubit_recall]',
+          'approval_mode = "prompt"',
+          '',
+        ].join('\n'),
+      },
+      args: ['--no-trust'],
+    },
+  ];
+  for (const c of cases) {
+    const home = makeHome(c.files);
+    await runSetup(home, c.args, codexWhoseAddFails());
+    const toml = readToml(home);
+    const registered = /^\[mcp_servers\.mubit\]$/m.test(toml);
+    // On a fresh install nothing else could have put a registration there, so one present
+    // means the failing `codex mcp add` was never the one setup ran. On the re-run, putting
+    // back the registration the remove took is a fair answer to a failed add, and allowed.
+    if (c.fresh) {
+      assert.ok(!registered, `${c.label}: the mubit server is registered, so the failing `
+        + `\`codex mcp add\` was never the one setup ran and the checks below prove nothing:\n${toml}`);
+    }
+    if (!registered) {
+      assert.deepEqual(toolHeaders(toml), [],
+        `${c.label}: the registration failed and setup still wrote per-tool tables under a server `
+        + `that is not there, which Codex refuses to load:\n${toml}`);
+    }
+    const loaded = listLoads(home);
+    assert.ok(loaded.ok, `${c.label}: Codex cannot load the config.toml setup left:\n${loaded.said}\n${toml}`);
+  }
 });
 
 test('the user`s own config.toml lines and comments survive, in order', needsCodex, async () => {

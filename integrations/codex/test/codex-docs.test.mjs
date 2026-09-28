@@ -13,7 +13,7 @@
  * These assert facts, not wording: the default a row states is the default `loadConfig`
  * resolves under Codex, no row or section still calls the feature unverified, and the guide's
  * scorecard section names the settings, the two approved tools, the key that approves them and
- * the flag that leaves approvals alone.
+ * the flag that leaves approvals alone, and the setup skill names the same two tools and key.
  */
 
 import test from 'node:test';
@@ -110,4 +110,19 @@ test('user guide: the scorecard section names the approval step, and how to leav
     + `the two tools, so a user who wants to be asked again has nothing to look for.\n${section}`);
   assert.ok(section.includes('--no-trust'),
     `the scorecard section does not say that setup's \`--no-trust\` leaves the approvals out.\n${section}`);
+});
+
+test('setup skill: names the two tools setup approves, and the key that does it', () => {
+  // The skill is what the model follows before it runs setup, and it already asks the user
+  // before recording hook trust. Approving two tools is the same kind of decision made on the
+  // user's behalf, so the skill has to be able to tell the user which two, and what to look for
+  // in config.toml to take the approval back.
+  const skill = readFileSync(join(CODEX_ROOT, 'skills', 'setup', 'SKILL.md'), 'utf8');
+  for (const tool of APPROVAL.tools) {
+    assert.ok(skill.includes(tool),
+      `skills/setup/SKILL.md does not name ${tool}, which setup approves on the user's behalf, `
+      + 'so the model running setup cannot tell the user what it is about to approve.');
+  }
+  assert.ok(skill.includes(APPROVAL.key),
+    `skills/setup/SKILL.md does not name \`${APPROVAL.key}\`, the config.toml key setup writes.`);
 });

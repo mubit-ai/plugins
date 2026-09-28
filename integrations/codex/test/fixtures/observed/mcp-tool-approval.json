@@ -1,7 +1,7 @@
 {
   "_comment": [
     "The config.toml form codex-cli takes for auto-approving ONE tool of ONE MCP server,",
-    "observed by running the host and writing down what it did. Nothing here was read out of it.",
+    "observed by running the host against a throwaway config and writing down what it did.",
     "",
     "Codex asks the user to approve every call to an MCP tool by default. A",
     "`[mcp_servers.<server>.tools.<tool>]` table carrying `approval_mode = \"approve\"` lets",
