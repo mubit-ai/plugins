@@ -20,7 +20,7 @@
  * real install path and writes them where Codex actually reads.
  *
  * ---------------------------------------------------------------------------
- * The three things it is careful about
+ * The four things it is careful about
  * ---------------------------------------------------------------------------
  * 1. **It merges, it does not overwrite.** `$CODEX_HOME/hooks.json` is the user's, and other
  *    tools register there. Every handler that is not ours is preserved; ours are replaced by
@@ -29,11 +29,23 @@
  *    this plugin root before anything is written to `config.toml`. Trusting the whole file
  *    would silently approve another tool's hook on the user's behalf.
  * 3. **It backs up both files** it touches, to `<name>.before-mubit`, before touching them.
+ *    The first run's copy is the one kept: a later run never overwrites it.
+ * 4. **It never leaves a `config.toml` Codex cannot load.** A failed `codex mcp add` puts
+ *    back the file as it was. After each of its own writes it asks the host to load the file,
+ *    and if the host refuses, it restores the text from before that write and exits 1.
+ *
+ * `codex mcp remove` deletes all of `[mcp_servers.mubit]`, and `codex mcp add` writes back
+ * only `command`, `args` and `env`. Every other setting on it (`startup_timeout_sec`, the
+ * tools tables, a `tools` key inline or dotted) is read first and put back after the add.
  *
  * It also approves the two tools the outcome review asks the model to call, `mubit_outcome`
  * and `mubit_learned`, with `approval_mode = "approve"` on each one's
- * `[mcp_servers.mubit.tools.<tool>]` table. Every other Mubit tool keeps the host's default,
- * and an `approval_mode` the user already set on either of the two is kept.
+ * `[mcp_servers.mubit.tools.<tool>]` table. Every other Mubit tool keeps the host's default.
+ * An `approval_mode` the user already set on either of the two, under any spelling of the
+ * key, is kept; one set inline or as a dotted key under `[mcp_servers.mubit]` gets no table
+ * of ours (it would define the tool twice) and a warning naming the tool.
+ *
+ * A CRLF `config.toml` is read with `\r` stripped and written back with CRLF.
  *
  * `--no-trust` records no hook trust and approves no tool, for anyone who would rather
  * approve the hooks themselves in the TUI's `/hooks` screen. Tool settings already in
@@ -138,11 +150,19 @@ const APPROVE = ['mubit_outcome', 'mubit_learned'];
 
 /** A TOML key: bare, basic-quoted or literal-quoted. */
 const TOML_KEY = String.raw`(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*"|'[^']*')`;
+const MUBIT = String.raw`\[\s*mcp_servers\s*\.\s*(?:mubit|"mubit"|'mubit')\s*`;
+/** `[mcp_servers.mubit]` itself. */
+const SERVER_HEADER = new RegExp(String.raw`^\s*${MUBIT}\]\s*(?:#.*)?$`);
 /** `[mcp_servers.mubit.tools]` or `[mcp_servers.mubit.tools.<tool>]`, with the tool captured. */
-const TOOLS_HEADER = new RegExp(String.raw`^\s*\[\s*mcp_servers\s*\.\s*(?:mubit|"mubit"|'mubit')\s*\.\s*tools\s*`
-  + String.raw`(?:\.\s*(${TOML_KEY})\s*)?\]\s*(?:#.*)?$`);
-/** The first key of a key/value line: the tool a line of the parent table configures. */
-const FIRST_KEY = new RegExp(String.raw`^\s*(${TOML_KEY})\s*[.=]`);
+const TOOLS_HEADER = new RegExp(String.raw`^\s*${MUBIT}\.\s*tools\s*(?:\.\s*(${TOML_KEY})\s*)?\]\s*(?:#.*)?$`);
+/** Any `[mcp_servers.mubit.<key>…]` subtable, with `<key>` captured. */
+const SUB_HEADER = new RegExp(String.raw`^\s*${MUBIT}\.\s*(${TOML_KEY}).*\]\s*(?:#.*)?$`);
+/** A key/value line, with its first key and, when dotted, its second. */
+const KEY_LINE = new RegExp(String.raw`^\s*(${TOML_KEY})\s*(?:\.\s*(${TOML_KEY})\s*)?(?:\.\s*${TOML_KEY}\s*)*=`);
+/** `approval_mode = <value>`, the key bare or quoted, a string value captured. */
+const APPROVAL_LINE = /^\s*(?:approval_mode|"approval_mode"|'approval_mode')\s*=\s*(?:"([^"]*)"|'([^']*)')?/;
+/** The `[mcp_servers.mubit]` keys `codex mcp add` writes itself. */
+const ADD_WRITES = new Set(['command', 'args', 'env']);
 
 /** @param {string} k */
 function unquoteKey(k) {
@@ -151,41 +171,67 @@ function unquoteKey(k) {
   return k;
 }
 
+/** Is this line the header of a `[mcp_servers.mubit.*]` subtable `codex mcp add` does not write? */
+const isSavedSub = (line) => {
+  const m = SUB_HEADER.exec(line);
+  return !!m && unquoteKey(m[1]) !== 'env';
+};
+
 /**
- * The `[mcp_servers.mubit.tools…]` tables in `config.toml`, key/value lines only, in file
- * order. `codex mcp remove mubit` deletes them along with the registration, so they are read
- * before it runs and written back after the add. `tool` is `''` for the parent table.
+ * @typedef {{key: string, sub: string|null, lines: string[]}} Entry  one key/value of `[mcp_servers.mubit]`
+ * @typedef {{header: string, tool: string|null, body: string[]}} Table  `tool` is `''` for
+ *   `[mcp_servers.mubit.tools]`, `null` for a subtable that is not a tools table
+ */
+
+/**
+ * What `codex mcp remove mubit` deletes and `codex mcp add` does not write back: the entries of
+ * `[mcp_servers.mubit]` other than `command`, `args` and `env`, and every subtable but `env`, in
+ * file order, comments dropped. Line-based over LF text, so a value line opening with `[` reads
+ * as a header; the load check after the write catches what that gets wrong.
  *
  * @param {string} text
- * @returns {{tool: string, body: string[]}[]}
+ * @returns {{entries: Entry[], tables: Table[]}}
  */
-function readToolTables(text) {
-  /** @type {{tool: string, body: string[]}[]} */
-  const out = [];
-  /** @type {{tool: string, body: string[]}|null} */
+function readServer(text) {
+  /** @type {Entry[]} */
+  const entries = [];
+  /** @type {Table[]} */
+  const tables = [];
+  /** @type {'server'|Table|null} */
   let cur = null;
+  let skip = false;
   for (const line of text.split('\n')) {
     if (/^\s*\[/.test(line)) {
-      const m = TOOLS_HEADER.exec(line);
-      cur = m ? { tool: m[1] ? unquoteKey(m[1]) : '', body: [] } : null;
-      if (cur && !out.some((t) => t.tool === cur?.tool)) out.push(cur);
+      const tools = TOOLS_HEADER.exec(line);
+      cur = SERVER_HEADER.test(line) ? 'server'
+        : isSavedSub(line) ? { header: line.trim(), tool: tools ? unquoteKey(tools[1] ?? '') : null, body: [] }
+          : null;
+      if (cur && cur !== 'server') tables.push(cur);
       continue;
     }
     const kept = line.replace(/\s+$/, '');
-    if (cur && kept.trim() && !kept.trim().startsWith('#')) cur.body.push(kept);
+    if (!cur || !kept.trim() || kept.trim().startsWith('#')) continue;
+    if (cur !== 'server') { cur.body.push(kept); continue; }
+    // A line with no key continues the entry above it, e.g. a multi-line array.
+    const k = KEY_LINE.exec(kept);
+    if (k) {
+      skip = ADD_WRITES.has(unquoteKey(k[1]));
+      if (!skip) entries.push({ key: unquoteKey(k[1]), sub: k[2] ? unquoteKey(k[2]) : null, lines: [] });
+    }
+    if (!skip && entries.length) entries[entries.length - 1].lines.push(kept);
   }
-  return out;
+  return { entries, tables };
 }
 
 /**
- * `text` without its `[mcp_servers.mubit.tools…]` tables, so writing them back can never define
- * one twice. A no-op after `codex mcp remove` on the host this was recorded against; the comment
- * lines just above the next table stay with it.
+ * `text` without its saved kind of `[mcp_servers.mubit.*]` subtable, so writing them back can
+ * never define one twice. A no-op after `codex mcp remove` on the host this was recorded
+ * against; the comment lines just above the next table stay with it.
  *
  * @param {string} text
  * @returns {string}
  */
-function dropToolTables(text) {
+function dropSubtables(text) {
   /** @type {string[]} */
   const out = [];
   /** @type {string[]|null} */
@@ -200,7 +246,7 @@ function dropToolTables(text) {
   for (const line of text.split('\n')) {
     if (/^\s*\[/.test(line)) {
       flush();
-      if (TOOLS_HEADER.test(line)) { span = []; continue; }
+      if (isSavedSub(line)) { span = []; continue; }
     }
     if (span) span.push(line); else out.push(line);
   }
@@ -209,31 +255,74 @@ function dropToolTables(text) {
 }
 
 /**
- * The saved tables, plus `approval_mode = "approve"` on each tool in `approve` the user has not
- * decided about, as TOML text. A tool the parent table names is the user's, and gets no table
- * of ours: a second definition of it would stop the file loading.
+ * `text` with the saved `entries` put back at the end of its `[mcp_servers.mubit]` table, less
+ * any key the add already wrote there. `lost` holds the entries there was no table for.
  *
- * @param {{tool: string, body: string[]}[]} saved
+ * @param {string} text
+ * @param {Entry[]} entries
+ */
+function putServerKeys(text, entries) {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => SERVER_HEADER.test(l));
+  if (!entries.length || at < 0) return { text, lost: entries };
+  let end = at + 1;
+  const has = new Set();
+  for (let i = at + 1; i < lines.length && !/^\s*\[/.test(lines[i]); i++) {
+    if (lines[i].trim()) end = i + 1;
+    const k = KEY_LINE.exec(lines[i]);
+    if (k) has.add(unquoteKey(k[1]));
+  }
+  lines.splice(end, 0, ...entries.filter((e) => !has.has(e.key)).flatMap((e) => e.lines));
+  return { text: lines.join('\n'), lost: [] };
+}
+
+/**
+ * The saved tables as TOML, plus `approval_mode = "approve"` on each tool in `approve` the user
+ * has not decided about, and what became of each of those tools.
+ *
+ * A tool named as `tools.<tool>…` or inside `tools = {…}` in `[mcp_servers.mubit]`, or as a
+ * key of `[mcp_servers.mubit.tools]`, is the user's, and gets no table of ours: a second
+ * definition of it stops the file loading. An inline `tools` takes no table at all.
+ *
+ * @param {{entries: Entry[], tables: Table[]}} saved
  * @param {string[]} approve
  */
-function toolTables(saved, approve) {
-  const tables = saved.map((t) => ({ tool: t.tool, body: [...t.body] }));
-  const named = new Set(tables.filter((t) => !t.tool).flatMap((t) => t.body)
-    .map((l) => FIRST_KEY.exec(l)?.[1]).filter(Boolean).map((k) => unquoteKey(String(k))));
-  const approved = [];
-  const kept = [];
+function planTools(saved, approve) {
+  const tables = saved.tables.map((t) => ({ ...t, body: [...t.body] }));
+  const inline = saved.entries.find((e) => e.key === 'tools' && e.sub === null);
+  const elsewhere = new Set([
+    ...saved.entries.filter((e) => e.key === 'tools' && e.sub !== null).map((e) => String(e.sub)),
+    ...tables.filter((t) => t.tool === '').flatMap((t) => t.body)
+      .map((l) => KEY_LINE.exec(l)?.[1]).filter(Boolean).map((k) => unquoteKey(String(k))),
+    ...approve.filter((tool) => inline && new RegExp(`\\b${tool}\\b`).test(inline.lines.join('\n'))),
+  ]);
+  const r = {
+    /** @type {string[]} */ approved: [],
+    /** @type {string[]} */ already: [],
+    /** @type {{tool: string, mode: string}[]} */ kept: [],
+    /** @type {string[]} */ elsewhere: [],
+    /** @type {string[]} */ blocked: [],
+  };
   for (const tool of approve) {
+    if (elsewhere.has(tool)) { r.elsewhere.push(tool); continue; }
+    if (inline) { r.blocked.push(tool); continue; }
     let t = tables.find((x) => x.tool === tool);
-    if (named.has(tool) || t?.body.some((l) => /^\s*approval_mode\s*=/.test(l))) { kept.push(tool); continue; }
-    if (!t) { t = { tool, body: [] }; tables.push(t); }
-    t.body.push('approval_mode = "approve"');
-    approved.push(tool);
+    const set = t?.body.map((l) => APPROVAL_LINE.exec(l)).find(Boolean);
+    const mode = set ? set[1] ?? set[2] ?? '' : null;
+    if (mode === 'approve') r.already.push(tool);
+    else if (mode !== null) r.kept.push({ tool, mode });
+    else {
+      if (!t) {
+        const key = /^[A-Za-z0-9_-]+$/.test(tool) ? tool : JSON.stringify(tool);
+        t = { header: `[mcp_servers.mubit.tools.${key}]`, tool, body: [] };
+        tables.push(t);
+      }
+      t.body.push('approval_mode = "approve"');
+      r.approved.push(tool);
+    }
   }
-  const key = (k) => (/^[A-Za-z0-9_-]+$/.test(k) ? k : JSON.stringify(k));
-  const text = tables
-    .map((t) => `[mcp_servers.mubit.tools${t.tool ? `.${key(t.tool)}` : ''}]\n${t.body.map((l) => `${l}\n`).join('')}`)
-    .join('\n');
-  return { text, approved, kept };
+  const text = tables.map((t) => `${t.header}\n${t.body.map((l) => `${l}\n`).join('')}`).join('\n');
+  return { text, ...r };
 }
 
 // --- 0. resolve the data directory, and PIN it -----------------------------------
@@ -260,9 +349,20 @@ console.log(shared
 const tpl = JSON.parse(readFileSync(join(root, 'hooks.json'), 'utf8'));
 const target = join(HOME, 'hooks.json');
 const existing = existsSync(target) ? JSON.parse(readFileSync(target, 'utf8')) : { hooks: {} };
-if (existsSync(target)) {
-  copyFileSync(target, `${target}.before-mubit`);
-  console.log(`backed up ${target} -> ${target}.before-mubit`);
+backUp(target);
+
+/**
+ * Copy `file` to `<file>.before-mubit`, unless an earlier run already did. That copy is what a
+ * user restores to undo setup, and a later run's copy holds what the earlier run left instead.
+ *
+ * @param {string} file
+ */
+function backUp(file) {
+  if (!existsSync(file)) return;
+  const to = `${file}.before-mubit`;
+  if (existsSync(to)) { console.log(`${to} is from an earlier run, and left as it is`); return; }
+  copyFileSync(file, to);
+  console.log(`backed up ${file} -> ${to}`);
 }
 /**
  * Is this handler one of ours, and therefore ours to replace?
@@ -305,10 +405,18 @@ console.log(`merged ${added} handler(s) across ${Object.keys(tpl.hooks).length -
 if (!withPreTool) console.log('  (PreToolUse omitted: the warnings it exists for are off by default)');
 
 // --- 2. register the MCP server ------------------------------------------------
-// Backed up here, before anything below writes to it, so the copy is the file as the user had it.
+// Read and backed up here, before anything below writes to it: `original` is the file as the
+// user had it, and what a failed add puts back.
 const cfg = join(HOME, 'config.toml');
-if (existsSync(cfg)) copyFileSync(cfg, `${cfg}.before-mubit`);
-const savedTools = existsSync(cfg) ? readToolTables(readFileSync(cfg, 'utf8')) : [];
+const original = existsSync(cfg) ? readFileSync(cfg, 'utf8') : null;
+// `codex mcp` writes LF whatever the file had, so setup's own writes restore the user's endings.
+const eol = original?.includes('\r\n') ? '\r\n' : '\n';
+/** @param {string} s */
+const lf = (s) => s.replace(/\r\n/g, '\n');
+/** @param {string} s */
+const withEol = (s) => (eol === '\n' ? s : s.replace(/\n/g, eol));
+backUp(cfg);
+const saved = readServer(lf(original ?? ''));
 spawnSync('codex', ['mcp', 'remove', 'mubit'], { stdio: 'ignore' });
 // `--env` matters as much here as the pin in the hook commands does. Codex registers the
 // server itself, so whatever is not passed here is simply absent — there is no host putting
@@ -345,25 +453,66 @@ console.log((add.stdout || add.stderr || '').trim());
 // Only after an add that landed: a tools table with no `[mcp_servers.mubit]` beside it fails
 // the whole config load, and Codex does not start.
 if (add.status !== 0) {
-  console.log('\nthe MCP registration failed, so no tool settings were written.'
-    + `${existsSync(`${cfg}.before-mubit`) ? ` ${cfg}.before-mubit holds the file as it was.` : ''}`);
+  // Setup's own `codex mcp remove` has already taken the registration and every setting on it.
+  if (original !== null) writeFileSync(cfg, original);
+  console.log('\nthe MCP registration failed, so it was left unchanged: config.toml is as it was '
+    + 'before setup ran, and no tool settings were written.');
 } else {
-  const { text, approved, kept } = toolTables(savedTools, noTrust ? [] : APPROVE);
-  if (text) {
-    const current = dropToolTables(existsSync(cfg) ? readFileSync(cfg, 'utf8') : '');
-    writeFileSync(cfg, `${current.trim() ? `${current.replace(/\s+$/, '')}\n\n` : ''}${text}`);
+  const post = existsSync(cfg) ? readFileSync(cfg, 'utf8') : '';
+  const plan = planTools(saved, noTrust ? [] : APPROVE);
+  const { text, lost } = putServerKeys(dropSubtables(lf(post)), saved.entries);
+  const next = withEol(plan.text ? `${text.trim() ? `${text.replace(/\s+$/, '')}\n\n` : ''}${plan.text}` : text);
+  if (next !== post) {
+    writeFileSync(cfg, next);
+    keepLoadable(post, 'the Mubit tool settings');
   }
+  const keys = (/** @type {Entry[]} */ es) => [...new Set(es.map((e) => e.key))].join(', ');
+  const carried = saved.entries.filter((e) => !lost.includes(e));
+  if (carried.length) console.log(`\ncarried over your ${keys(carried)} on [mcp_servers.mubit].`);
+  if (lost.length) console.log(`\nwarning: ${keys(lost)} on [mcp_servers.mubit] could not be put back; ${cfg}.before-mubit has them.`);
   if (noTrust) {
-    console.log('\nno tools approved (--no-trust); Mubit tool settings already in config.toml were kept.');
+    const keptTools = saved.tables.some((t) => t.tool !== null) || carried.some((e) => e.key === 'tools');
+    console.log(`\nno tools approved (--no-trust)${keptTools ? '; the Mubit tool settings already in config.toml were kept' : ''}.`);
     console.log(`To stop Codex asking before ${APPROVE.join(' and ')}, set approval_mode = "approve"`);
     console.log('under [mcp_servers.mubit.tools.<tool>] in config.toml.');
   } else {
-    if (approved.length) {
-      console.log(`\napproved ${approved.join(' and ')} in ${cfg} (approval_mode = "approve"),`);
-      console.log('so the outcome review raises no prompt. Every other Mubit tool still asks.');
+    // One line per outcome, so no line names a tool it does not describe.
+    console.log('');
+    if (plan.approved.length) {
+      console.log(`approved ${plan.approved.join(' and ')} in ${cfg} (approval_mode = "approve"), so the outcome `
+        + `review's calls to ${plan.approved.length > 1 ? 'them' : 'it'} raise no prompt. Every other Mubit tool still asks.`);
     }
-    if (kept.length) console.log(`kept the approval_mode you set on ${kept.join(' and ')}.`);
+    if (plan.already.length) console.log(`${plan.already.join(' and ')} already approved (approval_mode = "approve").`);
+    for (const { tool, mode } of plan.kept) console.log(`kept the approval_mode you set on ${tool}${mode ? ` ("${mode}")` : ''}.`);
+    for (const tool of plan.elsewhere) {
+      console.log(`warning: ${tool} is set inline or as a dotted key, not in its own [mcp_servers.mubit.tools.${tool}] `
+        + 'table; kept as you set it, and setup wrote no approval for it.');
+    }
+    for (const tool of plan.blocked) {
+      console.log(`warning: ${tool} not approved: [mcp_servers.mubit] sets tools inline, which takes no table. `
+        + `Add ${tool} = { approval_mode = "approve" } to it to stop the prompts.`);
+    }
   }
+}
+
+/**
+ * The last-resort guard. Setup edits config.toml line by line, and some valid TOML defeats that;
+ * a file the host refuses stops Codex starting at all. So after each write the host loads it,
+ * and if it will not, `was` (the text before that write) goes back and the run exits 1.
+ *
+ * @param {string} was
+ * @param {string} what  what the write carried, for the message
+ */
+function keepLoadable(was, what) {
+  const r = spawnSync('codex', ['mcp', 'list', '--json'], { cwd: HOME, encoding: 'utf8', timeout: 30000 });
+  if (r.status === 0) return;
+  writeFileSync(cfg, was);
+  const why = String(r.stderr || r.stdout || r.error || 'no answer').split('\n').filter((l) => l.trim()).slice(0, 5)
+    .map((l) => `  ${l.trim()}`).join('\n');
+  console.error(`\nCodex could not load ${cfg} once setup wrote ${what} to it:\n${why}\n`
+    + `config.toml was restored to the text it had before that write, so it does not hold ${what}.`
+    + `${existsSync(`${cfg}.before-mubit`) ? ` ${cfg}.before-mubit holds the file as it was before setup first ran.` : ''}`);
+  process.exit(1);
 }
 
 // --- 3. trust ------------------------------------------------------------------
@@ -396,7 +545,8 @@ setTimeout(() => {
   console.log(`\nAbout to record trust for ${hooks.length} hook(s) in ${join(HOME, 'config.toml')}:`);
   for (const h of hooks) console.log(`  ${h.eventName.padEnd(18)} ${h.command}`);
 
-  const before = existsSync(cfg) ? readFileSync(cfg, 'utf8') : '';
+  const beforeRaw = existsSync(cfg) ? readFileSync(cfg, 'utf8') : '';
+  const before = lf(beforeRaw);
 
   // Replace, never append. A hook's trust key is `<sourcePath>:<event>:<group>:<index>` and
   // does not change when its command does — so re-running setup after any edit produces a
@@ -426,7 +576,7 @@ setTimeout(() => {
   toml += '# Only the [hooks.state] tables below are ours; any other tool`s are left alone.\n';
   for (const h of hooks) toml += `[hooks.state."${h.key}"]\ntrusted_hash = "${h.currentHash}"\n`;
   const after = `${kept}${toml}`;
-  writeFileSync(cfg, after);
+  writeFileSync(cfg, withEol(after));
 
   // The self-check. It used to be a bare count against `hooks.length`, which cannot survive
   // preserving a foreign entry — and, worse, could only ever have passed by deleting one.
@@ -441,9 +591,10 @@ setTimeout(() => {
     if (dupes.length) console.error(`  defined twice: ${dupes.join(', ')}`);
     if (missing.length) console.error(`  ours, not written: ${missing.join(', ')}`);
     if (lost.length) console.error(`  another tool's, dropped: ${lost.join(', ')}`);
-    writeFileSync(cfg, before);
+    writeFileSync(cfg, beforeRaw);
     process.exit(1);
   }
+  keepLoadable(beforeRaw, 'the hook trust');
   console.log(`\nrecorded ${hooks.length}.${preserved.length ? ` Left ${preserved.length} other trust entr`
     + `${preserved.length === 1 ? 'y' : 'ies'} alone.` : ''}`
     + ' Start a NEW Codex session — hooks and MCP servers are read at session start.');
