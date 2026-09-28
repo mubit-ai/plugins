@@ -277,7 +277,8 @@ test('a prompt that mentions hook_prompt mid-sentence is still imported as the u
   assert.equal(r.code, 0, r.err);
   const items = server.calls('POST', '/v2/control/ingest').flatMap((c) => c.body.items);
   const turn = items.find((i) => String(i.text ?? '').startsWith('Q:'));
-  assert.ok(turn, 'a user asking about the wrapper lost their turn. Only a block that opens with the tag is the host\'s.');
+  assert.ok(turn, 'a user asking about the wrapper lost their turn. Only a block that is one whole '
+    + '<hook_prompt …>…</hook_prompt> element is the host\'s.');
   assert.ok(String(turn.text).startsWith(`Q: ${said}`), String(turn.text).slice(0, 160));
 });
 

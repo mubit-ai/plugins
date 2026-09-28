@@ -160,10 +160,14 @@ const REVIEW = 'Before you finish: say which of the lessons in context helped.';
 describe('Stop-hook feedback is the host talking, not the user', () => {
   it('isInjectedUserText recognises the wrapper, whatever precedes the tag or orders its attributes', async () => {
     const { isInjectedUserText } = await R();
+    // Only the first is the shape observed on 0.154.0. The rest are margins a host update could
+    // plausibly produce: whitespace around the block, another attribute, or none. The attribute
+    // is not what makes it the host's; a block that is one whole element is.
     for (const text of [
       hookPromptText(REVIEW),
       hookPromptText(REVIEW, '\n'),
       hookPromptText(REVIEW, '  \n\t'),
+      `${hookPromptText(REVIEW)}\n`,
       `<hook_prompt source="stop" hook_run_id="${HOOK_RUN_ID}">${REVIEW}</hook_prompt>`,
       `<hook_prompt\n  hook_run_id="${HOOK_RUN_ID}">${REVIEW}</hook_prompt>`,
       `<hook_prompt>${REVIEW}</hook_prompt>`,
@@ -177,16 +181,23 @@ describe('Stop-hook feedback is the host talking, not the user', () => {
 
   it('isInjectedUserText leaves a person who mentions the wrapper alone', async () => {
     const { isInjectedUserText } = await R();
+    // Codex writes the feedback as a block that is one whole element, open tag to close tag.
+    // A person who opens a message with the tag, or quotes a whole element inside a sentence,
+    // is asking about it.
     for (const text of [
       `why does <hook_prompt hook_run_id="${HOOK_RUN_ID}"> show up in my rollout?`,
       'the `<hook_prompt>` wrapper is how Codex stores Stop feedback',
       '`<hook_prompt>` is what Codex writes, right?',
       'hook_prompt records should be skipped by the importer',
       '<hook_prompts>a different tag is a different thing</hook_prompts>',
+      '<hook_prompt> keeps showing up after every turn. What writes it?',
+      `<hook_prompt hook_run_id="${HOOK_RUN_ID}"> is the line I see; what writes it?`,
+      `Codex wrote <hook_prompt hook_run_id="${HOOK_RUN_ID}">${REVIEW}</hook_prompt> after my turn. Why?`,
     ]) {
       assert.equal(isInjectedUserText(text), false,
-        `a person's message was filtered as host text: ${JSON.stringify(text)}. The match is `
-        + 'anchored at the start of a block on the exact tag; a user quoting it is still a user.');
+        `a person's message was filtered as host text: ${JSON.stringify(text)}. Only a block `
+        + 'that is one whole <hook_prompt …>…</hook_prompt> element is the host\'s; a user who '
+        + 'quotes the tag, or opens a message with it, is still a user.');
     }
   });
 
@@ -250,12 +261,18 @@ describe('Stop-hook feedback is the host talking, not the user', () => {
       'the feedback block must be dropped and the user\'s block beside it kept, not the two joined');
   });
 
-  it('firstUserText keeps a prompt that mentions the wrapper mid-sentence', async () => {
+  it('firstUserText keeps a prompt that mentions the wrapper, verbatim, wherever it sits', async () => {
     const { firstUserText } = await R();
-    const said = `why does <hook_prompt hook_run_id="${HOOK_RUN_ID}"> show up after every turn?`;
-    const path = rollout([META, user(...PREAMBLE), user(said)]);
-    assert.equal(firstUserText(path), said,
-      'a user asking about the wrapper was skipped. Only a block that opens with the tag is the host\'s.');
+    for (const said of [
+      `why does <hook_prompt hook_run_id="${HOOK_RUN_ID}"> show up after every turn?`,
+      '<hook_prompt> keeps showing up after every turn. What writes it?',
+      `Codex wrote <hook_prompt hook_run_id="${HOOK_RUN_ID}">${REVIEW}</hook_prompt> after my turn. Why?`,
+    ]) {
+      const path = rollout([META, user(...PREAMBLE), user(said)]);
+      assert.equal(firstUserText(path), said,
+        'a user asking about the wrapper was skipped or edited. Only a block that is one whole '
+        + '<hook_prompt …>…</hook_prompt> element is the host\'s, and it is dropped whole, never cut out of a sentence.');
+    }
   });
 
   it('firstUserText still reads a Claude Code transcript\'s first user text, unchanged', async () => {

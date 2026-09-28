@@ -218,15 +218,19 @@ test('several in a row, whitespace before the tag, another attribute order: none
   assert.match(snapshot, /^assistant: second answer$/m, 'the assistant turn after the feedback is missing.');
 });
 
-test('a user who mentions hook_prompt mid-message is still the user', async (t) => {
+test('a user who mentions hook_prompt, mid-message or opening it, is still the user', async (t) => {
   // No run id in the mention: the snapshot is redacted, and a path in one reads as high-entropy.
   const said = 'why does my rollout show a <hook_prompt hook_run_id="stop:0"> line after every turn?';
+  const opens = '<hook_prompt> keeps showing up after every turn. What writes it?';
   const { server } = await checkpoint(t, [
     { role: 'user', text: said },
     { role: 'assistant', text: 'That is how Codex stores Stop-hook feedback.' },
+    { role: 'user', text: opens },
+    { role: 'assistant', text: 'Codex does, when a Stop hook blocks.' },
   ]);
-  assert.deepEqual(userTurns(snapshotOf(server)), [`user: ${said}`],
-    'a person asking about the wrapper lost their turn. Only a block that opens with the tag is the host\'s.');
+  assert.deepEqual(userTurns(snapshotOf(server)), [`user: ${said}`, `user: ${opens}`],
+    'a person asking about the wrapper lost their turn. Only a block that is one whole '
+    + '<hook_prompt …>…</hook_prompt> element is the host\'s.');
 });
 
 test('a Claude Code transcript that mentions hook_prompt still renders as before', async (t) => {

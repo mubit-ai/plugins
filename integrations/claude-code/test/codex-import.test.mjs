@@ -364,7 +364,7 @@ describe('Stop-hook feedback in a 0.154 rollout', () => {
   /** The `Q:` line of every turn item, in order. */
   const prompts = (r) => turns(r).map((i) => (/^Q: (.*)$/m.exec(i.item.text) ?? [])[1]);
 
-  it('imports no item for the feedback, and keeps the answer before it on the user\'s turn', async () => {
+  it('imports no item for the feedback, and the turn it interrupted keeps both halves of its answer', async () => {
     const r = await read([
       meta({ version: '0.154.0' }), turnContext('/r/app'),
       user(...PREAMBLE),
@@ -375,8 +375,16 @@ describe('Stop-hook feedback in a 0.154 rollout', () => {
     ]);
     assert.deepEqual(prompts(r), ['why does the drain stop on a 500?'],
       'the feedback opened a turn of its own. The review would be stored as a question the user asked.');
-    assert.match(turns(r)[0].item.text, /^Q: why does the drain stop on a 500\?\n\nA: It leaves the spool in place and stops\./,
+    const text = turns(r)[0].item.text;
+    assert.match(text, /^Q: why does the drain stop on a 500\?\n\nA: It leaves the spool in place and stops\./,
       'the answer given before the review is the answer to the user\'s prompt and has to stay on it');
+    // The feedback is skipped the way the preamble is: it is not there, and the turn goes on.
+    // A blocked Stop keeps the model on the user's prompt — with a hook of the user's own
+    // ("run the tests before you stop") the continuation is where the work finishes — so what
+    // it says next is still that prompt's answer, as the tool calls it makes are that turn's.
+    assert.ok(text.endsWith('Reviewed: the drain lesson helped.'),
+      'what the assistant said after the feedback was dropped or filed elsewhere. It continues the '
+      + `same turn and belongs on it, after the first answer.\n  got: ${text.slice(0, 240)}`);
     assert.equal(tools(r).length, 0, 'a HookPrompt item is not a tool call');
     for (const i of r.items) {
       assert.ok(!i.item.text.includes('hook_prompt') && !i.item.text.includes(REVIEW),
@@ -420,6 +428,8 @@ describe('Stop-hook feedback in a 0.154 rollout', () => {
     assert.equal(turns(first).length, 1);
 
     // The cursor is past the prompt, so the feedback is the first `user` record this read meets.
+    // The continuation after it has no open turn to join here — the earlier read closed it —
+    // and is dropped, as a resumed read drops the tail of any turn it did not see open.
     appendFileSync(p, jsonl([...hookPrompt(REVIEW), assistant('Reviewed.')]));
     const second = rolloutItems(cfg, p, { from: first.offset, roots: ['/r/app'], projectDir: '/r/app' });
     assert.equal(second.items.length, 0,
@@ -427,15 +437,18 @@ describe('Stop-hook feedback in a 0.154 rollout', () => {
       + `${second.items.map((i) => i.item.text.slice(0, 120)).join(' | ')}`);
   });
 
-  it('a prompt that mentions the wrapper mid-sentence is still the user\'s', async () => {
+  it('a prompt that mentions the wrapper, mid-sentence or opening it, is still the user\'s', async () => {
     // No run id in the mention: the importer redacts, and the path in one reads as high-entropy.
     const said = 'why does my rollout show a <hook_prompt hook_run_id="stop:0"> line after every turn?';
+    const opens = '<hook_prompt> keeps showing up after every turn. What writes it?';
     const r = await read([
       meta({ version: '0.154.0' }), turnContext('/r/app'),
       user(said), assistant('That is how Codex stores Stop-hook feedback.'),
+      user(opens), assistant('Codex does, when a Stop hook blocks.'),
     ]);
-    assert.deepEqual(prompts(r), [said],
-      'a user asking about the wrapper was dropped. Only a block that opens with the tag is the host\'s.');
+    assert.deepEqual(prompts(r), [said, opens],
+      'a user asking about the wrapper was dropped. Only a block that is one whole '
+      + '<hook_prompt …>…</hook_prompt> element is the host\'s.');
   });
 });
 
