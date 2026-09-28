@@ -67,6 +67,7 @@ const FACT = fakeId('0d0d0d0d', 5);
 const STANDING = fakeId('0d0d0d0d', 6);
 
 const R1_TITLE = 'Run vitest with --pool=forks…';
+const R2_TITLE = 'Set the CI job timeout to 20 minutes…';
 const S1_TITLE = 'Run migrations before seeding the database…';
 const STANDING_TITLE = 'Use pnpm workspaces in this repo…';
 
@@ -123,6 +124,7 @@ const RUNNER_PROMPT = 'why does the test runner hang on CI?';
 const SEED_PROMPT = 'how should I seed the database for local dev?';
 const CORRECTION = "no, that's wrong — the runner still hangs";
 const USES_R1 = 'Use vitest with --pool=forks: the threads pool hangs on the native module.';
+const USES_R2 = 'Also raise the CI job timeout to 20 minutes, since the macOS runners queue for a long time.';
 const USES_S1 = 'Run the migrations first so the schema exists, then run the seeding script.';
 const USES_STANDING = 'Use pnpm with a workspace so hoisting stays predictable.';
 const USES_NOTHING = 'Let me look at the CI logs again.';
@@ -131,11 +133,30 @@ const USES_NOTHING = 'Let me look at the CI logs again.';
 // The harness: one Codex session, driven hook by hook
 // ---------------------------------------------------------------------------
 
+/**
+ * Loaded into every node process the hooks start, through `NODE_OPTIONS`. It files each
+ * `drain.mjs` a hook launches, synchronously, before `spawn` returns: the hook has exited by
+ * the time `runHook` resolves, so every drain it started is already on file however long the
+ * child then takes to boot. "No correction pass was started" is read at once, with no window
+ * to sleep through — a slow runner makes nothing here pass that should fail. `lib/hook.mjs`
+ * (and the bundles) import `spawn` from the builtin's ESM view, hence the sync.
+ */
 const SCRATCH = tempDir('mubit-codex-card-');
 const SPY = join(SCRATCH, 'spawn-spy.cjs');
 writeFileSync(SPY, `const fs = require('node:fs');
+const path = require('node:path');
 const out = process.env.MUBIT_TEST_SPY_FILE;
-if (out) { try { fs.appendFileSync(out, JSON.stringify({ argv: process.argv.slice(1) }) + '\\n'); } catch {} }
+if (out) {
+  const cp = require('node:child_process');
+  const spawn = cp.spawn;
+  cp.spawn = function (cmd, args, ...rest) {
+    if (Array.isArray(args) && path.basename(String(args[0] ?? '')) === 'drain.mjs') {
+      try { fs.appendFileSync(out, JSON.stringify({ argv: args.map(String) }) + '\\n'); } catch {}
+    }
+    return spawn.call(this, cmd, args, ...rest);
+  };
+  require('node:module').syncBuiltinESMExports();
+}
 `);
 let spies = 0;
 let scripts = 0;
@@ -325,14 +346,13 @@ function head(rows, lessonPrompts, prompts) {
     + ` · memory added ${tok} tok`;
 }
 
-/** Detached `drain` processes, by the argv they were started with. */
+/** Detached `drain` processes the hooks launched, by their argv (the script first). */
 function drains(spy) {
   if (!existsSync(spy)) return [];
   return readFileSync(spy, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
     .filter((l) => basename(String(l.argv?.[0] ?? '')) === 'drain.mjs');
 }
 const corrections = (spy) => drains(spy).filter((d) => d.argv.includes('--correct'));
-const settle = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
 // The Codex output contract for Stop
@@ -606,41 +626,53 @@ test('a correction on the next prompt fails the lesson and posts the correction 
   ], 'the card fails exactly the lesson the correction was posted against.');
 });
 
-test('a slash command or a $skill prompt never counts as a correction', async (t) => {
+/**
+ * The rule: a prompt whose **first token** is a skill mention — `$name` or `$plugin:name`, a
+ * lowercase skill name the way Codex's `$` picker writes it into the prompt — is addressed to
+ * that skill, and is never a correction however it is worded. The same holds for a slash
+ * command. A `$` anywhere else (a price, a shell variable, a skill named further in) makes the
+ * prompt nothing special: it is judged exactly as it would be without the `$`. The rule has no
+ * host in it, so Claude Code gets it too (`claude-code/test/correction.test.mjs` pins the table
+ * row by row, including a leading `$5`, `$HOME` and `$ npm test`); this case proves it end to end.
+ */
+test('a slash command or a $skill prompt never counts as a correction; a $ anywhere else changes nothing', async (t) => {
   const ctx = await scenario(t, { score: 'full' });
   const { foldScorecard } = await lib('scorecard.mjs');
-  const cases = [
-    ['a slash command', "/review that's wrong — look at the runner again"],
-    ['a namespaced $skill', "$mubit-memory:recall that's wrong — what do we know about the runner hang?"],
-    ['a bare $skill', "$recall no, that's wrong, the runner still hangs"],
-  ];
+  /** [what, the next prompt, is it a correction] */
+  const cases = /** @type {const} */ ([
+    ['a slash command', "/review that's wrong — look at the runner again", false],
+    ['a plugin $skill', "$mubit-memory:recall that's wrong — what do we know about the runner hang?", false],
+    ['a bare $skill', "$recall no, that's wrong, the runner still hangs", false],
+    ['a correction with a $ inside it', "no, that's wrong — the cache is under $HOME/.cache, and the plan is $5", true],
+  ]);
 
   // Each in a session of its own, after a turn that used a lesson; every verdict is collected
   // before any is asserted, so one failure does not hide the others.
   const got = [];
+  const corrected = [];
   let n = 0;
-  for (const [what, text] of cases) {
+  for (const [what, text, correction] of cases) {
     n++;
     const s = ctx.session(n);
     await s.start();
     await s.prompt(TURN(10 * n + 1), RUNNER_PROMPT);
     await s.stop(TURN(10 * n + 1), USES_R1);
     await s.prompt(TURN(10 * n + 2), text);
+    if (correction) corrected.push(TURN(10 * n + 1));
 
     const row = s.rows().find((r) => r.kind === 'prompt' && r.prompt_id === TURN(10 * n + 2));
     const summary = foldScorecard(s.rows(), TURN(10 * n + 1));
     got.push({ what, correction: row?.correction ?? 'no prompt row', failed: summary.lessons.failed });
   }
-  await settle();
   const spawned = corrections(ctx.spy).map((d) => d.argv[d.argv.indexOf('--correct') + 1]);
 
-  assert.deepEqual(got, cases.map(([what]) => ({ what, correction: false, failed: 0 })),
-    'a prompt addressed to the harness (`/…`) or to a skill (`$…`) was recorded as a correction '
-    + 'of the turn before it, and that turn\'s lesson counted as failed. Neither is a verdict on '
-    + 'the reply, however it is worded.');
-  assert.deepEqual(spawned, [],
-    'a correction pass was started for the turn before a slash or $skill prompt — it posts a '
-    + 'failure against a lesson that helped.');
+  assert.deepEqual(got, cases.map(([what, , correction]) => ({ what, correction, failed: correction ? 1 : 0 })),
+    'a prompt addressed to the harness (`/…`) or to a skill (`$…` as its first word) is never a '
+    + 'verdict on the reply before it, however it is worded — and a `$` anywhere else must not '
+    + 'excuse a correction, or "no, that\'s wrong — use $HOME" stops failing the lesson it rejects.');
+  assert.deepEqual(spawned, corrected,
+    'a correction pass must start for the one real correction, against the turn it follows, and '
+    + 'for nothing else: a pass after a slash or $skill prompt posts a failure against a lesson that helped.');
 });
 
 // ===========================================================================
@@ -665,7 +697,6 @@ test('a message typed mid-turn joins the running turn: no new prompt, and never 
     [[TURN(1), false], [TURN(2), false]],
     'the queued message is part of the running turn: a second prompt row inflates the prompt '
     + 'count, and a correction fails the previous turn\'s lesson for a message about this one.');
-  await settle();
   assert.deepEqual(corrections(ctx.spy).map((d) => d.argv.slice(1)), [],
     'the queued message started a correction pass against the turn before it.');
   assertCard(r, [
@@ -697,7 +728,6 @@ test('an interrupted turn has no Stop: its lessons are unknown, and a correction
   assert.equal(rows.find((x) => x.kind === 'prompt' && x.prompt_id === TURN(3))?.correction, false,
     'the prompt after an interrupt followed a turn that never answered; there is no reply to correct.');
   const r = await s.stop(TURN(3), 'Listing the migrations folder now.');
-  await settle();
   assert.deepEqual(corrections(ctx.spy).map((d) => d.argv.slice(1)), [],
     'a correction pass was started for a turn the correction did not follow.');
 
@@ -727,7 +757,6 @@ test('/clear is a SessionStart with source "clear", and no correction crosses it
   assert.equal(rows.find((x) => x.kind === 'prompt' && x.prompt_id === TURN(2))?.correction, false,
     'the user cleared the conversation; what they type next is about the new one.');
   const r = await s.stop(TURN(2), USES_NOTHING);
-  await settle();
   assert.deepEqual(corrections(ctx.spy).map((d) => d.argv.slice(1)), [],
     'a correction pass was started across a /clear.');
 
@@ -767,7 +796,6 @@ test('/new starts a new session id, which gets a fresh card', async (t) => {
     `  this turn: used "${R1_TITLE}"`,
   ], 'the new session\'s card counts the new session only.');
 
-  await settle();
   assert.deepEqual(corrections(ctx.spy).map((d) => d.argv.slice(1)), [],
     'a correction pass was started across /new, against a turn in another session.');
   assert.deepEqual(a.rows(), before, 'the new session wrote into the old session\'s log.');
@@ -916,25 +944,49 @@ test('a turn whose lessons were shown only as "(seen earlier)" pointers still ge
     + 'lesson turn, and a reply that follows one still used it.');
 });
 
-test('the Stop after another hook blocked keeps the use the first reply made', async (t) => {
+/**
+ * The rule. Under `nudge` the plugin never blocks a Stop, so a Stop with `stop_hook_active: true`
+ * here is the continuation after some **other** Stop hook blocked (the user's own, say). That
+ * continuation is the model still working on the user's prompt, and Codex's payload holds only
+ * what it said after the block (`Stop.continuation.json`). So the turn's use is the first
+ * reply's measurement merged with the continuation's, per lesson: a use in either reply is a
+ * use of the turn, and a continuation that uses nothing takes nothing away.
+ *
+ * The Stop after the plugin's **own** review is the other case, and `codex-review.test.mjs`
+ * (#24) owns it: there the continuation answers a reason that listed the lessons by title, so
+ * only the first answer is measured. What tells the two apart is the review the turn file
+ * records the plugin asked for — `stop_hook_active` is true in both.
+ */
+test('the Stop after another hook blocked: the turn used whatever either reply used', async (t) => {
   const ctx = await scenario(t, { score: 'full' });
-  const s = ctx.session(1);
-  await s.start();
-  await s.prompt(TURN(1), RUNNER_PROMPT);
-  const first = await s.stop(TURN(1), USES_R1);
+
+  // A continuation that uses nothing.
+  const a = ctx.session(1);
+  await a.start();
+  await a.prompt(TURN(1), RUNNER_PROMPT);
   const card = [
-    head(s.rows(), 1, 1),
+    head(a.rows(), 1, 1),
     '  2 lessons shown',
     '  ├ 1 used      1 waiting on your reply',
     '  └ 1 not used',
     `  this turn: used "${R1_TITLE}"`,
   ];
-  assertCard(first, card, 'the first Stop of the turn prints its card.');
-
-  // Some other Stop hook blocked; the model carried on in the same turn. Codex's next Stop has
-  // stop_hook_active: true and only what was said after the block (Stop.continuation.json).
-  const again = await s.stop(TURN(1), 'Done: nothing else to add.', continuationPayload);
-  assertCard(again, card,
+  assertCard(await a.stop(TURN(1), USES_R1), card, 'the first Stop of the turn prints its card.');
+  assertCard(await a.stop(TURN(1), USES_NOTHING, continuationPayload), card,
     'the continuation holds only what the model said after the block, and it undid the use the '
     + 'first reply made: the card now says the lesson went unused in a turn whose answer used it.');
+
+  // A continuation that uses the other lesson.
+  const b = ctx.session(2);
+  await b.start();
+  await b.prompt(TURN(2), RUNNER_PROMPT);
+  await b.stop(TURN(2), USES_R1);
+  assertCard(await b.stop(TURN(2), USES_R2, continuationPayload), [
+    head(b.rows(), 1, 1),
+    '  2 lessons shown',
+    '  └ 2 used      2 waiting on your reply',
+    `  this turn: used "${R1_TITLE}", "${R2_TITLE}"`,
+  ], 'the continuation after another hook\'s block is work on the user\'s prompt, and it used the '
+    + 'CI-timeout lesson; the card must count that use beside the one the first reply made, not '
+    + 'drop either.');
 });

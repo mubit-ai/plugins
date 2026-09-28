@@ -55,6 +55,23 @@ const ROWS = [
   ['what does the wrong-type error in config mean?', false],
   ['/clear', false],
   ['/mubit-memory:recall wrong outcomes', false],
+  // A prompt whose first word is a skill mention — `$name` or `$plugin:name`, a lowercase
+  // skill name as Codex's `$` picker writes it — is addressed to the skill, like a slash
+  // command, however it is worded. No host is involved: Claude Code has no `$` skills, and a
+  // prompt there that opens this way is rare enough that sharing the rule costs nothing.
+  ['$mubit-memory:recall that\'s wrong — what do we know about the runner hang?', false],
+  ['$recall no, that\'s wrong, the runner still hangs', false],
+  ['$fix-flaky-tests that didn\'t work, try again', false],
+
+  // Any other `$` is just text: the prompt is judged exactly as it would be without it.
+  ['no, the price is $5', true],
+  ['no, use $HOME instead of /tmp', true],
+  ['no, that\'s wrong — use $mubit-memory:recall first', true],
+  // A leading `$` that is not a skill name: an amount (a name starts with a letter), an
+  // upper-case shell variable (skill names are lower-case), a pasted shell prompt (`$ `).
+  ['$5 is not what I asked for', true],
+  ['$HOME is wrong — that\'s not what I meant', true],
+  ['$ npm test still failing', true],
   ['', false],
   ['   ', false],
   ['Can you explain why the drain rolls the batch?', false],
