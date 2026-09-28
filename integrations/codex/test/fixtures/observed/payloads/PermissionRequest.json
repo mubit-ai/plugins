@@ -3,13 +3,15 @@
   "turn_id": "{{TURN_ID}}",
   "transcript_path": "{{TRANSCRIPT_PATH}}",
   "cwd": "{{CWD}}",
-  "hook_event_name": "PostToolUse",
+  "hook_event_name": "PermissionRequest",
   "model": "gpt-6-astra",
   "permission_mode": "bypassPermissions",
-  "tool_name": "Bash",
+  "tool_name": "mcp__mubit__mubit_outcome",
   "tool_input": {
-    "command": "head note.txt"
-  },
-  "tool_response": "hello\n",
-  "tool_use_id": "{{TOOL_USE_ID}}"
+    "reference_id": "global",
+    "outcome": "success",
+    "entry_ids": [
+      "entry-1"
+    ]
+  }
 }

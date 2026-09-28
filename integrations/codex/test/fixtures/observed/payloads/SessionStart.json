@@ -3,7 +3,7 @@
   "transcript_path": "{{TRANSCRIPT_PATH}}",
   "cwd": "{{CWD}}",
   "hook_event_name": "SessionStart",
-  "model": "gpt-5.6-sol",
+  "model": "gpt-6-astra",
   "permission_mode": "bypassPermissions",
   "source": "startup"
 }

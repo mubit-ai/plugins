@@ -139,12 +139,18 @@ export function observedPayload(event) {
   return parsed;
 }
 
-/** Every event with a recording, sorted. */
+/**
+ * Every event with at least one recording, sorted, one name each.
+ *
+ * An event can have several recordings — `<Event>.json` for the plain case and
+ * `<Event>.<variant>.json` for a shape the plain one does not show — so this answers with the
+ * event names, not the file names: `PostToolUse.mcp.json` is a `PostToolUse` recording.
+ */
 export function observedEvents() {
   const dir = join(OBSERVED_DIR, 'payloads');
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith('.json'))
-    .map((f) => f.slice(0, -'.json'.length)).sort();
+  const events = readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.split('.')[0]);
+  return [...new Set(events)].sort();
 }
 
 /** The host's recorded verdicts on outputs a hook returned. */
@@ -163,6 +169,12 @@ export function outputAcceptance() {
  * actually makes. It caught `permission_mode` on the first draft of `preCompact()` and
  * `tool_use_id` on `permissionRequest()`.
  *
+ * An event can have more than one recording: `PostToolUse.json` is a shell call and
+ * `PostToolUse.mcp.json` an MCP one, whose arguments are other keys. A value passes if it
+ * invents nothing against **any** recording of its event; otherwise the errors reported are
+ * those against the recording it comes closest to. A field no recording carries is refused
+ * whichever one it is held to.
+ *
  * Nested objects are walked one level, which is as deep as any Codex payload goes.
  *
  * @param {string} event
@@ -170,20 +182,29 @@ export function outputAcceptance() {
  * @returns {string[]} empty when nothing was invented
  */
 export function observedKeyErrors(event, value) {
-  const seen = observedPayload(event);
-  if (!seen || value === null || typeof value !== 'object') return [];
-  const errs = [];
-  for (const k of Object.keys(value)) {
-    if (!(k in seen)) { errs.push(`$.${k}: the host has never been recorded sending this field`); continue; }
-    const a = value[k];
-    const b = seen[k];
-    if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
-      for (const k2 of Object.keys(a)) {
-        if (!(k2 in b)) errs.push(`$.${k}.${k2}: the host has never been recorded sending this field`);
+  if (value === null || typeof value !== 'object') return [];
+  const dir = join(OBSERVED_DIR, 'payloads');
+  const variants = existsSync(dir)
+    ? readdirSync(dir).filter((f) => f.endsWith('.json') && f.split('.')[0] === event).sort()
+      .map((f) => observedPayload(f.slice(0, -'.json'.length)))
+    : [];
+  let best = null;
+  for (const seen of variants) {
+    const errs = [];
+    for (const k of Object.keys(value)) {
+      if (!(k in seen)) { errs.push(`$.${k}: the host has never been recorded sending this field`); continue; }
+      const a = value[k];
+      const b = seen[k];
+      if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+        for (const k2 of Object.keys(a)) {
+          if (!(k2 in b)) errs.push(`$.${k}.${k2}: the host has never been recorded sending this field`);
+        }
       }
     }
+    if (!errs.length) return [];
+    if (!best || errs.length < best.length) best = errs;
   }
-  return errs;
+  return best ?? [];
 }
 
 /**
@@ -399,16 +420,11 @@ export function userPromptSubmit(over = {}) {
  * repeated `turn_id` is the only way a hook can tell. `codex exec` cannot type mid-turn, so
  * `observed/payloads/UserPromptSubmit.queued.json` was recorded by hand.
  *
- * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
- * as that recording, `userPromptSubmit()`'s `session_id` and `turn_id`, a different `prompt`,
- * and `over` merged last like every other builder.
- *
  * @param {Record<string, any>} [over]
  * @returns {Record<string, any>}
  */
 export function queuedPrompt(over = {}) {
-  throw new Error('not implemented: queuedPrompt() — build it from '
-    + 'test/fixtures/observed/payloads/UserPromptSubmit.queued.json');
+  return userPromptSubmit({ prompt: 'Also append the word SECOND to your reply.', ...over });
 }
 
 /** `PreToolUse`. Codex renames its shell tool to `Bash`, with Claude Code's exact shape. */
@@ -427,18 +443,20 @@ export function preToolUse(over = {}) {
 /**
  * `PermissionRequest` — the one event Claude Code has no counterpart for.
  *
- * It carries `tool_name` and `tool_input` but **no `tool_use_id`**, which is the field that
- * would let a capture correlate it with the `PreToolUse` for the same call. That absence is
- * why the plugin treats this event as read-only: there is nothing here to attribute against
- * that `PreToolUse` does not already carry.
+ * Recorded on codex-cli 0.154.0 as the ask for a call to the plugin's own MCP tool, which is
+ * the call `codex exec` puts to approval. It carries `tool_name` and the call's arguments in
+ * `tool_input`, but **no `tool_use_id`**, which is the field that would let a capture
+ * correlate it with the `PreToolUse` for the same call. That absence is why the plugin treats
+ * this event as read-only: there is nothing here to attribute against that `PreToolUse` does
+ * not already carry.
  */
 export function permissionRequest(over = {}) {
   return {
     ...base(),
     turn_id: TURN_ID,
     hook_event_name: 'PermissionRequest',
-    tool_name: 'mcp__mubit__mubit_recall',
-    tool_input: { query: 'how do we build the plugin' },
+    tool_name: 'mcp__mubit__mubit_outcome',
+    tool_input: { reference_id: 'global', outcome: 'success', entry_ids: ['entry-1'] },
     ...over,
   };
 }
@@ -465,15 +483,25 @@ export function postToolUse(over = {}) {
  * **object** — `{content: [{type: 'text', text}]}` — where a shell call's is a bare string. A
  * call that is declined, or fails approval, produces no `PostToolUse` at all.
  *
- * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
- * as `observed/payloads/PostToolUse.mcp.json`, the same `tool_name`, and `over` merged last.
+ * The arguments and the result are built fresh on every call, so a test that mutates one
+ * cannot reach the next test's payload.
  *
  * @param {Record<string, any>} [over]
  * @returns {Record<string, any>}
  */
 export function mcpPostToolUse(over = {}) {
-  throw new Error('not implemented: mcpPostToolUse() — build it from '
-    + 'test/fixtures/observed/payloads/PostToolUse.mcp.json');
+  return {
+    ...base(),
+    turn_id: TURN_ID,
+    hook_event_name: 'PostToolUse',
+    tool_name: 'mcp__mubit__mubit_outcome',
+    tool_input: { reference_id: 'global', outcome: 'success', entry_ids: ['entry-1'] },
+    tool_response: { content: [{ type: 'text', text: 'Outcome recorded.' }] },
+    // Codex gives an MCP call an `exec-` id like a shell call's, but not the same one: this is
+    // a second call in the turn, and a join on the shell call's id must not find it.
+    tool_use_id: 'exec-7c1e0a52-3d4b-4f6e-9a21-b8d5c0e4f713',
+    ...over,
+  };
 }
 
 /**
@@ -543,17 +571,15 @@ export function stop(over = {}) {
  * the continuation. No `UserPromptSubmit` fires for the reason, and the host puts no cap on how
  * many times a hook may block.
  *
- * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
- * as `observed/payloads/Stop.continuation.json`, `stop()`'s `session_id` and `turn_id`,
- * `stop_hook_active: true`, a `last_assistant_message` other than `stop()`'s, and `over`
- * merged last.
- *
  * @param {Record<string, any>} [over]
  * @returns {Record<string, any>}
  */
 export function stopContinuation(over = {}) {
-  throw new Error('not implemented: stopContinuation() — build it from '
-    + 'test/fixtures/observed/payloads/Stop.continuation.json');
+  return stop({
+    stop_hook_active: true,
+    last_assistant_message: 'Done: the README is one line long.',
+    ...over,
+  });
 }
 
 /**
@@ -564,15 +590,11 @@ export function stopContinuation(over = {}) {
  * `hooks.json` does not register it, which is why it is not in `CODEX_EVENTS`. `codex exec`
  * cannot press Esc, so `observed/payloads/Interrupt.json` was recorded by hand.
  *
- * NOT IMPLEMENTED YET. `codex-payload.test.mjs` is the spec: the same keys and nested shapes
- * as that recording, `userPromptSubmit()`'s `session_id` and `turn_id`, and `over` merged last.
- *
  * @param {Record<string, any>} [over]
  * @returns {Record<string, any>}
  */
 export function interrupt(over = {}) {
-  throw new Error('not implemented: interrupt() — build it from '
-    + 'test/fixtures/observed/payloads/Interrupt.json');
+  return { ...base(), turn_id: TURN_ID, hook_event_name: 'Interrupt', ...over };
 }
 
 /**

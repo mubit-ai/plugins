@@ -5,8 +5,8 @@ rather than as a regression net. Every failure names the file that does not exis
 manifest key that drifted, and says what defines it.
 
 The same house rules as `../../claude-code/test/README.md`: `// @ts-check`, a header comment
-naming the claim each file defends, a `// §` comment above each test, assertion messages that
-state the *consequence*, and absences asserted explicitly (`server.assertNotCalled(...)`,
+naming the claim each file defends, assertion messages that state the *consequence*, and
+absences asserted explicitly (`server.assertNotCalled(...)`,
 `assert.equal(server.requests.length, 0)`) rather than inferred from timing.
 
 ## Running
@@ -29,8 +29,8 @@ no `CLAUDE_*` — because that is what a skill-run command gets. They never impo
 `../claude-code` and are shared, so anything touching them has to be green in both:
 
 ```bash
-cd ../claude-code && npm test    # 1961
-cd ../codex       && npm test    # 436
+cd ../claude-code && npm test    # 2288
+cd ../codex       && npm test    # 468
 ```
 
 ## The load-bearing trick

@@ -6,6 +6,6 @@
   "hook_event_name": "Stop",
   "model": "gpt-6-astra",
   "permission_mode": "bypassPermissions",
-  "stop_hook_active": false,
-  "last_assistant_message": "hello"
+  "stop_hook_active": true,
+  "last_assistant_message": "AGAIN"
 }

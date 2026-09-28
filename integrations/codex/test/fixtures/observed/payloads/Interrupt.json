@@ -3,9 +3,7 @@
   "turn_id": "{{TURN_ID}}",
   "transcript_path": "{{TRANSCRIPT_PATH}}",
   "cwd": "{{CWD}}",
-  "hook_event_name": "Stop",
+  "hook_event_name": "Interrupt",
   "model": "gpt-6-astra",
-  "permission_mode": "bypassPermissions",
-  "stop_hook_active": false,
-  "last_assistant_message": "hello"
+  "permission_mode": "default"
 }
