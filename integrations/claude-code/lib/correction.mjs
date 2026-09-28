@@ -15,6 +15,8 @@ const SCAN_CHARS = 300;
 const LEADING_NO = /^(?:no|nope)(?:\s*[,.!;:—–-]|\s*$)/;
 const POLITE_NO = /^(?:no|nope)[\s,.!]*(?:problem|worries|thanks|thank you|need|rush|biggie)\b/;
 const BARE_NO = /^(?:no|nope)[\s.!]*$/;
+/** A first word that mentions a skill (`$name`, `$plugin:name`) addresses the skill, as `/` does. */
+const SKILL_MENTION = /^\$[a-z][a-z0-9_-]*(?::[a-z][a-z0-9_-]*)?(?:\s|$)/;
 
 /** Phrases that read as a correction wherever they appear in the scanned opening. */
 const PHRASES = [
@@ -39,7 +41,7 @@ export function isCorrection(prompt, opts = {}) {
   try {
     if (typeof prompt !== 'string') return false;
     const trimmed = prompt.trim();
-    if (!trimmed || trimmed.startsWith('/')) return false;
+    if (!trimmed || trimmed.startsWith('/') || SKILL_MENTION.test(trimmed)) return false;
 
     const text = trimmed
       .replace(/```[\s\S]*?(?:```|$)/g, ' ')
