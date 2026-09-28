@@ -28,11 +28,21 @@
  *     no PostToolUse at all for a call that was declined.
  *   - **spec-derived, not recorded**: `isError: true` on the result object. The recorder's
  *     server never failed a call, so Codex was never seen reporting one. This is the MCP spec's
- *     `CallToolResult.isError`.
+ *     `CallToolResult.isError`, and it is what the plugin's bundled MCP server answers every
+ *     failed call with, an argument its schema rejects included.
  *   - **not recorded, by premise**: `agent_id` on a tool call made inside a subagent. No
  *     recorded session spawned one (`observed/README.md`, "What is not covered").
- *   - **defensive, not observed**: the result object serialised as a JSON string, and one
- *     call's PostToolUse delivered twice.
+ *   - **defensive, not observed**: the result object serialised as a JSON string.
+ *
+ * Deliberately not asked for: collapsing one call's PostToolUse delivered twice. No host was
+ * seen doing it, and the only way to get it is two registrations of the capture hook, which
+ * re-running setup does not produce (its merge replaces the plugin's own handlers). Two
+ * registrations would run every hook twice, not only this one: a setup fault for the doctor to
+ * report, and deduplicating two rows here would hide one symptom of it. Two handlers of one
+ * event may also run at once, and a read-the-log-then-append check cannot close that race. A
+ * doubled `explicit` row is already inert (the card and the turn file both key verdicts by
+ * entry).
+ *
  * Every payload is checked against the recording before it is sent. A field the recording does
  * not have must be named at the call site, with the reason, or the check fails (`sendable`).
  *
@@ -61,6 +71,8 @@ const RUN = 'codex-explicit-run';
 /** The builders' own ids, so every payload in a test names the same session and turn. */
 const SESSION = userPromptSubmit().session_id;
 const TURN = userPromptSubmit().turn_id;
+/** The session's next turn, in Codex's turn_id shape. */
+const TURN_2 = '01a0240c-8a15-7ca3-a641-cf8d141498a1';
 const AGENT = subagentStart().agent_id;
 
 const REF_A = '0a0a0a0a-0000-4000-8000-000000000001';
@@ -381,14 +393,20 @@ test('a later failure call for another entry appends its own row', async (t) => 
     'the turn file lost one of the two verdicts, so Stop credits that entry implicitly.');
 });
 
-test('a full reference_id is credited as itself, and "global" never is', async (t) => {
+test('reference_id names the entry, as a full id or a short id, and "global" never does', async (t) => {
   const s = await session(t);
   await outcome(s, { reference_id: REF_B, outcome: 'failure' });
+  // A model judging one entry puts its short id here and nowhere else. The MCP launcher
+  // resolves it there (`codex-handles.test.mjs`), so the credit landed on REF_A.
+  await outcome(s, { reference_id: `[${s.hA}]`, outcome: 'success' });
   await outcome(s, { reference_id: 'global', outcome: 'success', entry_ids: [] });
 
-  assert.deepEqual(explicitRows(s), [{ prompt_id: TURN, ids: [REF_B], outcome: 'failure' }],
-    'a full reference id in reference_id must be the verdict\'s target, and "global" (the run-level '
-    + 'placeholder) must never be: a call naming only "global" judged no entry.');
+  assert.deepEqual(explicitRows(s), [
+    { prompt_id: TURN, ids: [REF_B], outcome: 'failure' },
+    { prompt_id: TURN, ids: [REF_A], outcome: 'success' },
+  ], 'reference_id must be the verdict\'s target, a full id as itself and a short id as the entry it '
+    + 'names, the way the MCP launcher sent it; and "global" (the run-level placeholder) must never '
+    + 'be: a call naming only "global" judged no entry.');
 });
 
 test('an unknown short id is left out, and a call naming only unknown ids records nothing', async (t) => {
@@ -554,47 +572,42 @@ test('a result serialised as a JSON string that says isError records nothing', a
 });
 
 // ===========================================================================
-// One call, one row
+// Every call counts, in the turn it was made
 // ===========================================================================
 
-test('a mubit_outcome delivered twice for one call records one row', async (t) => {
-  // Defensive: one call's PostToolUse delivered twice (the same tool_use_id) was never seen.
-  const s = await session(t);
-  const call = mcpCall(s, OWN_OUTCOME, { reference_id: 'global', outcome: 'failure', entry_ids: [`[${s.hA}]`] });
-  await hook(s, 'capture', call);
-  await hook(s, 'capture', call);
-
-  assert.deepEqual(explicitRows(s), [{ prompt_id: TURN, ids: [REF_A], outcome: 'failure' }],
-    'one call, identified by its tool_use_id, was recorded twice. The log is a record of what the '
-    + 'model did, and it did this once.');
-  assert.deepEqual(turnFile(s).explicit_ids, [REF_A], 'a replay duplicated an id on the turn\'s explicit list.');
-});
-
-test('a mubit_learned delivered twice for one call counts once', async (t) => {
-  // Defensive: one call's PostToolUse delivered twice (the same tool_use_id) was never seen.
-  const s = await session(t);
-  const call = mcpCall(s, OWN_LEARNED, { text: 'Run database migrations before seeding fixtures.' },
-    { tool_response: LEARNED_OK });
-  await hook(s, 'capture', call, { unrecorded: LEARNED_ARGS });
-  await hook(s, 'capture', call, { unrecorded: LEARNED_ARGS });
-
-  assert.equal(learnedRows(s).length, 1,
-    'one lesson write, identified by its tool_use_id, was counted twice.');
-  const card = await finish(s, USES_NEITHER);
-  assert.match(card.split('\n')[0], / · \+1 learned( · |$)/,
-    `the card counts one lesson written as two:\n${card}`);
-});
-
-test('two mubit_learned calls count twice', async (t) => {
+test('two mubit_learned calls in one turn count twice', async (t) => {
   const s = await session(t);
   await learned(s, 'Run vitest with --pool=forks on CI.');
   await learned(s, 'Run database migrations before seeding fixtures.');
 
   assert.equal(learnedRows(s).length, 2,
-    'two lesson writes, each its own call, were counted as one. A replay guard has to key on the '
-    + 'call, not on the turn or the tool.');
+    'two lesson writes, each its own call, were counted as one. Nothing about a second lesson in '
+    + 'the same turn makes it less written.');
   const card = await finish(s, USES_NEITHER);
   assert.match(card.split('\n')[0], / · \+2 learned( · |$)/, `the card lost a lesson written:\n${card}`);
+});
+
+test('a verdict given a turn later, on a lesson the earlier turn showed, is keyed to the turn it was given in', async (t) => {
+  // The model often judges a lesson once the user has answered: "that worked" is the next
+  // prompt, and the credit comes in that turn. The short id was shown a turn earlier, and the
+  // session log is where it still resolves. A prompt this short gets no recall, so the second
+  // turn shows nothing and only the log can resolve the id.
+  const s = await session(t);
+  await finish(s, USES_NEITHER);
+  const next = userPromptSubmit({ cwd: s.projectDir, turn_id: TURN_2, prompt: 'thanks' });
+  const recall = await hook(s, 'prompt-recall', next);
+  await hook(s, 'stage-prompt', next);
+  assert.ok(!String(recall.json?.hookSpecificOutput?.additionalContext ?? '').includes(s.hA),
+    'the second turn showed the lesson again, so this is not the case under test.');
+
+  await outcome(s, { reference_id: 'global', outcome: 'failure', entry_ids: [`[${s.hA}]`] },
+    { over: { turn_id: TURN_2 } });
+
+  assert.deepEqual(explicitRows(s), [{ prompt_id: TURN_2, ids: [REF_A], outcome: 'failure' }],
+    'a verdict on a lesson shown in the previous turn was dropped, misresolved, or filed under the '
+    + 'wrong turn. The model judged it in this turn, which Codex names by its turn_id.');
+  assert.equal(turnFile(s).explicit_ids, undefined,
+    'the verdict was merged onto the earlier turn, whose outcome was already settled at its Stop.');
 });
 
 // ===========================================================================
