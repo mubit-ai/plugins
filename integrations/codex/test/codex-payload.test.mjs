@@ -46,12 +46,14 @@ import { join } from 'node:path';
 import {
   BUILDERS, CODEX_EVENTS, OBSERVED_DIR, observedEvents, observedPayload,
   outputAcceptance, outputCapabilities, outputRuleErrors,
-  assertOutputAccepted,
+  assertOutputAccepted, assertValid, schemaSlug,
   runHook, baseEnv, makeDataDir, makeProjectDir, fakeMubit,
   sessionStart, userPromptSubmit, queuedPrompt, preToolUse, permissionRequest,
   postToolUse, mcpPostToolUse, stop, stopContinuation, sessionEnd, interrupt,
 } from './helpers/codex-fixtures.mjs';
-import { ALL_EVENTS as RECORDER_EVENTS, normalizePayload } from './helpers/codex-record.mjs';
+import {
+  ALL_EVENTS as RECORDER_EVENTS, RECORDED_EVENTS as RECORDER_REACHES, normalizePayload,
+} from './helpers/codex-record.mjs';
 
 /** The host build every recording in `observed/` was made against. */
 const HOST_VERSION = 'codex-cli 0.154.0';
@@ -103,8 +105,31 @@ const PLACEHOLDER = /^\{\{[A-Z_]+\}\}$/;
 /** Anything shaped like a real session, turn or call id. */
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
-/** Anything shaped like a path on the machine a recording was made on. */
-const MACHINE_PATH = /\/(?:Users|home)\/[^/\s]+|\/private\/(?:var|tmp)\//;
+/**
+ * Anything shaped like a path on the machine a recording was made on: a home directory, or a
+ * per-user temporary directory, which on macOS is `/var/folders/…` with or without the
+ * `/private` prefix that `realpath` adds.
+ */
+const MACHINE_PATH = /\/(?:Users|home)\/[^/\s]+|\/root\/|\/private\/(?:var|tmp)\/|\/var\/folders\//;
+
+/**
+ * The top-level fields each plain recording carried on codex-cli 0.149.0, before this
+ * re-record. The hooks read these, so a re-record that loses one is a finding about the host,
+ * not a builder to trim until the suite goes green again.
+ */
+const FIELDS_ON_0_149 = {
+  'SessionStart.json': ['session_id', 'transcript_path', 'cwd', 'hook_event_name', 'model',
+    'permission_mode', 'source'],
+  'UserPromptSubmit.json': ['session_id', 'turn_id', 'transcript_path', 'cwd', 'hook_event_name',
+    'model', 'permission_mode', 'prompt'],
+  'PreToolUse.json': ['session_id', 'turn_id', 'transcript_path', 'cwd', 'hook_event_name',
+    'model', 'permission_mode', 'tool_name', 'tool_input', 'tool_use_id'],
+  'PostToolUse.json': ['session_id', 'turn_id', 'transcript_path', 'cwd', 'hook_event_name',
+    'model', 'permission_mode', 'tool_name', 'tool_input', 'tool_response', 'tool_use_id'],
+  'Stop.json': ['session_id', 'turn_id', 'transcript_path', 'cwd', 'hook_event_name', 'model',
+    'permission_mode', 'stop_hook_active', 'last_assistant_message'],
+  'SessionEnd.json': ['session_id', 'transcript_path', 'cwd', 'hook_event_name', 'reason'],
+};
 
 /** The recording in `observed/payloads/<file>`, or `null` if there is none. */
 function recordingOrNull(file) {
@@ -187,12 +212,22 @@ function observedReadme() {
   return readFileSync(p, 'utf8');
 }
 
-/** A Markdown document cut at its `##` and `###` headings. */
+/**
+ * A Markdown document cut at its `##`…`######` headings. Each section runs to the next heading
+ * of the same or a higher level, so a `##` section includes the `###` subsections under it —
+ * a by-hand section that lists its two files under their own subheadings still names them.
+ */
 function sections(md) {
-  return md.split(/^(?=#{2,3} )/m).filter((s) => /^#{2,3} /.test(s)).map((s) => {
-    const nl = s.indexOf('\n');
-    const heading = (nl === -1 ? s : s.slice(0, nl)).replace(/^#{2,3} /, '');
-    return { heading, body: nl === -1 ? '' : s.slice(nl + 1), text: s };
+  const lines = md.split('\n');
+  const heads = [];
+  lines.forEach((line, i) => {
+    const m = /^(#{2,6}) (.*)$/.exec(line);
+    if (m) heads.push({ i, level: m[1].length, heading: m[2] });
+  });
+  return heads.map((h, n) => {
+    const next = heads.slice(n + 1).find((o) => o.level <= h.level);
+    const body = lines.slice(h.i + 1, next ? next.i : lines.length).join('\n');
+    return { heading: h.heading, body, text: `${lines[h.i]}\n${body}` };
   });
 }
 
@@ -347,6 +382,29 @@ test('the recorder registers itself on Interrupt as well as the eleven', () => {
   }
 });
 
+test('the recorder\'s list of the events it reaches is the events `codex exec` recorded', () => {
+  // RECORDED_EVENTS is where codex-record.mjs says what a scripted session reaches. It is the
+  // list the ticket says changes: PermissionRequest joins it, and Interrupt does not, because
+  // only a hand in the TUI reaches that one.
+  const byExec = [...new Set(RECORDINGS.filter((r) => r.made === 'exec').map((r) => r.event))];
+  assert.deepEqual([...RECORDER_REACHES].sort(), byExec.sort(),
+    'codex-record.mjs RECORDED_EVENTS disagrees with the recordings `codex exec` made. A reader '
+    + 'deciding what `--update` will regenerate reads that list.');
+});
+
+test('the re-recorded plain payloads kept every field the 0.149.0 ones carried', () => {
+  // The builders follow the recordings, so a field that vanished from a re-record would vanish
+  // from its builder too and everything would stay green, while the hooks still read it.
+  for (const [file, fields] of Object.entries(FIELDS_ON_0_149)) {
+    const seen = recordingOrNull(file);
+    if (!seen) continue; // the corpus test names a missing file
+    const lost = fields.filter((k) => !(k in seen));
+    assert.deepEqual(lost, [],
+      `observed/payloads/${file} no longer carries ${lost.join(', ')}. If ${HOST_VERSION} really `
+      + 'stopped sending it, that is a host change for a person to weigh, not a builder to trim.');
+  }
+});
+
 // ===========================================================================
 // Inputs
 // ===========================================================================
@@ -403,6 +461,11 @@ test('PostToolUse: a shell call answers with a string, an MCP call with the resu
   // against the MCP shape and the shell shape has no oracle at all.
   assert.equal(shell.tool_name, 'Bash',
     'PostToolUse.json must be the shell call; the MCP call belongs in PostToolUse.mcp.json.');
+  // The same holds for the plain PreToolUse: in a session that calls an MCP tool first, the
+  // recorder's first PreToolUse is that call, and preToolUse() would follow it off the shell.
+  assert.equal(recording('PreToolUse.json').tool_name, 'Bash',
+    'PreToolUse.json must be the shell call too. preToolUse() is held to it, and every test '
+    + 'that drives pre-tool with a shell command is built on that builder.');
   assert.equal(typeof shell.tool_response, 'string',
     'a shell call\'s tool_response is its output as a bare string.');
 
@@ -448,6 +511,8 @@ test('UserPromptSubmit.queued: a message typed mid-turn is key for key a fresh p
   assert.deepEqual(Object.keys(queued).sort(), Object.keys(fresh).sort(),
     'nothing in the payload marks a prompt as typed mid-turn. The repeated turn_id is the only '
     + 'signal, so a hook that counts turns by UserPromptSubmit has to key on turn_id.');
+  // Once scrubbed, every turn_id reads {{TURN_ID}}, so no recording can show that this one
+  // matched the running turn's; that relationship is pinned on queuedPrompt() below instead.
   assert.equal(queued.turn_id, '{{TURN_ID}}', 'a queued prompt names the running turn.');
   assert.equal(typeof queued.prompt, 'string', 'a queued prompt carries its text.');
 });
@@ -475,6 +540,9 @@ test('PermissionRequest: an MCP call asks, and the ask carries no tool_use_id', 
     'PermissionRequest was recorded with a tool_use_id. Its absence is why the plugin treats '
     + 'the event as read-only; if it is there now, capture --permission can attribute it.');
   assert.equal(seen.turn_id, '{{TURN_ID}}', 'a PermissionRequest names its turn.');
+  assert.equal(kind(seen.tool_input), 'object',
+    'a PermissionRequest carries the arguments of the call it asks about; capture --permission '
+    + 'records them, because a denied call leaves no other trace.');
 });
 
 // ---------------------------------------------------------------------------
@@ -568,6 +636,20 @@ test('interrupt(): the running turn, and nothing a Stop would carry', () => {
     'Esc interrupts the running turn, and Interrupt carries that turn\'s turn_id.');
   assert.ok(!('last_assistant_message' in p), 'an interrupted turn has no final reply.');
   assert.ok(!('stop_hook_active' in p), 'Interrupt is not a Stop.');
+});
+
+test('assertValid takes every recorded variant of an event, and still refuses an invented field', () => {
+  // assertValid is how the rest of the suite asks "does the host send this?". The tickets that
+  // follow build MCP calls and continuation Stops and check them with it, so it has to know an
+  // event can have more than one recording: held only to PostToolUse.json, an MCP call's
+  // arguments read as fields the host never sent.
+  for (const { event, build } of RECORDINGS.filter((r) => CODEX_EVENTS.includes(r.event))) {
+    const title = `${schemaSlug(event)}.command.input`;
+    assert.doesNotThrow(() => assertValid(build(), title, `${build.name}()`),
+      `assertValid refuses ${build.name}(), which reproduces a recording of ${event}.`);
+    assert.throws(() => assertValid(build({ never_sent_by_the_host: true }), title, build.name),
+      `assertValid took ${build.name}() with a field no recording of ${event} carries.`);
+  }
 });
 
 test('the new builders take overrides the way every other builder does', () => {
