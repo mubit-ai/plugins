@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * The session scorecard, end to end, on Codex payloads (#22).
+ * The session scorecard, end to end, on Codex payloads.
  *
  * The claim: the card printed under a Codex reply is the card Claude Code prints for the same
  * session, and it stays right where Codex differs:
@@ -22,10 +22,10 @@
  * output contract (`test/fixtures/codex-output-rules.json`, and the keys a recorded session
  * saw the host take on Stop).
  *
- * `MUBIT_CC_SESSION_SCORE` is set in every case: on Codex it defaults off (#25 turns it on), so
- * a case that left it out would be testing the default rather than the card.
- * `MUBIT_CC_OUTCOME_REVIEW` is `nudge`, Codex's default, so the once-per-turn review (#24) never
- * blocks a Stop here.
+ * `MUBIT_CC_SESSION_SCORE` is set in every case: on Codex it defaults off, and that default is
+ * due to change, so a case that left it out would be testing the default rather than the card.
+ * `MUBIT_CC_OUTCOME_REVIEW` is `nudge`, Codex's default, so the once-per-turn review
+ * (`codex-review.test.mjs`) never blocks a Stop here.
  */
 
 import test from 'node:test';
@@ -286,8 +286,8 @@ function codexSession(ctx, sessionId) {
         ...(c.transcript ? { transcript_path: c.transcript } : {}),
         ...(c.agent ?? {}),
       });
-      // A subagent's tool call has no recording to hold it to; the issue names `agent_id` as
-      // what marks one.
+      // A subagent's tool call has no recording to hold it to; `agent_id` is what marks one, as
+      // on Claude Code.
       if (!c.agent) assertValid(payload, 'post-tool-use.command.input', 'the PostToolUse payload');
       const r = await run('capture', payload);
       assertHookContract(r);
@@ -953,7 +953,7 @@ test('a turn whose lessons were shown only as "(seen earlier)" pointers still ge
  * use of the turn, and a continuation that uses nothing takes nothing away.
  *
  * The Stop after the plugin's **own** review is the other case, and `codex-review.test.mjs`
- * (#24) owns it: there the continuation answers a reason that listed the lessons by title, so
+ * owns it: there the continuation answers a reason that listed the lessons by title, so
  * only the first answer is measured. What tells the two apart is the review the turn file
  * records the plugin asked for — `stop_hook_active` is true in both.
  */

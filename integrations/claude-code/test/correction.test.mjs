@@ -62,6 +62,13 @@ const ROWS = [
   ['$mubit-memory:recall that\'s wrong — what do we know about the runner hang?', false],
   ['$recall no, that\'s wrong, the runner still hangs', false],
   ['$fix-flaky-tests that didn\'t work, try again', false],
+  // Punctuation ends the name as a space does: the picker writes `$review`, and the user types
+  // on straight after it. Read as ordinary text, each of these fails a lesson that helped.
+  ['$review, no that\'s wrong', false],
+  ['$review: that\'s wrong', false],
+  ['$review.', false],
+  ['$review. that\'s wrong, look again', false],
+  ['$mubit-memory:recall, no, that\'s wrong', false],
 
   // Any other `$` is just text: the prompt is judged exactly as it would be without it.
   ['no, the price is $5', true],
@@ -72,6 +79,11 @@ const ROWS = [
   ['$5 is not what I asked for', true],
   ['$HOME is wrong — that\'s not what I meant', true],
   ['$ npm test still failing', true],
+  // Still judged as usual once punctuation may end a name: a capital is not a skill name, and
+  // an upper-case variable followed by a word or a colon is text.
+  ['$Review no that\'s wrong', true],
+  ['$HOME is wrong', false], // no correction phrase, with or without the `$`
+  ['$HOME: that\'s wrong', true],
   ['', false],
   ['   ', false],
   ['Can you explain why the drain rolls the batch?', false],
@@ -94,7 +106,9 @@ const ROWS = [
 for (const [prompt, expected, asked = false] of ROWS) {
   test(`isCorrection(${JSON.stringify(prompt)}${asked ? ', after a question' : ''}) → ${expected}`, async () => {
     const C = await lib('correction.mjs');
-    assert.equal(C.isCorrection(prompt, { lastReplyEndedWithQuestion: asked }), expected);
+    assert.equal(C.isCorrection(prompt, { lastReplyEndedWithQuestion: asked }), expected, expected
+      ? 'a correction was missed, so the lesson the user just rejected keeps its standing'
+      : 'read as a correction, so a lesson that helped is failed and posted −0.3');
   });
 }
 
