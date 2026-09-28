@@ -206,8 +206,10 @@ const targets = [
   // there is no command hook and nothing scriptable to render into, so `bin/statusline.mjs`
   // here would be dead weight in every marketplace bundle. `lib/config.mjs` defaults
   // `statusLine` to false under this host for the same reason.
+  // The MCP launcher, built from `mcp/src/launch.mjs`: the shim, then the shared launcher, so
+  // the server knows it runs under Codex without anything in its environment saying so.
   {
-    entryPoints: [resolve(SHARED, 'mcp', 'src', 'launch.mjs')],
+    entryPoints: [resolve(ROOT, 'mcp', 'src', 'launch.mjs')],
     outfile: out('mcp/dist/index.js'),
     ...shared,
     external: ['./server.js'],

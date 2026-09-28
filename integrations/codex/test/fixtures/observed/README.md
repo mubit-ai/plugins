@@ -93,6 +93,28 @@ On 0.154.0 `codex exec` runs the SessionEnd hook — its payload is recorded —
 verdict line for it, so there is no SessionEnd verdict here. On 0.149.0 there was one, and it
 was an accept.
 
+## `mcp-tool-approval.json`
+
+The `config.toml` form that auto-approves one tool of one MCP server, and nothing else of it:
+
+```toml
+[mcp_servers.mubit.tools.mubit_outcome]
+approval_mode = "approve"
+```
+
+Observed on `codex-cli 0.154.0` in two `codex exec` sessions against a throwaway `CODEX_HOME`,
+with recorder hooks on `PreToolUse`, `PermissionRequest` and `PostToolUse` and a two-tool stdio
+server named `mubit`. With the table above, `mubit_outcome` ran with no `PermissionRequest` and
+`mubit_recall` still raised one; without it, both raised one. `scripts/setup.mjs` writes this
+form for `mubit_outcome` and `mubit_learned` only, and `codex-setup.test.mjs` holds the fixture
+to the `codex` on PATH: the recorded tables load, and the same table with a value the host does
+not know fails to load, naming the key.
+
+Two more things the same host does with these tables, both of which setup has to work around:
+`codex mcp remove mubit` deletes every `[mcp_servers.mubit.tools.*]` table along with the
+registration, and a tools table with no `[mcp_servers.mubit]` beside it fails the whole config
+load (`invalid transport`), so Codex does not start.
+
 ## What is not covered
 
 Four of the eleven events the plugin registers do not fire in any session the recorder

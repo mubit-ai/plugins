@@ -29,16 +29,20 @@
  *   - the blocks that say no memory will be injected (unconfigured, unauthenticated, offline)
  *     do not explain ids that will never appear;
  *   - skill references keep the Codex spelling, `mubit-memory:<name>`, with no leading slash;
+ *   - so do the unconfigured, unauthenticated and offline blocks and the `systemMessage` each
+ *     carries, which are where a user who has to act is told what to run, and the two that
+ *     name `mubit-memory:auth` still name it;
  *   - the Claude Code session-start output is byte-identical to what it was before this
- *     sentence existed, because that host already gets it from the MCP instructions.
+ *     sentence existed, because that host already gets it from the MCP instructions, and the
+ *     same holds for its three no-memory blocks, which keep the slash form.
  *
- * The wording is the implementer's. These tests pin the facts the sentence has to carry (a
- * bracketed id, `entry_ids`, `mubit_outcome`), not its prose.
+ * These tests pin the facts the sentence has to carry (a bracketed id, `entry_ids`,
+ * `mubit_outcome`), not its prose, so the wording can change without a test changing.
  *
  * `MUBIT_CC_OUTCOME_REVIEW` is set explicitly in every case but one, because the Codex default
- * for it is due to move from `nudge` to `stop`, and a test that leant on the default would
- * change meaning when it does. The one case that leaves it unset asserts only what holds under
- * either default: both of them carry the sentence.
+ * for it has moved once already, from `nudge` to `stop`, which it is now, and a test that leant
+ * on the default would change meaning if it moved again. The one case that leaves it unset
+ * asserts only what holds under either value: both of them carry the sentence.
  */
 
 import test from 'node:test';
@@ -293,8 +297,8 @@ for (const review of /** @type {const} */ (['nudge', 'stop'])) {
 // ===========================================================================
 
 // Through `loadConfig`, like every other reader of it. A value it does not recognise, or no
-// value at all, falls back to the host default. On Codex that is `nudge` today and `stop`
-// once the defaults move, and both carry the sentence, so these cases hold across that change.
+// value at all, falls back to the host default. On Codex that is `stop`, which replaced
+// `nudge`, and both carry the sentence, so these cases hold whichever of the two it is.
 for (const [label, review] of /** @type {const} */ ([['unset', null], ['unrecognised', 'sometimes']])) {
   test(`outcomeReview ${label}: the host default applies, and it carries the sentence`, async () => {
     const { ctx } = await start({ review });
@@ -459,6 +463,127 @@ for (const review of /** @type {const} */ (['nudge', 'stop'])) {
     assert.match(ctx, /(^|[^/])mubit-memory:recall\b/,
       'the block no longer names mubit-memory:recall, which is how a Codex session learns the '
       + `explicit form exists before its first turn. Block was:\n${ctx}`);
+  });
+}
+
+// ===========================================================================
+// Skill spelling in the blocks that inject nothing
+// ===========================================================================
+
+/**
+ * The three sessions that start with no memory, each as `start()` needs it. The grace window
+ * is off so the offline block carries its `systemMessage`: inside the window the user is told
+ * nothing, and a check on the message would pass on its absence.
+ */
+const NO_MEMORY = /** @type {const} */ ({
+  unconfigured: { endpoint: '' },
+  unauthenticated: {
+    routes: {
+      'POST /v2/control/agents/register': { status: 401, json: { error: 'invalid api key' } },
+      'POST /v2/control/activity': { status: 401, json: { error: 'invalid api key' } },
+    },
+  },
+  offline: { routes: { 'GET /v2/core/health': { status: 503, text: 'unavailable' } } },
+});
+
+/** A skill named the Codex way: `mubit-memory:<name>`, not preceded by a slash. */
+const codexSkill = (name) => new RegExp(`(^|[^/])mubit-memory:${name}\\b`);
+
+// These three blocks are where a user who has to act is told what to run, and Codex has no
+// slash form: `/mubit-memory:auth` typed into Codex is not a command. The session-start block
+// already spells skills the Codex way; these three, and the `systemMessage` beside them, have
+// to as well.
+for (const [label, setup] of Object.entries(NO_MEMORY)) {
+  test(`Codex, ${label}: the block and its systemMessage name skills without a slash`, async () => {
+    const { r, ctx } = await start({ review: 'stop', ...setup, env: { MUBIT_CC_COLDSTART_GRACE_MS: '0' } });
+    const message = String(r.json?.systemMessage ?? '');
+    assert.ok(ctx.trim() && message,
+      `${label}: session-start did not emit both a block and a systemMessage, so the absence of a `
+      + `slash below would prove nothing. Got:\n${r.stdout}`);
+    assert.doesNotMatch(ctx, /\/mubit-memory:/,
+      `${label}: the block tells a Codex model to run a slash command Codex does not have. `
+      + `Codex names the skill \`mubit-memory:<name>\`. Block was:\n${ctx}`);
+    assert.doesNotMatch(message, /\/mubit-memory:/,
+      `${label}: the systemMessage tells a Codex user to run a slash command Codex does not `
+      + `have. Codex names the skill \`mubit-memory:<name>\`. Message was:\n${message}`);
+  });
+}
+
+// Where the block names the skill that fixes it, the Codex spelling has to still name it: the
+// check above also passes on a block that simply stopped saying what to run.
+for (const label of /** @type {const} */ (['unconfigured', 'unauthenticated'])) {
+  test(`Codex, ${label}: the block still names mubit-memory:auth`, async () => {
+    const { ctx } = await start({ review: 'stop', ...NO_MEMORY[label] });
+    assert.match(ctx, codexSkill('auth'),
+      `${label}: the block no longer names mubit-memory:auth, which is the one thing the user `
+      + `can do about it. Block was:\n${ctx}`);
+  });
+}
+
+test('Codex, unconfigured: the systemMessage still names mubit-memory:auth', async () => {
+  const { r } = await start({ review: 'stop', ...NO_MEMORY.unconfigured });
+  const message = String(r.json?.systemMessage ?? '');
+  assert.match(message, codexSkill('auth'),
+    'the systemMessage of an unconfigured Codex session no longer says which skill to run, and it '
+    + `is the only line of this the user sees. Message was:\n${message}`);
+});
+
+/**
+ * What the Claude Code session-start hook prints in the same three cases, byte for byte, with
+ * the fake server's address as `<URL>`. The slash form is right there, and only the Codex
+ * branch may change.
+ */
+const CLAUDE_CODE_NO_MEMORY = {
+  unconfigured: `${JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: '# Mubit memory is not configured\n'
+        + '\n'
+        + `Run: ${RUN_ID} (hosted)\n`
+        + 'No Mubit endpoint is set on this machine, so no memory will be injected this session and '
+        + 'recall is unavailable — do not search for it, and do not assume anything was recalled.\n'
+        + 'Work is still captured and buffered locally. Run /mubit-memory:auth to sign in and set an '
+        + 'endpoint; what has been buffered is sent once one is configured.\n',
+    },
+    systemMessage: 'mubit: not configured · run /mubit-memory:auth',
+  })}\n`,
+  unauthenticated: `${JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: '# Mubit memory is not authenticated\n'
+        + '\n'
+        + `Run: ${RUN_ID} (hosted)\n`
+        + 'Mubit rejected this machine\'s API key, so no memory will be injected this session and '
+        + 'recall is unavailable — do not search for it, and do not assume anything was recalled.\n'
+        + 'Work is still captured and buffered locally. Run /mubit-memory:auth to sign in again; '
+        + 'what has been buffered is sent once the key is accepted.\n',
+    },
+    systemMessage: 'mubit: auth failed · capture buffered',
+  })}\n`,
+  offline: `${JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: '# Mubit memory is offline\n'
+        + '\n'
+        + `Run: ${RUN_ID} (hosted)\n`
+        + 'Mubit at <URL> is unreachable (server_error), so no memory will be injected this '
+        + 'session and recall is unavailable — do not search for it, and do not assume anything '
+        + 'was recalled.\n'
+        + 'Work is still captured and buffered locally; it is sent when Mubit answers again.\n',
+    },
+    systemMessage: 'mubit: offline (server_error) · capture buffered',
+  })}\n`,
+};
+
+for (const [label, setup] of Object.entries(NO_MEMORY)) {
+  test(`Claude Code, ${label}: session-start output is byte-identical to before`, async () => {
+    const { r } = await start({
+      host: 'claude-code', review: 'stop', ...setup, env: { MUBIT_CC_COLDSTART_GRACE_MS: '0' },
+    });
+    assert.equal(r.stdout.replace(/http:\/\/127\.0\.0\.1:\d+/g, '<URL>'), CLAUDE_CODE_NO_MEMORY[label],
+      `the Claude Code ${label} output changed. Claude Code takes \`/mubit-memory:<name>\` as a `
+      + 'slash command and must keep printing exactly what it printed; only the Codex branch '
+      + 'drops the slash.');
   });
 }
 

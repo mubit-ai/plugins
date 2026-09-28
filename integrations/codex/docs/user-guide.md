@@ -75,6 +75,10 @@ merged 11 handler(s) across 10 events into ~/.codex/hooks.json
   (PreToolUse omitted: the warnings it exists for are off by default)
 Added global MCP server 'mubit'.
 
+no tools approved (--no-trust).
+To stop Codex asking before mubit_outcome and mubit_learned, set approval_mode = "approve"
+under [mcp_servers.mubit.tools.<tool>] in config.toml.
+
 skipping trust (--no-trust). Run /hooks in the Codex TUI and approve the Mubit entries,
 or Codex will silently skip every one of them.
 ```
@@ -97,7 +101,10 @@ What it did, in order:
 
 3. **Registered the MCP server** as `mubit` — the name matters, because every skill names its
    tools `mcp__mubit__…` — with the same pin in its environment. `codex mcp list` shows it.
-4. **Offered to record hook trust**, and asked first. Without `--no-trust` it shows you every
+4. **Approved two tools**, `mubit_outcome` and `mubit_learned`, with `approval_mode = "approve"`
+   in `~/.codex/config.toml`, so the outcome review does not raise an approval prompt. Skipped
+   under `--no-trust`; see [the scorecard and the outcome review](#the-scorecard-and-the-outcome-review).
+5. **Offered to record hook trust**, and asked first. Without `--no-trust` it shows you every
    command it is about to trust and waits for a yes. If you would rather do it yourself, run
    `/hooks` in the Codex TUI and approve the Mubit entries; the result is identical.
 
@@ -417,18 +424,50 @@ command. It only ever warns — it never allows, denies or rewrites, on any path
 whether the feature is on or not, which is why `setup` leaves the registration out unless you
 pass `--with-pre-tool`.
 
-### Crediting memory, and the scorecard — mostly off here
+### The scorecard and the outcome review
 
-Every injected memory line now starts with a short id such as `[m7k2q]`, which `mubit_outcome`
-accepts and the plugin maps back to the entry's reference id. `MUBIT_CC_OUTCOME_REVIEW`,
-default `nudge` under Codex, adds one sentence to the memory block asking the model to credit
-what helped or misled it before finishing; `off` drops it. `stop` also has the Stop hook ask
-for a short review once per turn — the default in Claude Code, but a Stop continuation has not
-been verified under Codex.
+Every injected memory line starts with a short id such as `[m7k2q]`, which `mubit_outcome`
+accepts and the plugin maps back to the entry's reference id.
 
-`MUBIT_CC_SESSION_SCORE`, default `off` under Codex, prints the memory scorecard under each
-reply that showed a lesson (`full` or `compact`). The
-[Claude Code guide](../../claude-code/docs/user-guide.md#the-session-scorecard) explains both.
+**The outcome review.** `MUBIT_CC_OUTCOME_REVIEW`, default `stop`. When a turn showed lessons
+that were new to the model or that its reply appeared to use, the Stop hook asks it once to
+review them: credit the ones that helped and flag the ones
+that misled it with `mubit_outcome`, save a corrected lesson with `mubit_learned` when one was
+wrong, and end with a one-line `Memory review:` summary. The TUI shows this step as
+**Blocked by hook** followed by the review request, and the model's review comes next in the
+same turn. Nothing failed: that line is the review running. `nudge` keeps only one sentence in
+the memory block asking for the same credit; `off` does neither.
+
+**The scorecard.** `MUBIT_CC_SESSION_SCORE`, default `full`. After a reply that showed a lesson,
+a short card appears under it: the lessons shown this session, how many replies used them, and
+whether those turns worked, failed or are waiting on your reply. `compact` is one line and `off`
+hides it. The card shows in the TUI; `codex exec` does not print it. It is built from a local
+log and costs no network call; the
+[Claude Code guide](../../claude-code/docs/user-guide.md#the-session-scorecard) explains each
+line.
+
+**The two approved tools.** Codex asks you to approve every MCP tool call by default, so the
+review would raise a prompt each time it ran. `setup` approves the two tools it calls, and only
+those two, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.mubit.tools.mubit_outcome]
+approval_mode = "approve"
+
+[mcp_servers.mubit.tools.mubit_learned]
+approval_mode = "approve"
+```
+
+`mubit_recall` and every other Mubit tool still ask. An `approval_mode` you set yourself on
+either tool, for example `"prompt"` to be asked again, is kept when setup runs again.
+`setup --no-trust` approves nothing and leaves the approvals you already have as they are.
+
+To turn either off:
+
+```bash
+MUBIT_CC_SESSION_SCORE=off codex     # no card under the reply
+MUBIT_CC_OUTCOME_REVIEW=off codex    # no review and no one-line ask
+```
 
 ### Quieting it temporarily
 
@@ -542,7 +581,7 @@ Nothing is deleted from your Mubit instance by uninstalling. Use `mubit-memory:f
 
 ## What was verified for this guide, and what was not
 
-Verified on this machine, with Codex CLI 0.153.4 installed: `scripts/setup.mjs` run against a
+Verified on this machine, with Codex CLI 0.154.0 installed: `scripts/setup.mjs` run against a
 throwaway `CODEX_HOME` with `--no-trust` — the transcript in Part 1 is that run, and the
 `hooks.json` and `config.toml` it wrote were read back; the seven command-line bundles spawned
 by the plugin's own test suite against a loopback instance, with no plugin environment, which

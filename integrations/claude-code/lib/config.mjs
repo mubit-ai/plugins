@@ -478,13 +478,12 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   const sessionEndDetach = bool(pick('sessionEndDetach', 'MUBIT_CC_SESSION_END_DETACH'), true);
   const outcomeMode = enumOf(pick('outcomeMode', 'MUBIT_CC_OUTCOME_MODE'),
     ['off', 'implicit', 'explicit'], 'implicit');
-  // The per-turn scorecard under Claude's reply. Off on Codex, where the card is untested.
+  // The per-turn scorecard under the reply. The same default on both hosts.
   const sessionScore = enumOf(pick('sessionScore', 'MUBIT_CC_SESSION_SCORE'),
-    ['off', 'compact', 'full'], host(e) === 'codex' ? 'off' : 'full');
-  // How hard Claude is asked to credit lessons by id. `stop` needs a Stop-hook continuation,
-  // which has never been observed on Codex, so that host defaults to the nudge alone.
+    ['off', 'compact', 'full'], 'full');
+  // How hard the model is asked to credit lessons by id. The same default on both hosts.
   const outcomeReview = enumOf(pick('outcomeReview', 'MUBIT_CC_OUTCOME_REVIEW'),
-    ['off', 'nudge', 'stop'], host(e) === 'codex' ? 'nudge' : 'stop');
+    ['off', 'nudge', 'stop'], 'stop');
   // A setting whose *default* depends on the host; this function is the only place in `lib/`
   // that knows there is more than one.
   //

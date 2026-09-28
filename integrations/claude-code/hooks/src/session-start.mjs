@@ -171,7 +171,7 @@ await runHook('session-start', {
           hookEventName: 'SessionStart',
           additionalContext: unconfiguredBlock(cfg, runId),
         },
-        systemMessage: statusLineHint || `mubit: not configured${DOT}run /mubit-memory:auth`,
+        systemMessage: statusLineHint || `mubit: not configured${DOT}run ${skillOf(cfg)('auth')}`,
       };
     }
 
@@ -499,6 +499,18 @@ function spawnResume(cfg, payload, runId, agentId, src) {
 // ---------------------------------------------------------------------------
 
 /**
+ * How a skill is invoked on this host. Claude Code takes `/mubit-memory:recall` as a slash
+ * command; Codex lists the same skill as `mubit-memory:recall` and has no slash form, and the
+ * session-start block is the only Mubit context a Codex session gets before its first turn.
+ *
+ * @param {Record<string, any>} cfg
+ * @returns {(name: string) => string}
+ */
+function skillOf(cfg) {
+  return (name) => (cfg.host === 'codex' ? `mubit-memory:${name}` : `/mubit-memory:${name}`);
+}
+
+/**
  * The stdout block. Two loads are carried here and nothing else: which run this session writes
  * to, and the instruction not to go looking for memory that arrives on its own.
  *
@@ -514,13 +526,7 @@ function spawnResume(cfg, payload, runId, agentId, src) {
  * @returns {string}
  */
 function steerBlock(cfg, runId, lessons, anchor = '', partial = false) {
-  // How a skill is invoked, which is the one line of this block that is not host-neutral.
-  // Claude Code takes `/mubit-memory:recall` as a slash command; Codex lists the same skill as
-  // `mubit-memory:recall` and has no slash form. Telling a Codex model to type a slash command
-  // it does not have is a small lie in the one place it is most likely to be acted on — this
-  // block is the only Mubit context a Codex session gets before its first turn, because the
-  // MCP server's `instructions` frame does not appear to reach the model there at all.
-  const skill = (name) => (cfg.host === 'codex' ? `mubit-memory:${name}` : `/mubit-memory:${name}`);
+  const skill = skillOf(cfg);
 
   const lines = [
     '# Mubit memory is active',
@@ -589,7 +595,7 @@ function unconfiguredBlock(cfg, runId) {
     `Run: ${runId} (${cfg.mode})`,
     'No Mubit endpoint is set on this machine, so no memory will be injected this session and '
       + 'recall is unavailable — do not search for it, and do not assume anything was recalled.',
-    'Work is still captured and buffered locally. Run /mubit-memory:auth to sign in and set an '
+    `Work is still captured and buffered locally. Run ${skillOf(cfg)('auth')} to sign in and set an `
       + 'endpoint; what has been buffered is sent once one is configured.',
     '',
   ].join('\n');
@@ -612,7 +618,7 @@ function unauthenticatedBlock(cfg, runId) {
     `Run: ${runId} (${cfg.mode})`,
     'Mubit rejected this machine\'s API key, so no memory will be injected this session and '
       + 'recall is unavailable — do not search for it, and do not assume anything was recalled.',
-    'Work is still captured and buffered locally. Run /mubit-memory:auth to sign in again; '
+    `Work is still captured and buffered locally. Run ${skillOf(cfg)('auth')} to sign in again; `
       + 'what has been buffered is sent once the key is accepted.',
     '',
   ].join('\n');

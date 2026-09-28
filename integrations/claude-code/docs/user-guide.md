@@ -343,15 +343,15 @@ is asked to do it:
 
 | Value | What happens |
 | --- | --- |
-| `stop` (default in Claude Code) | Everything `nudge` does, plus: when a turn showed lessons that were new to Claude or that its reply appeared to use, the Stop hook asks Claude once to review them. Claude credits the ones that helped (`success`), flags the ones that misled it (`failure`), saves a corrected lesson with `mubit_learned` when one was wrong, and ends with a one-line `Memory review:` summary. |
-| `nudge` (default in Codex) | One sentence in the memory block asks Claude to credit what helped or misled it before finishing. In Claude Code, `mubit_outcome` and `mubit_learned` are also kept loaded rather than deferred behind tool search, so reporting costs one call instead of two. |
+| `stop` (default) | Everything `nudge` does, plus: when a turn showed lessons that were new to Claude or that its reply appeared to use, the Stop hook asks Claude once to review them. Claude credits the ones that helped (`success`), flags the ones that misled it (`failure`), saves a corrected lesson with `mubit_learned` when one was wrong, and ends with a one-line `Memory review:` summary. |
+| `nudge` | One sentence in the memory block asks Claude to credit what helped or misled it before finishing. In Claude Code, `mubit_outcome` and `mubit_learned` are also kept loaded rather than deferred behind tool search, so reporting costs one call instead of two. |
 | `off` | No sentence, no review, and the two tools are deferred like the rest. The ids stay on the lines. |
 
 The review costs one extra short model step on the turns that trigger it. Claude Code labels any
 continuation a Stop hook asks for as **"Stop hook error occurred"**, even though nothing failed
 — that label is the review running. Set `outcomeReview` to `nudge` if you would rather not see
-it. With `outcomeMode: off` there is no review at all. Codex defaults to `nudge` because a Stop
-continuation has not been verified there.
+it. With `outcomeMode: off` there is no review at all. Codex shows the same step as
+**Blocked by hook**.
 
 A message you send while the review is running is answered in the same continuation; that
 answer is stored and measured like any other. If the review itself hits an API error, the
@@ -754,11 +754,11 @@ hook, do not carry the assumption forward.
 
 ### The scorecard and the outcome review
 
-`sessionScore`, default **`full`** (`off` in Codex): `full` prints the card described in
+`sessionScore`, default **`full`**: `full` prints the card described in
 [The session scorecard](#the-session-scorecard) under every reply that showed a lesson,
 `compact` prints a one-line summary instead, `off` prints nothing.
 
-`outcomeReview`, default **`stop`** (`nudge` in Codex): how hard Claude is asked to credit the
+`outcomeReview`, default **`stop`**: how hard Claude is asked to credit the
 memory it used. See [Crediting memory by id](#crediting-memory-by-id-the-outcome-review) for
 what each value does and what the review costs.
 

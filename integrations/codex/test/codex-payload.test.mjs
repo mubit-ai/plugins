@@ -53,7 +53,7 @@ import {
 } from './helpers/codex-fixtures.mjs';
 import {
   ALL_EVENTS as RECORDER_EVENTS, RECORDED_EVENTS as RECORDER_REACHES, normalizePayload,
-  recordingName,
+  PROBES, probeOf, recordingName,
 } from './helpers/codex-record.mjs';
 
 /** The host build every recording in `observed/` was made against. */
@@ -1050,5 +1050,45 @@ test('the host takes decision:block with a reason from Stop', () => {
       + 'an output the rule table already refuses.');
     assert.deepEqual(probe.verdict, { Stop: 'accepted' },
       'the block probe must carry a verdict for Stop and for nothing else, and the host took it.');
+  }
+});
+
+// The session scorecard is sent as `{systemMessage, suppressOutput: true}` on Stop — the
+// message for the user, and the flag that keeps the hook's own line out of the transcript.
+// The two probes above each record one half on its own, and a verdict on each half is not a
+// verdict on the pair: the host reads the output as one object. With the card on by default
+// under Codex, the pair itself has to have been seen taken.
+test('the recorder can probe the card`s pair: systemMessage and suppressOutput on the first Stop', () => {
+  assert.ok(Object.hasOwn(PROBES, 'card'),
+    'codex-record.mjs has no `card` probe, so `--update --probe card` would answer every event '
+    + 'with `{"card": true}` instead of recording the host on the pair the scorecard is sent as. '
+    + 'Add `card` to PROBES: the first Stop only, answered with a multi-line `systemMessage` and '
+    + '`suppressOutput: true`.');
+  const probe = probeOf('card');
+  assert.equal(probe.event, 'Stop',
+    'the card probe must answer the first Stop only, so its one verdict is the verdict on the card.');
+  assert.deepEqual(Object.keys(probe.output).sort(), ['suppressOutput', 'systemMessage'],
+    'the card probe must answer with exactly the two keys the card is sent as. Any third key '
+    + 'makes the verdict about a different output.');
+  assert.equal(probe.output.suppressOutput, true, 'the card is sent with suppressOutput: true.');
+  assert.ok(typeof probe.output.systemMessage === 'string' && probe.output.systemMessage.includes('\n'),
+    'the card probe`s systemMessage must be a multi-line string: a card is several lines, and a '
+    + 'verdict on one line says nothing about it.');
+});
+
+test('the host takes systemMessage and suppressOutput together from Stop', () => {
+  const found = probesWithKeys(['suppressOutput', 'systemMessage']);
+  assert.ok(found.length > 0,
+    'output-acceptance.json has no probe answering Stop with exactly `{systemMessage, '
+    + 'suppressOutput}`, the pair the scorecard is sent as. Nothing recorded says Codex takes it '
+    + 'rather than marking the Stop hook failed on every turn that showed a lesson. Record it: '
+    + '`node test/helpers/codex-record.mjs --update --probe card`.');
+  for (const probe of found) {
+    assert.deepEqual(probe.output, probeOf('card').output,
+      'the recorded pair is not the one the recorder sends, so it was not produced by '
+      + '`--probe card` and nothing says the host was actually asked.');
+    assert.deepEqual(probe.verdict, { Stop: 'accepted' },
+      'the card`s pair must carry a verdict for Stop and for nothing else, and the host must '
+      + 'have taken it.');
   }
 });

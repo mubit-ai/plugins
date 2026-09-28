@@ -49,11 +49,12 @@
  *     node test/helpers/codex-record.mjs --update
  *     node test/helpers/codex-record.mjs --update --probe block-once
  *     node test/helpers/codex-record.mjs --update --probe systemMessage
+ *     node test/helpers/codex-record.mjs --update --probe card
  *     node test/helpers/codex-record.mjs --update --probe suppressOutput
  *
  * Each re-records what its session reaches into `test/fixtures/observed/payloads/`. With
  * `--probe`, the recorder also answers with an output and files the host's verdict on it into
- * `output-acceptance.json`: `block-once` and `systemMessage` answer the first `Stop` only (see
+ * `output-acceptance.json`: `block-once`, `systemMessage` and `card` answer the first `Stop` only (see
  * `PROBES`), and any other name answers every event with `{"<name>": true}`. `block-once` is
  * also the only session that reaches `Stop.continuation.json`, so run it last. `--verbose`
  * echoes what the host printed, which is where the verdicts are read from.
@@ -215,6 +216,9 @@ export function readOutputAcceptance() {
  * - `systemMessage` — a multi-line string, the shape a session scorecard would be delivered
  *   in. The TUI shows it under the reply; `codex exec` never prints it, so the verdict is all a
  *   scripted session can confirm.
+ * - `card` — the pair the session scorecard is actually sent as: a multi-line `systemMessage`
+ *   and `suppressOutput: true`, in one object. The two probes that each carry one half are not
+ *   a verdict on both together, because the host reads the output as one object.
  * - `block-once` — `decision:block` with a reason. A marker file in the recorder home makes it
  *   block the first `Stop` only, so the model continues the turn and the next `Stop` is the
  *   continuation, recorded as `Stop.continuation.json`.
@@ -223,6 +227,13 @@ export const PROBES = {
   systemMessage: {
     event: 'Stop',
     output: { systemMessage: 'Recorder probe, line one\nline two\nline three' },
+  },
+  card: {
+    event: 'Stop',
+    output: {
+      systemMessage: 'Recorder card probe, line one\nline two\nline three',
+      suppressOutput: true,
+    },
   },
   'block-once': {
     event: 'Stop',
