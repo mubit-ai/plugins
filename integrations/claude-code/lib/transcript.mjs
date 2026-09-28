@@ -326,8 +326,8 @@ export function renderEntry(line, opts = {}) {
 
   const message = messageRecord(entry);
   let content = message.content ?? entry.content ?? entry.text;
-  // Only a Codex `user` record carries host text in the user's voice; Claude Code's are left as they are.
-  if (message === entry.payload && str(message.role) === 'user') content = stripInjectedBlocks(content);
+  // The filter is Codex's; Claude Code records render unchanged.
+  if (message === entry.payload && str(message.role) === 'user') content = stripInjectedBlocks(content, { keepUserActions: true });
   const body = messageText(content, opts);
   if (!body.trim()) return '';
 
