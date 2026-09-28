@@ -5,14 +5,14 @@
  * The single most counter-intuitive fact in the whole plugin, and the one a future
  * maintainer is most likely to "simplify" away:
  *
- *   | request                                       | LLM calls |
- *   | query{mode:"direct_bypass", evidence_only}    |     0     |  ← rung 1, the primary path
- *   | query{mode:"agent_routed",  evidence_only}    |     1     |  ← rung 2, only on a 403
- *   | context{mode:"sections"}                      |     2     |  ← rung 3, opt-in only
+ *   | request                                       | rung                           |
+ *   | query{mode:"direct_bypass", evidence_only}    | 1, the primary path            |
+ *   | query{mode:"agent_routed",  evidence_only}    | 2, only on a 403               |
+ *   | context{mode:"sections"}                      | 3, opt-in only                 |
  *
- * `/v2/control/context` is not the cheap assembly path its name implies: it is the most
- * expensive of the three requests above, and the synthesized answer it pays for is one the
- * recall hook throws away. So the hook is query-first and treats `context` as the last rung
+ * `/v2/control/context` is not the quick assembly path its name implies: it is the slowest
+ * of the three requests above, and the synthesized answer it returns is one the recall hook
+ * throws away. So the hook is query-first and treats `context` as the last rung
  * — the inverse of what the endpoint names suggest.
  *
  * These tests are written before the implementation. Failing with
@@ -69,8 +69,8 @@ const turn = (d, promptId = PROMPT_ID) => readJsonFile(turnPath(d, promptId));
 // ---------------------------------------------------------------------------
 
 // THE test in this file. Under the default recallAssemble:"client" the hook
-// spends exactly one zero-LLM-call request and never touches the two-LLM-call endpoint.
-// If `context` ever shows up here, every user prompt just got two LLM calls more expensive.
+// sends exactly one query and never touches `/v2/control/context`.
+// If `context` ever shows up here, every user prompt just got slower.
 test('rung 1 only: one direct_bypass query, and NO /v2/control/context at all', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -84,10 +84,10 @@ test('rung 1 only: one direct_bypass query, and NO /v2/control/context at all', 
 
   const body = server.lastCall('POST', '/v2/control/query').body;
   assert.equal(body.mode, 'direct_bypass',
-    'only "direct_bypass" and "direct" reach the direct lane; ' +
-    'every other value is answered by the slower path, with no error anywhere to say so');
+    'rung 1 sends mode "direct_bypass"; any other value is answered by a slower path, ' +
+    'with no error anywhere to say so');
   assert.equal(body.evidence_only, true,
-    'evidence_only:true skips answer synthesis — the second LLM call');
+    'evidence_only:true skips answer synthesis');
 });
 
 // The rung-1 body, field for field. `limit`, `budget:"low"` (<500 ms tier) and
@@ -147,7 +147,7 @@ test('the injected block says memory may be incomplete and should be verified', 
   assert.match(ctx, /<\/mubit-memory>$/);
 });
 
-// §5.2 rung 1 / §7 — the recall hook is also the rule store's supplier.
+// Rung 1 — the recall hook is also the rule store's supplier.
 //
 // `hooks/src/pre-tool.mjs` runs while the user waits on a tool call and may never dial, so
 // its only supply is a hook that has already paid for a round trip. This is that hook, and
@@ -191,7 +191,7 @@ test('a rule in the recall response reaches rules.json, and a non-rule does not'
     + `is noise the user cannot act on (got ${JSON.stringify(refs)})`);
 });
 
-test('rung 1 request body matches §5.2 exactly', async (t) => {
+test('rung 1 request body is exactly the documented shape', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
   const dir = makeDataDir();
@@ -214,40 +214,38 @@ test('rung 1 request body matches §5.2 exactly', async (t) => {
   assert.ok(body.env_tags.includes('tool:claude-code'));
   assert.ok(body.env_tags.includes('ci:test'), 'MUBIT_CC_ENV_TAGS extras are appended verbatim');
   assert.ok(body.env_tags.length <= 8, 'env_tags is capped at 8');
-  // The fusion weights, chosen client-side. The fixture prompt is a diagnosis
+  // The ranking preference, chosen client-side. The fixture prompt is a diagnosis
   // ("why is the ingest job stuck in queued?"), not a handoff, so the default `auto` rule
   // resolves it to `relevance`. A `freshness` here would mean the rule fires on ordinary
   // questions, which is the one way this feature makes recall worse rather than better.
   assert.equal(body.rank_by, 'relevance',
     'rank_by must be on the wire and concrete: `auto` is a client-side word, and sending it '
-    + 'would fall through to the default weights while looking like a decision');
+    + 'would fall through to the server default while looking like a decision');
 });
 
 // ---------------------------------------------------------------------------
 // `prefer_current_run` — asking recall to stay inside this run
 // ---------------------------------------------------------------------------
 
-// The bug this closes: `entry_types` carries `lesson`, and asking for lessons puts a second,
-// wider search behind every prompt — one that is not bounded by this run, so what it costs
-// grows with everything the instance holds rather than with this project. On the blocking
-// path that is most of what a recall spends, and no budget setting buys it back, because the
-// host caps the hook below what it costs. Declining it is what keeps this rung inside its
-// budget.
-test('rung 1 declines the cross-run lesson overlay on the blocking path', async (t) => {
+// The bug this closes: `entry_types` carries `lesson`, and without `prefer_current_run` the
+// lesson part of every prompt's recall is not limited to this run, which is slower than the
+// host lets the hook wait. Staying inside this run on the blocking path is what keeps this
+// rung inside its budget.
+test('rung 1 keeps lesson recall inside this run on the blocking path', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
 
   assertHookContract(await runHook('prompt-recall', userPromptSubmit(), { env: env(makeDataDir(), server) }));
 
   assert.equal(server.lastCall('POST', '/v2/control/query').body.prefer_current_run, true,
-    'a hook the host will cut off at 3s cannot fund a lane that costs ~1.7s and gets slower '
-    + 'as the instance grows — without this field the default install never recalls at all');
+    'a hook the host will cut off at 3s cannot wait on cross-run lessons — without this '
+    + 'field the default install never recalls at all');
 });
 
 // `off` is the same wire shape as the blocking default; what it changes is that a budget big
-// enough to afford the lane no longer buys it. It is the escape hatch for an instance where
-// the lane is slow enough to hurt even the detached path.
-test('MUBIT_CC_RECALL_CROSS_RUN=off declines the lane whatever the budget', async (t) => {
+// enough for cross-run lessons no longer asks for them. It is the escape hatch for an
+// instance where cross-run recall is slow enough to hurt even the detached path.
+test('MUBIT_CC_RECALL_CROSS_RUN=off declines cross-run lessons whatever the budget', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
 
@@ -264,7 +262,7 @@ test('MUBIT_CC_RECALL_CROSS_RUN=off declines the lane whatever the budget', asyn
 
 // `on` is the counterpart pin: an operator who has decided the cross-run lessons are worth a
 // slow prompt gets them, and gets them on the blocking path where `auto` would refuse.
-test('MUBIT_CC_RECALL_CROSS_RUN=on pays for the lane even on the blocking path', async (t) => {
+test('MUBIT_CC_RECALL_CROSS_RUN=on asks for cross-run lessons even on the blocking path', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
 
@@ -273,13 +271,13 @@ test('MUBIT_CC_RECALL_CROSS_RUN=on pays for the lane even on the blocking path',
   }));
 
   assert.equal(server.lastCall('POST', '/v2/control/query').body.prefer_current_run, undefined,
-    'absent IS false server-side: the opt-out is sent only when somebody declined the lane, '
+    'absent means false: the opt-out is sent only when somebody declined cross-run lessons, '
     + 'so a request log shows the decision rather than the default');
 });
 
 // The threshold is a property of the budget, not of the installation — which is what lets one
 // rule serve a 1500ms hook and a 10s detached refresh without either being told which it is.
-test('auto: a budget big enough to fund the lane asks for it', async (t) => {
+test('auto: a budget big enough for cross-run lessons asks for them', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
 
@@ -291,7 +289,7 @@ test('auto: a budget big enough to fund the lane asks for it', async (t) => {
   }));
 
   assert.equal(server.lastCall('POST', '/v2/control/query').body.prefer_current_run, undefined,
-    'auto spends the lane where there is room for it; pinning is only for the two ends');
+    'auto asks for cross-run lessons where there is room for them; pinning is only for the two ends');
 });
 
 // ---------------------------------------------------------------------------
@@ -379,7 +377,7 @@ test('rung 2 carries the same rank_by as rung 1', async (t) => {
   const [first, second] = server.calls('POST', '/v2/control/query').map((c) => c.body);
   assert.equal(first.rank_by, 'freshness');
   assert.equal(second.rank_by, 'freshness',
-    'the fallback rung must not quietly revert to default fusion weights');
+    'the fallback rung must not quietly drop rank_by');
 });
 
 /*
@@ -408,10 +406,9 @@ test('rung 3 sends no rank_by, because /context has no such field', async (t) =>
 });
 
 /*
- * §4.1 `repo:`/`branch:` come from shelling out in a directory, and until now that directory
+ * The `repo:`/`branch:` tags come from shelling out in a directory, and until now that directory
  * was `CLAUDE_PROJECT_DIR` — the session's launch root, which a mid-session `cd` cannot move.
- * A recall scored against the tags of a repo the user left is worse than one scored against
- * no tags at all, so the query reads the payload's `cwd` for the same reason the run id does.
+ * A recall tagged with a repo the user left is worse than one sent with no tags at all, so the query reads the payload's `cwd` for the same reason the run id does.
  */
 test('env_tags follow the prompt\'s directory, not the launch one', async (t) => {
   const server = await fakeMubit();
@@ -452,8 +449,8 @@ test('the query is truncated to 2000 characters', async (t) => {
 // The policy ladder: 403 → rung 2, cached
 // ---------------------------------------------------------------------------
 
-// A 403 on rung 1 is a policy verdict, not a failure. Descend one rung (1 LLM
-// call), and never to rung 3 (2 LLM calls).
+// A 403 on rung 1 is a policy verdict, not a failure. Descend one rung, and never to
+// rung 3.
 test('403 permission_denied on rung 1 falls to rung 2, byte-identical but for the mode', async (t) => {
   const server = await fakeMubit({
     'POST /v2/control/query': [DENIED, { json: queryResponse({ mode: 'agent_routed' }) }],
@@ -470,7 +467,7 @@ test('403 permission_denied on rung 1 falls to rung 2, byte-identical but for th
   const [first, second] = server.calls('POST', '/v2/control/query').map((c) => c.body);
   assert.equal(first.mode, 'direct_bypass');
   assert.equal(second.mode, 'agent_routed');
-  assert.equal(second.evidence_only, true, 'rung 2 still skips synthesis — 1 LLM call, not 2');
+  assert.equal(second.evidence_only, true, 'rung 2 still asks for evidence only, never a synthesized answer');
   assert.deepEqual({ ...second, mode: 'direct_bypass' }, first,
     'rung 2 is byte-identical to rung 1 except for the mode string');
 });
@@ -563,11 +560,11 @@ test('an expired denial re-probes rung 1 exactly once', async (t) => {
   assertHookContract(r2);
   server.assertCalled('POST', '/v2/control/query', 1);
   assert.equal(server.lastCall('POST', '/v2/control/query').body.mode, 'direct_bypass',
-    'the expired verdict must be re-probed, and the free rung reclaimed');
+    'the expired verdict must be re-probed, and rung 1 reclaimed');
 });
 
-// "Keyed by endpoint hash so a local and a hosted instance hold independent
-// verdicts." One instance disabling direct_bypass must not tax the other.
+// Keyed by endpoint hash, so a local and a hosted instance hold independent
+// verdicts. One instance disabling direct_bypass must not tax the other.
 test('policy verdicts are per endpoint, not global', async (t) => {
   const denying = await fakeMubit({ 'POST /v2/control/query': [DENIED, { json: queryResponse() }] });
   const allowing = await fakeMubit();
@@ -637,11 +634,10 @@ test('rungs 1 and 2 render byte-identical additionalContext for the same evidenc
 // Rung 1 only — the default. Rung 2 is a cost an operator opts into.
 // ---------------------------------------------------------------------------
 
-// The measured cost of the old default: rung 2 pays a routing LLM call at a ~5 s median
-// against a 1500 ms recall budget, so on a policy-denied instance nearly every prompt spent
-// the call and then aborted with nothing to show. Returning empty is strictly cheaper and no
-// less useful.
-test('403 on rung 1 does not descend by default — one request, no LLM call', async (t) => {
+// Why this is the default: rung 2 is slower than the recall budget allows, so on a
+// policy-denied instance nearly every prompt would wait on it and then abort with nothing
+// to show. Returning empty is strictly cheaper and no less useful.
+test('403 on rung 1 does not descend by default — one request, nothing more', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/query': [DENIED, { json: queryResponse() }] });
   t.after(() => server.close());
   const dir = makeDataDir();
@@ -651,7 +647,7 @@ test('403 on rung 1 does not descend by default — one request, no LLM call', a
   assertHookContract(r);
   server.assertCalled('POST', '/v2/control/query', 1);
   assert.equal(server.lastCall('POST', '/v2/control/query').body.mode, 'direct_bypass',
-    'the only request made must be the zero-LLM one');
+    'the only request made must be rung 1');
   server.assertNotCalled('POST', '/v2/control/context');
 });
 
@@ -689,7 +685,7 @@ test('a policy denial records a reason without claiming a connection fault', asy
 });
 
 // ---------------------------------------------------------------------------
-// A permanently dead recall path has to be visible somewhere
+// A recall path that never returns anything has to be visible somewhere
 // ---------------------------------------------------------------------------
 
 // The failure this closes: every hook fires, every recall returns nothing, the marker says
@@ -741,8 +737,8 @@ test('a failed recall counts toward the dry streak', async (t) => {
 // Rung 3 — opt-in only
 // ---------------------------------------------------------------------------
 
-// Rung 3 costs two LLM calls per prompt and exists only because an operator
-// explicitly accepted that cost for the server-assembled context_block.
+// Rung 3 is the slowest path and exists only because an operator explicitly chose
+// the server-assembled context_block.
 test('recallAssemble:"server" issues rung 3 with the documented sections body', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -756,11 +752,11 @@ test('recallAssemble:"server" issues rung 3 with the documented sections body', 
   server.assertCalled('POST', '/v2/control/context', 1);
 
   // The question the design left open, now settled here: server mode SUBSTITUTES rung 3
-  // for the ladder, it does not append itself to the end of it. §5.2's pseudocode reads as a
+  // for the ladder, it does not append itself to the end of it. The ladder could be read as a
   // sequential fallback, which would make rung 3 reachable only after rungs 1 and 2 had both
   // failed — so the option would almost never take effect. plugin.json describes it as "how
   // recalled memory is assembled", a straight substitution, and that is the reading taken:
-  // probing rung 1 first and then paying rung 3 anyway costs three LLM calls for one recall.
+  // probing rung 1 first and then paying for rung 3 anyway spends two requests on one recall.
   server.assertNotCalled('POST', '/v2/control/query');
 
   const body = server.lastCall('POST', '/v2/control/context').body;
@@ -774,7 +770,7 @@ test('recallAssemble:"server" issues rung 3 with the documented sections body', 
 });
 
 // "Rung 3 → use the server's context_block and section_summaries as-is."
-// Re-assembling what you already paid two LLM calls for would be pure waste.
+// Re-assembling what the server already assembled would be pure waste.
 test('rung 3 injects the server context_block verbatim', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -857,8 +853,8 @@ test('an open breaker issues zero HTTP requests', async (t) => {
     `breaker open must short-circuit without dialing; saw: ${server.summary()}`);
 });
 
-// Rung 2 costs an LLM call and the whole path is bounded at 1500 ms.
-// Starting a 1-LLM-call request with 300 ms left buys nothing but a visible stall.
+// Rung 2 is slower than rung 1 and the whole path is bounded at 1500 ms.
+// Starting a rung-2 request with 300 ms left buys nothing but a visible stall.
 test('rung 2 is skipped when less than 500 ms of budget remains', async (t) => {
   const server = await fakeMubit({
     'POST /v2/control/query': [{ ...DENIED, delayMs: 700 }, { json: queryResponse() }],
@@ -896,7 +892,7 @@ test('an empty result emits exactly {"suppressOutput": true}', async (t) => {
   assert.equal(r.json.systemMessage, undefined);
 });
 
-// §5.2 stdout: the injection channel is hookSpecificOutput.additionalContext on
+// Stdout: the injection channel is hookSpecificOutput.additionalContext on
 // UserPromptSubmit; the human-visible receipt is systemMessage.
 test('a non-empty result emits additionalContext plus a systemMessage receipt', async (t) => {
   const server = await fakeMubit();
@@ -932,7 +928,7 @@ test('the marker records which rung served', async (t) => {
   const ra = await runHook('prompt-recall', userPromptSubmit(), { env: env(dirA, free) });
   assertHookContract(ra);
   const ma = marker(dirA);
-  assert.equal(ma.recall.rung, 1, '0 LLM calls');
+  assert.equal(ma.recall.rung, 1, 'rung 1, the primary path');
   assert.equal(ma.recall.sources, 3);
   assert.equal(ma.recall.empty_reason, '');
   assert.equal(typeof ma.recall.tokens, 'number');
@@ -941,7 +937,7 @@ test('the marker records which rung served', async (t) => {
   const dirB = makeDataDir();
   const rb = await runHook('prompt-recall', userPromptSubmit(), { env: env(dirB, denied, FALLBACK_ON) });
   assertHookContract(rb);
-  assert.equal(marker(dirB).recall.rung, 2, '1 LLM call');
+  assert.equal(marker(dirB).recall.rung, 2, 'rung 2');
 });
 
 // ---------------------------------------------------------------------------
@@ -1588,7 +1584,7 @@ test('pins: render in full on every prompt, never degraded to a pointer', async 
  *
  * Folding them together would silently corrupt every recall-cost measurement the plugin has
  * ever taken — the dashboard's per-turn cost, `dry_streak`, and the whole argument for the
- * seen-set. `test/statusline.test.mjs` is untouched by this ticket for the same reason: if it
+ * seen-set. `test/statusline.test.mjs` is untouched by this change for the same reason: if it
  * reddens, this split was done wrong.
  */
 test('pins: are counted in recall.pin_tokens and left out of recall.tokens', async (t) => {

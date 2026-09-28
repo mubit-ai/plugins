@@ -2,10 +2,10 @@
 /**
  * `lib/outcome.mjs` — the implicit-attribution rule, as one pure decision.
  *
- * Guide sections under test:
- *   §5.5 step 7  the outcome call: the four cases, the weak signal, the stable key
- *   §1.3         `reference_id` must be non-empty on an outcome
- *   §6.1         `outcomeMode` — `off` and `explicit` silence the implicit path
+ * Under test:
+ *   - the outcome call: the four cases, the weak signal, the stable key
+ *   - `reference_id` must be non-empty on an outcome
+ *   - `outcomeMode`: `off` and `explicit` silence the implicit path
  *
  * The fact this file exists to protect: **two hooks post this outcome** — `drain.mjs` for a
  * turn that ended normally, `session-end.mjs` for a turn whose drain never reached it — and
@@ -337,7 +337,7 @@ describe('decideOutcome — the reasons not to post', () => {
 
 describe('implicitOutcomesEnabled — "off" and "explicit" silence the implicit path', () => {
   const TABLE = [
-    // The default. §6.1 pins `outcomeMode` to these three; anything else is a config that
+    // The default. `outcomeMode` takes exactly these three; anything else is a config that
     // never loaded, and the documented default is what it should behave like.
     { mode: 'implicit', enabled: true },
     { mode: '', enabled: true },
@@ -370,9 +370,8 @@ describe('implicitOutcomesEnabled — "off" and "explicit" silence the implicit 
 // ===========================================================================
 
 describe('outcomeIdempotencyKey — the same turn is the same key, forever', () => {
-  // The server keeps an outcome idempotency ledger across restarts, which only helps
-  // if the client sends a stable key. It is what makes a concurrent drain and a session-end
-  // flush a no-op rather than double reinforcement.
+  // An outcome carries a stable idempotency key, so a concurrent drain and a session-end
+  // flush post the same outcome once rather than twice.
   it('is derived from (run_id, prompt_id) and nothing else', async () => {
     const { outcomeIdempotencyKey } = await O();
     assert.equal(outcomeIdempotencyKey(RUN_ID, PROMPT_ID), `cc-outcome-${RUN_ID}-${PROMPT_ID}`);

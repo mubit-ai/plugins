@@ -1,10 +1,10 @@
 // @ts-check
 /**
- * `bin/statusline.mjs` — the line, the glyph precedence, the cooldown and
- * the rung label) and §16.2 (the degradation ladder).
+ * `bin/statusline.mjs` — the status line: the line itself, the glyph precedence, the cooldown,
+ * the rung label and the degradation ladder.
  *
  * ```
- * ● mubit: cc-my-project-9f2a11c4 · local · recall 6/1.2k tok · saved 12t/1q · lessons 3g
+ * ● mubit: cc-my-project-0000abcd · local · recall 6/1.2k tok · saved 12t/1q · lessons 3g
  * ```
  *
  * Three properties matter more than anything this prints:
@@ -13,7 +13,7 @@
  *      nothing else — no `lib/http.mjs`, no `fetch`, not even transitively. The status line
  *      renders on every frame of the host UI; one that dials Mubit turns a dead server into
  *      a visibly frozen terminal.
- *   2. **Fast.** The §10 budget is < 15 ms. Everything here is two small synchronous reads
+ *   2. **Fast.** The budget is < 15 ms. Everything here is two small synchronous reads
  *      plus a config load that is itself cached on disk. The one avoidable cost — the
  *      `git rev-parse` inside `deriveRunId` — is skipped entirely whenever the session map
  *      already names the run, which is every frame after the first `SessionStart`.
@@ -22,7 +22,7 @@
  *      trace there is the first thing they would ever see of this plugin. Every path out of
  *      `render()` is wrapped; the worst outcome is an empty line.
  *
- * Bundled to `bin/statusline.mjs` by §11.2 and registered by `settings.json`.
+ * Bundled to `bin/statusline.mjs` by the build and registered by `settings.json`.
  */
 
 import { realpathSync } from 'node:fs';
@@ -40,12 +40,12 @@ import { dataDir, readJson, writeJsonAtomic } from '../lib/state.mjs';
  * `settings.json` is undocumented and may simply be ignored by the host, so the plugin has to
  * find out empirically: this process stamps the marker, and the *next* `session-start` reads
  * it. `session-start` owns the file's creation — a status line that created it would also be
- * asserting the install exists, and §16.2 wants a fresh install to touch nothing at all.
+ * asserting the install exists, and a fresh install should touch nothing at all.
  */
 const LIVENESS_FILE = 'statusline-installed.json';
 
 /**
- * Consecutive dry recalls before the line says so, mirroring §4.7's `TIMEOUT_ESCALATION`.
+ * Consecutive dry recalls before the line says so, mirroring the breaker's `TIMEOUT_ESCALATION`.
  * The reasoning is the same one: a single empty recall is not a verdict — a fresh run has
  * nothing to recall, and a narrow prompt legitimately matches nothing. A run of them is.
  */
@@ -63,7 +63,7 @@ const STDIN_TIMEOUT_MS = 300;
 // ---------------------------------------------------------------------------
 
 /**
- * The §10 table verbatim, ordered worst-first. `warming` is not a `ConnState` — it is a
+ * The display table, ordered worst-first. `warming` is not a `ConnState` — it is a
  * *lens* the cold-start window puts over whatever the two sources agreed on — so it lives
  * here with the glyphs but is never read out of a state file.
  *
@@ -83,8 +83,7 @@ const DISPLAY = {
  * Merge the two disagreeing sources and apply the cold-start lens.
  *
  * The marker was written by the last hook that ran; the breaker file was written by the
- * last call that failed. They can disagree, and §10 says the user gets the worse of the
- * two — a breaker that has seen five refusals is still the truth even if the last marker
+ * last call that failed. They can disagree, and the user gets the worse of the two — a breaker that has seen five refusals is still the truth even if the last marker
  * write predates them, and a marker written by a hook that just got a 401 is still the
  * truth even if the breaker is closed (auth failures never open it).
  *
@@ -95,32 +94,33 @@ const DISPLAY = {
  * breaker is a clean `ready` is still warming. So the lens is applied to the merged view.
  *
  * ---------------------------------------------------------------------------
- * DECISION — `not_responding` vs `warming`, the one pair §10 and §4.7 disagree on.
+ * DECISION — `not_responding` vs `warming`, the one pair the ranking and the cold-start rule
+ * disagree on.
  *
- * §10's table ranks `◌ slow` above `◍ warming`, which reads as "a timeout streak during
- * warm-up still shows ◌". §4.7's cold-start suppression says the opposite: inside
- * `coldStartGraceMs` a failure "is recorded but the status line shows ◍ warming".
+ * The display table ranks `◌ slow` above `◍ warming`, which reads as "a timeout streak during
+ * warm-up still shows ◌". Cold-start suppression says the opposite: inside
+ * `coldStartGraceMs` a failure is recorded but the status line shows `◍ warming`.
  *
  * **`warming` wins.** Inside the grace window every failure except `auth_failed` displays
  * as `◍ warming`. Three reasons:
  *
- *   1. *Monotonicity.* The suite pins that `unreachable` — which §10 ranks strictly WORSE
+ *   1. *Monotonicity.* The suite pins that `unreachable` — which the table ranks strictly WORSE
  *      than `not_responding` — is suppressed to `◍` inside the window. A rule that
  *      suppressed the worse symptom but let the milder one through would mean a healthier
  *      server showed the scarier glyph. That is not a defensible line to draw.
- *   2. *§4.7 states the rule; §10 states a ranking.* The §10 table answers "which of two
- *      simultaneous facts do I show"; §4.7 answers "is this fact a verdict yet". Cold start
+ *   2. *Cold start states a rule; the table states a ranking.* The table answers "which of two
+ *      simultaneous facts do I show"; cold start answers "is this fact a verdict yet". Cold start
  *      is the second question, and it is asked first. `warming` is not competing with
  *      `not_responding` — it is the answer to whether `not_responding` counts yet.
  *   3. *A timeout is the single most likely thing to happen during warm-up.* Mubit spends
  *      its first seconds warming up; the request that lands there hangs
  *      and aborts. If `not_responding` escaped suppression, `◌ slow` would be the normal
  *      cold-start display and the ◍ glyph would be nearly unreachable — which inverts the
- *      whole point of §4.7 ("a user whose server is still starting must not be told memory
- *      is broken for fifteen seconds").
+ *      whole point of the grace window: a user whose server is still starting must not be told
+ *      memory is broken for fifteen seconds.
  *
- * `auth_failed` is the sole exception, and the suite pins it: §4.7 calls it sticky and says
- * it *pins* the status line. A server still warming up does not answer 401, so a 401
+ * `auth_failed` is the sole exception, and the suite pins it: it is sticky and it *pins* the
+ * status line. A server still warming up does not answer 401, so a 401
  * inside the grace window is a real verdict — and it is the one error the user can fix.
  * ---------------------------------------------------------------------------
  *
@@ -223,7 +223,7 @@ function mappedRunId(cfg, payload) {
  * `''` — not a placeholder, not an error — is the answer for every empty state: the widget
  * turned off, a fresh install with no data dir, a data dir with no marker yet, and a
  * marker truncated by a SIGKILL mid-rename (`readMarker` degrades a corrupt file to the
- * §4.8 default, which is indistinguishable from "never written", which is silence).
+ * default, which is indistinguishable from "never written", which is silence).
  *
  * @param {Record<string, any>} payload the host's session blob from stdin
  * @returns {string}
@@ -236,8 +236,8 @@ export function render(payload = {}) {
   // banner on every frame, which is a worse outcome than the widget the user just disabled.
   if (cfg.statusLine === false) return '';
 
-  // Before anything is rendered, and regardless of whether anything *is*: the question §16.2
-  // asks is "did the host invoke this process", not "did it have something to say".
+  // Before anything is rendered, and regardless of whether anything *is*: the question the
+  // liveness probe asks is "did the host invoke this process", not "did it have something to say".
   stampLiveness(cfg);
 
   const runId = resolveRunId(cfg, payload);
@@ -245,7 +245,7 @@ export function render(payload = {}) {
 
   const marker = readMarker(cfg, runId);
 
-  // No marker at all. `readMarker` cannot say "missing" — it returns the §4.8 default
+  // No marker at all. `readMarker` cannot say "missing" — it returns the default
   // — so the tell is that nothing has ever stamped it. `updateMarker` restamps `updated_at`
   // on every write, so `0` means no hook has run for this run yet.
   if (!(num(marker.updated_at) > 0)) return '';
@@ -274,10 +274,10 @@ export function render(payload = {}) {
 
   const sources = num(recall.sources);
   const tokens = num(recall.tokens);
-  // A recall path that is permanently dead must say so somewhere the user looks.
-  // Until this, the worst case rendered as a green `●` beside `recall 0/0 tok`: every hook
-  // firing, every call timing out, nothing injected, and no fault reported anywhere. That is
-  // the failure that makes a memory plugin look useless rather than broken.
+  // A recall path that keeps coming back empty must say so somewhere the user looks.
+  // Otherwise a green `●` beside `recall 0/0 tok` would hide every call timing out and
+  // nothing being injected — the failure that makes a memory plugin look useless rather
+  // than broken.
   //
   // Not a ConnState. `resolveDisplay` merges verdicts *about the connection*, and this is a
   // verdict about content — the connection may be perfectly healthy and the store simply
@@ -314,8 +314,8 @@ export function render(payload = {}) {
   // user to ignore it.
   if (str(group(marker.reflect).status) === 'failed') parts.push('reflect failed');
 
-  // Rung 1 is the free path at zero LLM calls and needs no label. `rung` is only
-  // a label when it is a rung the user is *paying* for — `0` is the §4.8 default for "no
+  // Rung 1 is the default path and needs no label. `rung` is only a label when it is a
+  // rung the user opted into — `0` is the default for "no
   // recall has happened yet", not a rung, and must never render as `rung 0`.
   const rung = int(num(recall.rung));
   if (rung > 1) parts.push(`rung ${rung}`);
@@ -349,7 +349,7 @@ function pausedSeconds(breaker, cfg, now) {
 }
 
 /**
- * §4.1 derives `mode` from the endpoint host; the marker carries whatever the run was
+ * `mode` is derived from the endpoint host; the marker carries whatever the run was
  * started against. The marker wins so the line describes the run, not the current env.
  * @param {Record<string, any>} marker
  * @param {Record<string, any>} cfg
@@ -388,7 +388,7 @@ function int(n) {
 }
 
 /**
- * `1187` -> `1.2k`, matching the §10 example. Whole thousands lose the `.0`, and past ten
+ * `1187` -> `1.2k`. Whole thousands lose the `.0`, and past ten
  * thousand the decimal is noise in a widget this narrow.
  * @param {number} n
  * @returns {string}
@@ -424,7 +424,7 @@ function stampLiveness(cfg) {
 }
 
 /**
- * §10 renders exactly one line. A run id or a mode carrying a newline — neither should be
+ * The status line is exactly one line. A run id or a mode carrying a newline — neither should be
  * possible, both come from files this process does not own — must not become two.
  * @param {string} s
  * @returns {string}
@@ -481,7 +481,7 @@ function readStdin() {
 }
 
 /**
- * The one line, or `''`. Swallows everything: §16.2 makes "prints nothing, exits 0" the
+ * The one line, or `''`. Swallows everything: "prints nothing, exits 0" is the
  * contract for every state this process cannot make sense of.
  * @returns {Promise<string>}
  */
@@ -506,7 +506,7 @@ function realPath(p) {
 const selfPath = fileURLToPath(import.meta.url);
 const selfReal = realPath(selfPath);
 const entryPath = process.argv[1] ? realPath(resolve(process.argv[1])) : '';
-// The built status line sits behind a runtime-floor launcher (esbuild.config.mjs §11.1):
+// The built status line sits behind a runtime-floor launcher (see esbuild.config.mjs):
 // `settings.json` names `bin/statusline.mjs`, which checks the Node version and then imports
 // `bin/impl/statusline.mjs`. That handoff is still "run as the entry point" as far as the
 // user is concerned, but `process.argv[1]` names the launcher, so the identity check above
@@ -518,7 +518,7 @@ const launched = typeof globalThis.__mubitLauncherEntry === 'string'
 if (entryPath === selfReal || launched) {
   process.exitCode = 0;
   // An unhandled rejection or a stray throw from anything above would print a stack trace
-  // onto the user's prompt line and exit non-zero. §16.2 forbids both, so both are pinned
+  // onto the user's prompt line and exit non-zero. Neither is acceptable, so both are pinned
   // here as well as inside `main()`.
   process.on('uncaughtException', () => { process.exit(0); });
   process.on('unhandledRejection', () => { process.exit(0); });

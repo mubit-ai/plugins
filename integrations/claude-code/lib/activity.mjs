@@ -56,14 +56,12 @@
  * ## Two facts about the route that decide the request shape
  *
  * **The export has no `limit`.** `lib/http.mjs` caps *requests*; `dial()` reads the whole
- * response text and parses it in one allocation. An empty `run_id` means "every run this key
- * can see", so run scope is the only bound the response body has — which is why a run id is
- * required here rather than defaulted.
+ * response text and parses it in one allocation. Run scope is the only bound the response
+ * body has, which is why a run id is required here rather than defaulted.
  *
- * **`total_visible` is a filtered count, not a total.** The server counts the entries left
- * after its own filters and before paging, out of a pool it caps while collecting. It
- * therefore over-counts by exactly whatever our client-side re-filter dropped, which is why
- * `droppedDerived` is reported next to it: only both numbers together reconcile.
+ * **`total_visible` is a filtered count, not a total.** It can exceed what the client shows
+ * after its own re-filter, which is why `droppedDerived` is reported next to it: only both
+ * numbers together reconcile.
  *
  * Discipline shared with the rest of `lib/`: zero dependencies, Node >= 20 built-ins only,
  * and nothing here throws.
@@ -146,9 +144,7 @@ export const CENSUS_BUDGET_MS = 15000;
 /**
  * The metadata keys that mean "the instance derived this, a client did not write it".
  *
- * The server's own `exclude_derived` checks two of them — `promotion` and `derived` — through
- * `as_bool()`, so a stringified boolean slips past it, and so does `auto_promoted`, which is
- * what recurrence promotion writes. Erring wide is the only safe direction: over-filtering
+ * Checked client-side, erring wide — the only safe direction: over-filtering
  * shows a caller fewer entries than exist, which they can see; under-filtering prints a
  * derived entry under a heading that says there are none, which they cannot.
  */
@@ -180,8 +176,8 @@ export async function exportActivity(cfg, params = {}) {
   const run = str(p.run);
   if (!run) {
     return fail(400, 'bad_request',
-      'export requires a run id: the route takes no limit, and an empty run_id means every run '
-      + 'this key can see — which is an unbounded response read into one string');
+      'export requires a run id: the route takes no limit, so an unscoped export is an '
+      + 'unbounded response read into one string');
   }
 
   const req = {
@@ -200,9 +196,8 @@ export async function exportActivity(cfg, params = {}) {
   if (str(p.userId)) req.user_id = str(p.userId);
   if (str(p.agentId)) req.agent_id = str(p.agentId);
 
-  // `exclude_derived`, `projection`, `limit` and `page_token` are NOT sent. The handler
-  // deserialises with serde's default, which drops unknown keys without complaint — so a
-  // request carrying `exclude_derived` is a client believing it filtered, and believing it
+  // `exclude_derived`, `projection`, `limit` and `page_token` are NOT sent. The route ignores
+  // fields it does not know without complaint — so a request carrying `exclude_derived` is a client believing it filtered, and believing it
   // silently. That is the whole failure mode this module was written against.
 
   const res = await request(cfg, 'POST', ACTIVITY_ROUTES.export, req, EXPORT_OPTS);
@@ -291,8 +286,8 @@ export async function listActivity(cfg, params = {}, opts = {}) {
   return ok({
     ...corrected,
     nextPageToken: res.data.nextPageToken,
-    // The server's count, over the server's filtering, before paging. It over-counts by
-    // `droppedDerived` whenever the re-filter had to do work.
+    // The response's own count. It over-counts by `droppedDerived` whenever the re-filter had
+    // to do work.
     totalVisible: res.data.totalVisible,
   });
 }
@@ -359,7 +354,6 @@ export async function scanActivity(cfg, params = {}) {
     // the other way round, a scan that read the feed to its last page still reported
     // `truncated` if it happened to cross a bound on the way — and a complete answer labelled
     // partial is the same failure as a partial one labelled complete, pointed the other way.
-    // Measured on a hosted instance: 697 lessons, every one of them collected, reported short.
     token = page.data.nextPageToken;
     if (!token) break;
 
@@ -389,13 +383,8 @@ export async function scanActivity(cfg, params = {}) {
 /**
  * Every lesson the calling key can see, normalised, newest first, with the scope counted.
  *
- * This is the dashboard's Memory tab, and it goes through the activity feed rather than
- * `/v2/control/lessons` because that route applies `limit` **before** it filters to
- * `entry_type == "lesson"`. `limit: 200` there means "take two hundred arbitrary facts, keep
- * whichever happen to be lessons" — measured against a hosted instance, seventeen thousand
- * entries in, the newest three hundred contained not one. A tab that is empty because of the
- * order the server does two operations in reads exactly like an instance that holds nothing.
- * The feed collects, filters by `entry_types`, sorts, and only then pages.
+ * This is the dashboard's Memory tab. It goes through the activity feed, which collects,
+ * filters by `entry_types`, sorts, and only then pages.
  *
  * **`projection: 'full'` is not optional.** `correct()` maps every row through `compactEntry`
  * unless the projection is `full`, and those five keys do not include `metadata_json` — which
@@ -417,7 +406,7 @@ export async function lessonCensus(cfg, params = {}) {
   const currentRun = str(p.currentRun);
 
   // An absent `run` is the point of the whole exercise: the tab always sent the current one,
-  // which took `list_lessons`'s per-run branch, and a `global` lesson written by a different
+  // which took the lessons route's per-run branch, and a `global` lesson written by a different
   // run could then structurally never appear.
   const scan = await scanActivity(cfg, {
     run,
@@ -495,7 +484,7 @@ export async function lessonCensus(cfg, params = {}) {
 /**
  * Whether an entry is something the instance derived rather than something a client wrote.
  *
- * Wider than the server's own test by design — see `DERIVED_KEYS`. The flag is looked for both
+ * Wide by design — see `DERIVED_KEYS`. The flag is looked for both
  * inside `metadata_json` and on the entry itself, because a shared helper is reached by
  * callers who have already parsed the one and by wire shapes that carry the other.
  *
@@ -583,9 +572,8 @@ function correct(raw, o) {
 // ---------------------------------------------------------------------------
 
 /**
- * The truth values a flag arrives as. A JSON boolean is what the server writes; the string
- * spellings are what a metadata writer that stringified its booleans produces, and the server
- * misses those because `as_bool()` rejects them.
+ * The truth values a flag arrives as. A JSON boolean is the usual form; the string spellings
+ * are what a metadata writer that stringified its booleans produces, and they count too.
  * @param {any} v
  */
 function truthy(v) {

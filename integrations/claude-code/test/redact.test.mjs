@@ -34,10 +34,10 @@ const R = async () => (_mod ??= await lib('redact.mjs'));
 // Local helpers
 // ---------------------------------------------------------------------------
 
-/** The §4.4 placeholder. Note spec §6.4 writes it lowercase; §4.4 wins. */
+/** The placeholder, uppercase `REDACTED`. */
 const PH = (kind) => `[REDACTED:${kind}]`;
 
-/** §6.1 defaults, as the frozen `Config` shape from §4.1. */
+/** The documented defaults, as the frozen `Config` shape. */
 function cfg(over = {}) {
   const dataDir = over.dataDir ?? makeDataDir();
   return Object.freeze({
@@ -62,7 +62,7 @@ function cfg(over = {}) {
   });
 }
 
-/** `\n…[truncated <N> bytes]` — the §4.4 stage-3 marker. */
+/** `\n…[truncated <N> bytes]` — the stage-3 marker. */
 const TRUNC = /\n…\[truncated (\d+) bytes\]$/;
 
 /** Split a stage-3 result into `{body, dropped}` where dropped is the marker's N. */
@@ -84,7 +84,7 @@ function assertNoSecrets(text) {
 
 describe('stage 1 — pattern scrub', () => {
   /**
-   * One row per kind in the §4.4 pattern table. `context` places the credential
+   * One row per kind in the pattern table. `context` places the credential
    * in prose so the kind label is unambiguous — a credential wrapped in an
    * `NAME=value` assignment would legitimately match two rules.
    */
@@ -141,7 +141,7 @@ describe('stage 1 — pattern scrub', () => {
   ];
 
   for (const row of KINDS) {
-    // §4.4 stage-1 table: every listed pattern is scrubbed to [REDACTED:<kind>].
+    // Stage-1 table: every listed pattern is scrubbed to [REDACTED:<kind>].
     it(`scrubs ${row.kind} (${row.pattern})`, async () => {
       const { redactText } = await R();
       const r = redactText(row.text, cfg(), 'output');
@@ -154,7 +154,7 @@ describe('stage 1 — pattern scrub', () => {
     });
   }
 
-  // §4.4 stage-1: `pem` spans lines — the whole BEGIN/END block goes, not one line.
+  // Stage 1: `pem` spans lines — the whole BEGIN/END block goes, not one line.
   it('scrubs a multi-line pem block from BEGIN to END', async () => {
     const { redactText } = await R();
     const text = `wrote key material:\n${SECRETS.pem}\ndone`;
@@ -169,8 +169,7 @@ describe('stage 1 — pattern scrub', () => {
   });
 
   /**
-   * The `assignment` keyword list is seeded from the server's own policy
-   *. The guide sketches the pattern with `\b`, but the
+   * The `assignment` keyword list. A sketch of the pattern would use `\b`, but the
    * canonical fixture is `DATABASE_PASSWORD=…` — where the keyword is preceded
    * by `_`, a word character. A literal `\b` cannot match there, so the real
    * implementation must treat `_`/`-` separated names as word starts.
@@ -187,7 +186,7 @@ describe('stage 1 — pattern scrub', () => {
   ];
 
   for (const [keyword, text, value] of ASSIGNMENTS) {
-    // §4.4 assignment keyword list, mirrored from the server's redaction policy.
+    // The assignment keyword list.
     it(`scrubs an assignment keyed on "${keyword}"`, async () => {
       const { redactText } = await R();
       const r = redactText(text, cfg(), 'output');
@@ -313,9 +312,8 @@ describe('stage 1 — pattern scrub', () => {
   });
 
   /**
-   * The three shapes that survived the re-probe of the item 5 gate, on the tree that closed
-   * `env: X_API_TOKEN=` and `postgres://admin:pw@host`. Each was probed against the live
-   * module, and each came back byte-identical with zero redactions:
+   * Three shapes an earlier version of this module passed through byte-identical, with zero
+   * redactions:
    *
    * ```
    * DB_PASS=hunter2            → unchanged
@@ -331,8 +329,8 @@ describe('stage 1 — pattern scrub', () => {
    *   - `sk_live_…` uses an underscore where the `openai-key` rule expects a hyphen, and no
    *     other rule claims it.
    *
-   * The gate says a bulk import multiplies whatever capture leaks by every transcript on the
-   * machine. These three are what it would have multiplied.
+   * A bulk import multiplies whatever capture misses by every transcript on the machine,
+   * which is why these three matter.
    *
    * Every widening below carries its own negative case, in the same block rather than
    * elsewhere in the file: a keyword that over-matches is a redactor that mangles ordinary
@@ -415,14 +413,13 @@ describe('stage 1 — pattern scrub', () => {
     });
   });
 
-  // The placeholder format is exactly `[REDACTED:<kind>]` (spec §6.4 says
-  // `[redacted:<kind>]`; the build guide is the implementation contract).
+  // The placeholder format is exactly `[REDACTED:<kind>]`, uppercase.
   it('uses the exact [REDACTED:<kind>] placeholder form', async () => {
     const { redactText } = await R();
     const r = redactText(`key=${SECRETS.mubitKey}`, cfg(), 'output');
 
     assert.match(r.text, /\[REDACTED:[a-z-]+\]/, `placeholder must be [REDACTED:<kind>]; got:\n${r.text}`);
-    assert.ok(!/\[redacted:/.test(r.text), 'placeholder is uppercase REDACTED per §4.4');
+    assert.ok(!/\[redacted:/.test(r.text), 'placeholder is uppercase REDACTED');
   });
 
   // `redactions` is the match count — capture.mjs writes it to metadata_json.
@@ -485,8 +482,8 @@ describe('stage 1 — pattern scrub', () => {
 describe('idempotency-key survives redaction', () => {
   /**
    * Idempotency keys are exempt from the scrub by design.
-   * The plugin sets an idempotency key on EVERY ingest batch (§4.2
-   * `postIngest`), so redacting it destroys the only handle a human has on
+   * The plugin sets an idempotency key on EVERY ingest batch (`postIngest`),
+   * so redacting it destroys the only handle a human has on
    * "did this batch get sent twice?".
    */
   const ID = 'cc-4f21ab90-1765000000';
@@ -527,14 +524,11 @@ describe('idempotency-key survives redaction', () => {
 
 describe('high-entropy false-positive guard', () => {
   /**
-   * Spec §6.4 argues the entropy rule should be CONJUNCTIVE — high entropy AND
-   * within 40 chars of a key-ish token — because "an unconditional
-   * high-entropy filter mangles ordinary build output, checksums and minified
-   * code; that is a false-positive machine, and a redactor that destroys
-   * legitimate content gets turned off."
-   *
-   * §4.4 states the rule unconditionally. These tests are written to §4.4 and
-   * pass under BOTH readings, except where noted.
+   * The entropy rule can be read two ways. CONJUNCTIVE — high entropy AND within 40 chars
+   * of a key-ish token — because an unconditional high-entropy filter mangles ordinary
+   * build output, checksums and minified code, and a redactor that destroys legitimate
+   * content gets turned off. Or UNCONDITIONAL, which is what the module implements. These
+   * tests pass under BOTH readings, except where noted.
    */
 
   // Ordinary cargo output must pass through byte-identical.
@@ -574,10 +568,10 @@ describe('high-entropy false-positive guard', () => {
 
   /**
    * DOCUMENTED DIVERGENCE. A base64 literal inside minified code has entropy
-   * ~5.0 over 64 chars, so §4.4's unconditional rule scrubs it while spec
-   * §6.4's conjunctive rule does not. Whichever wins, the line must remain
-   * legible — a redactor that turns source into `[REDACTED:high-entropy]` and
-   * nothing else is the failure mode §6.4 is warning about.
+   * ~5.0 over 64 chars, so the unconditional rule scrubs it while the conjunctive
+   * rule does not. Whichever wins, the line must remain legible — a redactor that
+   * turns source into `[REDACTED:high-entropy]` and nothing else is the failure mode
+   * the conjunctive reading is warning about.
    */
   it('does not mangle a minified base64 line into uselessness', async () => {
     const { redactText, entropy } = await R();
@@ -741,7 +735,7 @@ describe('stage 2 — path denylist', () => {
   }
 
   /**
-   * §4.4 / spec §6.4: "plus everything git ignores". This is the high-yield
+   * "Plus everything git ignores". This is the high-yield
    * rule — the user already declared those paths as not-for-sharing, and
    * honouring that declaration costs them no new configuration.
    */
@@ -803,7 +797,7 @@ describe('stage 3 — byte caps', () => {
     assert.equal(Buffer.byteLength(body), 8192, 'body must be capped to exactly MUBIT_CC_MAX_OUTPUT_BYTES');
     assert.equal(droppedBytes, 102400 - 8192, 'the marker must report the real byte count');
     assert.ok(big.startsWith(body), 'the kept prefix must be a true prefix of the input');
-    // capture.mjs §5.4 step 7 copies this straight into metadata_json.truncated
+    // capture.mjs copies this straight into metadata_json.truncated
     // so the stored entry is honest about being partial.
     assert.equal(r.truncated, true, 'redactText must report truncation to its caller');
   });

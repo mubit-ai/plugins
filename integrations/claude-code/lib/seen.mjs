@@ -2,8 +2,8 @@
 /**
  * `lib/seen.mjs` — what one conversation has already been shown, and when.
  *
- * The state layout and its TTL table, and the recall path that reads and
- * writes it), §5.6 (the compaction reset).
+ * The state layout and its TTL table, the recall path that reads and writes it, and the
+ * compaction reset.
  *
  * ---------------------------------------------------------------------------
  * Why this file exists
@@ -246,7 +246,7 @@ export function markSeen(cfg, runId, refIds, sessionId = '') {
 }
 
 /**
- * The §7 ceiling, applied at the write.
+ * The size ceiling, applied at the write.
  *
  * Most recently seen first; on a tie — every id marked by one turn shares a millisecond —
  * the later of the two survives, so eviction always drops the oldest sighting rather than

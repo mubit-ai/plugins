@@ -2,15 +2,7 @@
 /**
  * `scripts/scope-audit.mjs` — what is stored, at what scope, and who wrote it.
  *
- * This script used to ask the catalogue route with a deliberately empty run id, which is the
- * same request that made `mubit_lessons` read across runs — so the one tool whose whole
- * purpose was to *measure* that behaviour was riding on it. It also inherited that route's
- * other property: a request for rows at a named scope comes back short against a real
- * instance, so the audit read zero on an instance holding hundreds of lessons, and a zero
- * that means "the query was wrong" is indistinguishable from a zero that means "nothing has
- * ever been promoted".
- *
- * The rewrite is built on `lessonCensus()`, which reads the activity feed and reports when it
+ * The audit is built on `lessonCensus()`, which reads the activity feed and reports when it
  * gave up. Two properties are load-bearing and both are pinned below:
  *
  *   1. **A truncated census exits non-zero and calls every count a floor.** A loop that reads
@@ -155,7 +147,7 @@ test('audit: emits the promotion metadata the instance stamped, verbatim', async
           meta: {
             promotion_candidate: true,
             promotion_quarantined: false,
-            promotion_shadow_stats: { arm: 'treatment', n: 7, note: 'whatever the instance says' },
+            promotion_shadow_stats: { n: 7, note: 'whatever the instance says' },
           },
         }),
         lesson({ id: 'a2', run: RUN_A }),
@@ -168,7 +160,7 @@ test('audit: emits the promotion metadata the instance stamped, verbatim', async
 
   assert.equal(j.promotion.stamped, 1, 'one of the two rows carried promotion metadata');
   assert.deepEqual(j.promotion.rows[0].promotion_shadow_stats,
-    { arm: 'treatment', n: 7, note: 'whatever the instance says' },
+    { n: 7, note: 'whatever the instance says' },
     'the stats must arrive exactly as the instance stamped them');
   assert.equal(j.promotion.rows[0].promotion_candidate, true);
   assert.equal(j.promotion.rows[0].promotion_quarantined, false);
@@ -306,13 +298,13 @@ test('normalizeActivityLesson keeps the promotion keys', async () => {
       scope: 'global',
       promotion_candidate: true,
       promotion_quarantined: false,
-      promotion_shadow_stats: { arm: 'control' },
+      promotion_shadow_stats: { note: 'as stamped' },
     }),
   });
 
   assert.equal(row.promotionCandidate, true);
   assert.equal(row.promotionQuarantined, false);
-  assert.deepEqual(row.promotionShadowStats, { arm: 'control' });
+  assert.deepEqual(row.promotionShadowStats, { note: 'as stamped' });
   assert.equal(row.promotionStamped, true);
 });
 

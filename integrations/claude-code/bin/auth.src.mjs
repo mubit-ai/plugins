@@ -52,7 +52,7 @@ export const KEY_PREFIX = 'mbt_';
 /** What this plugin calls itself to the console. See `buildAuthUrl`. */
 export const CLIENT_ID = 'claude-code';
 
-/** The authenticated probe: a read, no side effects, and no LLM call. */
+/** The authenticated probe: a cheap read with no side effects. */
 export const PROBE_ROUTE = '/v2/control/lessons';
 export const HEALTH_ROUTE = '/v2/core/health';
 
@@ -628,28 +628,22 @@ function buildAuthUrl({ consoleUrl, port, state, challenge, repo, host, region }
 /**
  * The endpoints to try for the key the console just issued, most authoritative first.
  *
- * `mubitEndpoint` is the console's own answer — `httpEndpoint` from the platform API's
- * `/location` route, which is the only thing that knows what a given cluster overrode
- * `MUBIT_REGIONAL_HTTP_ENDPOINT` to. It is tried first, and the compiled-in gateway follows
- * it, because the console's answer can be right, stale, or unreachable and only the server
- * can say which.
+ * `mubitEndpoint` is the endpoint the console reports for this key. It is tried first, and
+ * the compiled-in gateway follows it, because the console's answer can be right, stale, or
+ * unreachable and only the server can say which.
  *
- * **A plaintext answer is upgraded, not discarded.** Measured 2026-08-28 in two clusters:
- * both report `http://`, and only one of them means it. The dev cluster's EU host answers
- * 401 over TLS and 308s plain HTTP to it; `api.eu.mubit.ai` answers over plain HTTP and
- * fails the TLS handshake. So the scheme says nothing about the host, and dropping the host over
- * it sent a dev key to the production gateway, which rejected it and told the user their key
- * was bad. Keeping the host and fixing the scheme is right in both clusters: dev connects,
- * prod's TLS failure falls through to the gateway that has always served it.
+ * **A plaintext answer is upgraded, not discarded.** An API key never crosses a network in
+ * plaintext, so an `http://` endpoint keeps its host and has its scheme set to `https://`. Dropping the
+ * host instead would send the key to a gateway that does not know it and tell the user their
+ * key was bad; if the host has no TLS listener, the default gateway is next in line.
  *
  * Loopback keeps its scheme. Plaintext to 127.0.0.1 crosses no network, and there is rarely
  * a TLS listener there to upgrade to.
  *
- * No region map, either way. eu.mubit.ai and us.mubit.ai are NXDOMAIN, so turning
- * `payload.region` into one of them stored an endpoint that could never answer, and every
- * later command then failed with `TypeError: fetch failed (ENOTFOUND)` far from the sign-in
- * that caused it. A region is a routing hint for the console, not a hostname this side may
- * invent.
+ * No region map, either way. A region is a routing hint for the console, not a hostname this
+ * side may invent: a guessed host that does not resolve would be stored as the endpoint, and
+ * every later command would then fail with `TypeError: fetch failed (ENOTFOUND)` far from the
+ * sign-in that caused it.
  *
  * @param {Record<string, any>} payload
  * @returns {string[]} at least one endpoint, never empty
@@ -682,10 +676,9 @@ function overTls(raw) {
 /**
  * Verify the key against each endpoint in turn and store it against the first that accepts.
  *
- * Trying more than one is not a guess: a cluster can name an endpoint it does not serve, and
- * the gateway behind it resolves the instance from the bearer key rather than the hostname.
- * The alternative — pick one, fail — reports "the instance rejected that key" for a key that
- * is perfectly good, which is what a real dev-cluster run did before this existed.
+ * Trying more than one is not a guess: the endpoint the console names is not always the one
+ * that answers for this key. The alternative — pick one, fail — would report "the instance
+ * rejected that key" for a key that is perfectly good.
  *
  * When none accept it, the first is reported: that is the console's own answer, and the one
  * whose configuration someone has to go and look at.

@@ -102,8 +102,8 @@
  * Budget and failure
  * ---------------------------------------------------------------------------
  * 1500 ms internal (`MUBIT_CC_RECALL_BUDGET_MS`) against a 3 s hook timeout, on a hook that
- * fires before EVERY prompt. Rung 2 is skipped when under 500 ms remains: it costs an LLM
- * call, and starting one that cannot finish spends the call and injects nothing.
+ * fires before EVERY prompt. Rung 2 is skipped when under 500 ms remains: it is the slower
+ * rung, and starting one that cannot finish spends the time and injects nothing.
  *
  * Breaker-open, a timeout, an empty result or any non-2xx all emit exactly
  * `{"suppressOutput": true}`. Injecting "I found nothing" wastes tokens and teaches the
@@ -133,7 +133,7 @@ import { entryTerms, entryTitle, MAX_PROMPT_SCAN, memoryTerms, termSet } from '.
 /** "ok", "yes", "go on" carry no retrievable intent. */
 const MIN_PROMPT_CHARS = 8;
 
-/** Recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
+/** Recall quality does not improve past this, and a 40 KB paste is a slow query. */
 const MAX_QUERY_CHARS = 2000;
 
 /** U+00B7, the separator the status line and every systemMessage share. */
@@ -181,7 +181,7 @@ await runHook('prompt-recall', {
     const started = numOr(ctx?.startedAt, Date.now());
     const deadline = started + RECALL_BUDGET_MS;
 
-    // --- §5.2 step 0. Every skip here is "dial nothing", not "dial and discard".
+    // --- Step 0. Every skip here is "dial nothing", not "dial and discard".
     // `pinsGate` keeps that promise — it reads one file — while still handing over a standing
     // constraint the user set for this run. `recall: false` turns *recall* off; it is not a
     // switch for "inject nothing ever", and the user who set it is the one most likely to be
@@ -268,10 +268,10 @@ await runHook('prompt-recall', {
     }
 
     const query = prompt.slice(0, MAX_QUERY_CHARS);
-    // How the server should fuse this query's scores. Read off the query text itself
-    // while `recallRankBy` is `auto`: "where were we?" is a question about the most recent
-    // state of the work, and default fusion weights recency at 0.10, so it answers with
-    // whatever is most *similar* to those three words. The same rule runs over the same text
+    // How to ask for this query to be ranked. Read off the query text itself while
+    // `recallRankBy` is `auto`: "where were we?" is a question about the most recent state
+    // of the work, and the default ranking answers it with whatever is most *similar* to
+    // those three words. The same rule runs over the same text
     // in `recall-refresh` and `subagent-start` — one explanation covers all three.
     const rankBy = rankForRecall(cfg, query);
     const promptId = safeId(turnKey(payload));
@@ -780,7 +780,7 @@ function dryness(cfg, runId, hit) {
 }
 
 /**
- * §5.5 step 2, as a pure read. `allowRequest()` is deliberately not used: while the breaker
+ * The breaker check, as a pure read. `allowRequest()` is deliberately not used: while the breaker
  * is open it *consumes* the half-open probe, and `lib/http.mjs` asks for it again on the way
  * to the socket — so checking here with `allowRequest` would spend the probe and then refuse
  * the dial it was granted for.
@@ -948,7 +948,7 @@ function pinsGate(cfg, payload) {
 }
 
 /**
- * §5.2 stdout. The wrapper names the run and states what was spent, so a user reading the
+ * The stdout block. The wrapper names the run and states what was spent, so a user reading the
  * transcript can see where the injected block came from — and so the model can tell injected
  * memory apart from its own reasoning.
  *
@@ -1056,7 +1056,7 @@ function str(v) {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/** Is this one of the §4.7 states? Asked against the exported union so this file cannot
+/** Is this one of the ConnState values? Asked against the exported union so this file cannot
  *  drift from it. `invalid_request` is deliberately not one — it is a caller bug, not a
  *  verdict about the connection, and must never reach the status line. */
 function isConnState(v) {

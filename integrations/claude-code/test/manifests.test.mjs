@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { PLUGIN_ROOT, REPO_ROOT } from './helpers/harness.mjs';
 
 // ---------------------------------------------------------------------------
-// Paths (§2 file tree)
+// Paths (the plugin file tree)
 // ---------------------------------------------------------------------------
 
 const P = {
@@ -271,7 +271,7 @@ test('hooks.json declares all ten registrations with the right events, args and 
     'PostCompact', 'SessionEnd',
   ];
   assert.deepEqual([...events].sort(), [...expectedEvents].sort(),
-    `hooks.json must register exactly the ten events in §3.2; got [${events.join(', ')}]`);
+    `hooks.json must register exactly the ten expected events; got [${events.join(', ')}]`);
 
   /** event → flat list of {script, extraArgs, ifPattern, timeout} in declaration order */
   const flat = new Map();
@@ -335,7 +335,7 @@ test('hooks.json declares all ten registrations with the right events, args and 
 
   for (const [event, rows] of Object.entries(expected)) {
     assert.deepEqual(flat.get(event), rows,
-      `hooks.json ${event} registration does not match §3.2 (timeouts are SECONDS)`);
+      `hooks.json ${event} registration does not match the expected table (timeouts are SECONDS)`);
   }
 });
 
@@ -499,7 +499,7 @@ test('.mcp.json registers one server named "mubit" pointing at mcp/dist/index.js
   const mcp = readJson(P.mcp, '.mcp.json', 'the MCP server registration');
   const names = Object.keys(mcp.mcpServers ?? {});
   assert.deepEqual(names, ['mubit'],
-    `.mcp.json must declare exactly one server named "mubit" — the ${QUALIFIED_PREFIX} prefix depends on it (§3.2 matcher note)`);
+    `.mcp.json must declare exactly one server named "mubit" — the ${QUALIFIED_PREFIX} prefix depends on it`);
 
   const server = mcp.mcpServers.mubit;
   assert.equal(server.command, 'node', '.mcp.json server command must be "node"');
@@ -604,7 +604,7 @@ test('every userConfig key declared in plugin.json is read somewhere in lib/conf
   }
 });
 
-// §3.2 matcher note — bare `mcp__<server>__<tool>` does NOT match a plugin-provided
+// A bare `mcp__<server>__<tool>` does NOT match a plugin-provided
 // server. Get this wrong and the skill's tool grant silently matches nothing.
 test('every tools: entry in a skill or agent uses the fully qualified plugin prefix', () => {
   const files = markdownWithTools();
@@ -692,7 +692,7 @@ test('marketplace.json source points at integrations/claude-code and declares co
   const entry = (market.plugins ?? []).find((p) => p.name === 'mubit-memory');
   assert.ok(entry, 'marketplace.json has no "mubit-memory" entry');
 
-  // §3.5 originally specified {source:"github", repo:"...", path:"..."}. That form is
+  // The entry once used {source:"github", repo:"...", path:"..."}. That form is
   // schema-valid and it costs an extra clone: the plugin ships in the *same* repo as this
   // catalog, so an explicit github source makes the host fetch a second copy of a tree it is
   // already holding — and pins the plugin to one repository name, which then has to be edited

@@ -97,13 +97,13 @@ function rejectedFiles(dataDir) {
   return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')) : [];
 }
 
-/** §1.3 + §1.5 — the three fields the server will not forgive. */
+/** The three fields every item must carry. */
 function assertWireItem(item) {
   assert.ok(typeof item.item_id === 'string' && item.item_id.length > 0, 'item_id is REQUIRED');
   assert.ok(typeof item.content_type === 'string' && item.content_type.length > 0,
     'content_type is REQUIRED');
   assert.ok(typeof item.intent === 'string' && item.intent.length > 0,
-    'every item carries a non-empty intent — otherwise the server spends one LLM call per item');
+    'every item carries a non-empty intent');
   assert.notEqual(item.intent, 'unclassified');
 }
 
@@ -156,7 +156,7 @@ test('drain: an open breaker short-circuits the next drain and leaves items spoo
   assert.equal(existsSync(lockPath(dataDir)), false, 'the lock is released on every exit path');
 });
 
-// §5.5 steps 3-5 — ONE request for the whole batch, not one per item, and every item on the
+// ONE request for the whole batch, not one per item, and every item on the
 // wire carries the three required fields.
 test('drain: sends exactly one POST /v2/control/ingest for a 32-item batch', async (t) => {
   const dataDir = makeDataDir();
@@ -177,8 +177,8 @@ test('drain: sends exactly one POST /v2/control/ingest for a 32-item batch', asy
   for (const item of body.items) assertWireItem(item);
 });
 
-// "idempotency_key is per batch, derived from (run_id, prompt_id, batch sequence),
-// so a retry after a transport timeout is a server-side no-op."
+// idempotency_key is per batch, derived from (run_id, prompt_id, batch sequence), so a retry
+// after a transport timeout is recognised as the same batch.
 test('drain: two drains of the same batch send the same idempotency_key', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t, {
@@ -198,7 +198,7 @@ test('drain: two drains of the same batch send the same idempotency_key', async 
   const calls = server.calls('POST', '/v2/control/ingest');
   assert.equal(calls.length, 2);
   assert.equal(calls[0].body.idempotency_key, calls[1].body.idempotency_key,
-    'the retry of a batch must be dedupable server-side');
+    'the retry of a batch must carry the same key');
   assert.deepEqual(
     calls[0].body.items.map((i) => i.item_id),
     calls[1].body.items.map((i) => i.item_id),
@@ -333,8 +333,8 @@ test('drain: loops until the spool is empty, one request per batch', async (t) =
     'each batch in the sequence gets its own key');
 });
 
-// `--with-outcome` attributes the turn. `reference_id` must be non-empty
-//; "global" is the run-level sentinel and the real attribution lives in entry_ids[].
+// `--with-outcome` attributes the turn. `reference_id` must be non-empty;
+// "global" is the run-level sentinel and the real attribution lives in entry_ids[].
 // The signal is deliberately weak: a turn completing is not proof the recalled memory
 // helped, only weak positive evidence — hence 0.2, not 1.0.
 test('drain --with-outcome: posts one outcome carrying the turn\'s recalled entry_ids', async (t) => {
@@ -361,8 +361,8 @@ test('drain --with-outcome: posts one outcome carrying the turn\'s recalled entr
   assert.ok(typeof body.agent_id === 'string' && body.agent_id.length > 0);
   assert.ok(typeof body.rationale === 'string' && body.rationale.length > 0);
   // Derived from (run_id, prompt_id) and never random — and spelled the same way in
-  // `session-end`, since that is what makes a concurrent flush a server-side no-op rather
-  // than double reinforcement. `session-end.test.mjs` asserts the two agree end to end.
+  // `session-end`, since that is what makes a concurrent flush the same outcome rather than
+  // a second one. `session-end.test.mjs` asserts the two agree end to end.
   assert.equal(body.idempotency_key, `cc-outcome-${RUN_ID}-${PROMPT_ID}`);
 
   // A delivered post is recorded in the ledger — the durable record of what the turn earned
@@ -420,16 +420,9 @@ test('drain --with-outcome: skips the outcome call when outcomeMode is "off"', a
  * A turn whose file records `outcome: "failure"` posts `failure` / -0.3. The turn file
  * records how the turn ended, so the drain never has to re-derive it.
  *
- * This used to be titled "a StopFailure turn", after §5.5's line *"On a StopFailure turn:
- * outcome: 'failure', signal: -0.3."* It never was one. Nothing in the plugin has ever
- * written `outcome` onto a turn file — the key exists only here and in the other tests that
- * seed it — because `StopFailure` was not registered, and the host fires it **instead of**
- * `Stop`, so the hook that would have written it never ran on those turns.
- *
- * Now that `StopFailure` IS registered, the guide's row is the one thing this ticket
- * overturns: an API-failed turn posts nothing at all (see `api_error` below). The row this
- * test covers is the different and still-real one — a turn the *file* records as having
- * failed, whatever wrote that.
+ * This is not a StopFailure turn: an API-failed turn posts nothing at all (see `api_error`
+ * below). The row this test covers is a turn the *file* records as having failed, whatever
+ * wrote that.
  */
 test('drain --with-outcome: a turn recorded as failed posts outcome "failure" at signal -0.3', async (t) => {
   const dataDir = makeDataDir();
@@ -484,7 +477,7 @@ test('drain --with-outcome: a turn the API killed ingests, and posts no outcome'
 });
 
 // ---------------------------------------------------------------------------
-// §5.5 step 7, conditioned on evidence — "ignored" is not the same as "not injected"
+// The outcome, conditioned on evidence — "ignored" is not the same as "not injected"
 // ---------------------------------------------------------------------------
 
 /** A turn as `capture --stop` leaves it once it could compute the used-signal. */
@@ -606,7 +599,7 @@ for (const mode of ['off', 'explicit']) {
   });
 }
 
-// §5.5 step 9 + §7 — the lock is released on every exit path, including after a throw.
+// The lock is released on every exit path, including after a throw.
 // A stuck lock silently stops all capture, which is worse than a rare double drain.
 test('drain: releases the lock even when a post-send step throws', async (t) => {
   const dataDir = makeDataDir();

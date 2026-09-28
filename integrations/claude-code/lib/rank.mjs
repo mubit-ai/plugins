@@ -5,29 +5,21 @@
  * ---------------------------------------------------------------------------
  * The dial this exists to turn
  * ---------------------------------------------------------------------------
- * `/v2/control/query` fuses a semantic, a lexical and a recency score, and `rank_by` picks
- * how they are weighted:
+ * `rank_by` on `/v2/control/query` picks what a recall emphasises:
  *
  * | `rank_by` | what it emphasises |
  * | --- | --- |
- * | *(unset / `relevance`)* | semantic similarity; recency barely counts |
- * | `balanced` | similarity, with recency meaningfully in play |
- * | `freshness` | recency dominates |
+ * | *(unset / `relevance`)* | the most similar memories |
+ * | `balanced` | similarity, with recency in play |
+ * | `freshness` | the most recent memories |
  *
- * **The exact weights are the server's, are per-instance, and are not restated here.** They
- * are operator-tunable, so any number written into this file would be a claim about one
- * deployment rather than about the API. Ask the instance instead: `explain: true` on a query
- * returns `rank_by_mode` and `fusion_weights_used` per evidence item, which is the only
- * authoritative answer.
- *
- * Unknown values fall through to the server's default weighting, so a bad mode is inert
- * rather than an error — which is exactly why the client still whitelists before sending
+ * Unknown values are inert rather than an error — which is exactly why the client still whitelists before sending
  * (`lib/recall.mjs`): a typo that silently ranks at the default is a bug nobody can see.
  *
  * ---------------------------------------------------------------------------
  * Why a rule, and why a two-way one
  * ---------------------------------------------------------------------------
- * Ask "where were we?" and default fusion answers with whatever is most *similar* to those
+ * Ask "where were we?" and the default answers with whatever is most *similar* to those
  * three words, which is close to nothing. The question is temporal: the user is asking about
  * the most recent state of a thing, not about the most on-topic memory ever stored. There is
  * real event time to rank on — the plugin already sends `occurrence_time` on every captured

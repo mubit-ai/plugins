@@ -49,7 +49,7 @@ export function tempDir(prefix = 'mubit-cc-') {
 }
 
 /**
- * A fresh `${CLAUDE_PLUGIN_DATA}` root with the §7 directory skeleton pre-created.
+ * A fresh `${CLAUDE_PLUGIN_DATA}` root with the state directory skeleton pre-created.
  * Pass the result as `MUBIT_CC_DATA_DIR` (and `CLAUDE_PLUGIN_DATA`).
  * @returns {string}
  */
@@ -128,7 +128,7 @@ export function baseEnv(o) {
     MUBIT_ENDPOINT: o.endpoint ?? 'https://mubit.example.com',
     MUBIT_API_KEY: o.apiKey ?? 'mbt_test_0123456789abcdef_deadbeefcafebabe0123456789abcdef',
     MUBIT_CC_LOG_LEVEL: 'error',
-    // Tests must never inherit the MCP server's poisoned default.
+    // Tests must never inherit a default run id from the environment.
     MUBIT_DEFAULT_SESSION_ID: '',
     // The resume briefing ships ON, and it is pinned off here for the same category of
     // reason as the line above it — a shipped default that would otherwise make unrelated
@@ -372,8 +372,8 @@ export function defaultRoutes() {
 }
 
 /**
- * A realistic `AgentQueryResponse`. `reference_id` — not `id` — is what feeds
- * `RecordOutcome.entry_ids` (control.proto).
+ * A realistic `AgentQueryResponse`. `reference_id` — not `id` — is what feeds the outcome
+ * call's `entry_ids`.
  * @param {Partial<{evidence: any[], routing_summary: string}>} [over]
  */
 export function queryResponse(over = {}) {
@@ -543,7 +543,7 @@ function bareSpawnMs() {
  *      sample reports the machine, not the hook.
  *   2. **Most of the number is not the hook.** Starting `node` costs ~47 ms idle here before
  *      the hook's first statement. `capture` costs ~100 ms, so its own share is ~53 ms —
- *      which is the ~40 ms §5.4 actually budgets, plus change.
+ *      which is the ~40 ms the capture hook is budgeted, plus change.
  *
  * So the measurement is the best of a few samples *minus the spawn floor measured under the
  * same conditions*, and `budgetMs` means "what this hook may add on top of starting node".
@@ -607,8 +607,8 @@ export function assertHookContract(r) {
  * `./server.js` for a module that snapshots `process.env`, which is the right tool for the
  * launcher's ordering guarantee and says nothing about what the *server* then does with
  * those values. The allowlist is only observable here, at `tools/list`, because filtering
- * happens inside the bundle at registration time. That gap is how a server which ignores
- * `MUBIT_MCP_TOOLS` shipped past 650 green tests.
+ * happens inside the bundle at registration time, so a server that ignored
+ * `MUBIT_MCP_TOOLS` would pass every other test.
  *
  * Runs `mcp/dist/index.js` — the committed bundle `.mcp.json` actually points at, not
  * `mcp/src/launch.mjs`. The bundle is the product; there is no build step at install time.

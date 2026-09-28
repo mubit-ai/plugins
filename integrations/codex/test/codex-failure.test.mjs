@@ -309,8 +309,8 @@ test('F11 SessionEnd finishes inside the three seconds Codex allows it', async (
   //   the work being finished inside it.
   assert.ok(ms < 3_000,
     `session-end took ${ms}ms to return. Codex kills it at 3s, so anything still inside the `
-    + 'hook at that point dies with it — including the reflect, which is the only call that '
-    + 'promotes a lesson beyond its own run. The work belongs in the detached child.');
+    + 'hook at that point dies with it — including the reflect. The work belongs in the '
+    + 'detached child.');
 });
 
 test('F12 the detached hand-off survives the hook process being killed', async (t) => {
@@ -339,8 +339,7 @@ test('F12 the detached hand-off survives the hook process being killed', async (
     .then(() => true).catch(() => false);
   assert.ok(landed,
     'the reflect never happened. With the hook process taken away at 250ms, the detached child '
-    + 'is the only thing left that can finish the flush — and reflection is the one path that '
-    + 'promotes a lesson beyond its own run.');
+    + 'is the only thing left that can finish the flush, the reflect included.');
 });
 
 test('F13 a hook left untrusted is invisible from inside, so every path leaves a local trace', async (t) => {

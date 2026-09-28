@@ -217,9 +217,9 @@ test('PermissionRequest records the attempt, which is the only record a denial l
     'a gated tool call left no spool item. When the user denies it there is no PostToolUse, so '
     + 'this is the only trace that the attempt happened.');
   const item = readJsonDir(join(dataDir, 'runs', RUN_ID, 'spool'))[0]?.json;
-  assert.ok(item?.intent, 'every item carries an intent; an untyped item costs an LLM call per item at ingest.');
+  assert.ok(item?.intent, 'every item carries an intent.');
   assert.equal(item.intent, 'feedback',
-    'a permission request is a question put to a human, and §4.5 grades `feedback` as the one '
+    'a permission request is a question put to a human, and `feedback` is the one '
     + 'entry type that records what the human — not the model — decided. Graded as tool '
     + 'output it files with the file reads.');
   assert.match(String(item.text ?? ''), /rm -rf/,
@@ -318,7 +318,7 @@ test('the model`s own recall calls are not captured back into memory', async (t)
     tool_response: { content: [{ type: 'text', text: 'a previous lesson' }] },
   }), { env: env(dataDir, projectDir, server.url) });
 
-  // § §4.4 self-reference suppression. Without it the plugin records its own traffic, recalls
+  // § Self-reference suppression. Without it the plugin records its own traffic, recalls
   //   it, and records the recall — and the tool prefix it has to recognise is `mcp__mubit__`
   //   under Codex where it is `mcp__plugin_mubit-memory_mubit__` under Claude Code.
   assert.equal(spoolFiles(dataDir, RUN_ID).length, 0,
@@ -463,7 +463,7 @@ test('Stop closes the turn and pairs the answer with the staged prompt', async (
     'the staged prompt did not make it into the pair — half a conversation was stored.');
 });
 
-test('SessionEnd reflects, which is the only thing that promotes a lesson beyond its run', async (t) => {
+test('SessionEnd reflects', async (t) => {
   const { server, dataDir, projectDir } = await harness(t);
   const e = env(dataDir, projectDir, server.url);
   await runHook('capture', postToolUse(), { env: e });

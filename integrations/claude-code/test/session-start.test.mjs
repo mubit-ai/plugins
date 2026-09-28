@@ -2,13 +2,13 @@
 /**
  * `hooks/src/session-start.mjs` — SessionStart (blocking, injection only).
  *
- * Guide sections under test:
- *   §5.1  flow, sub-budgets (health half the envelope / register 600 ms / lessons 900 ms)
- *   §4.3  the `source` table: startup | resume | clear | compact | fork
- *   §1.2  `GET /v2/core/health` returns the bare string `OK`, not JSON
- *   §1.3  standing lessons come off the activity feed, filtered to `global` here
- *   §4.7  cold-start grace: `marker.cold_start_until = now + coldStartGraceMs`
- *   §4.9  the hook never blocks and never exits non-zero
+ * Under test:
+ *   - flow, sub-budgets (health half the envelope / register 600 ms / lessons 900 ms)
+ *   - the `source` table: startup | resume | clear | compact | fork
+ *   - `GET /v2/core/health` returns the bare string `OK`, not JSON
+ *   - standing lessons come off the activity feed, filtered to `global` here
+ *   - cold-start grace: `marker.cold_start_until = now + coldStartGraceMs`
+ *   - the hook never blocks and never exits non-zero
  *
  * The whole budget is 2500 ms internal / 5 s hook timeout. Missing a *sub*-budget
  * degrades that section only — it never fails the hook.
@@ -35,7 +35,7 @@ function env(dataDir, endpoint, extra = {}) {
   return baseEnv({ dataDir, endpoint, projectDir: PROJECT_DIR, extra });
 }
 
-/** Seed `sessions/<host_session_id>.json` — the SessionRecord of §4.3. */
+/** Seed `sessions/<host_session_id>.json` — the SessionRecord. */
 function seedSessionRecord(dataDir, sessionId, over = {}) {
   const rec = {
     run_id: MAPPED_RUN,
@@ -81,7 +81,7 @@ const seq = (server) => server.requests.map((r) => `${r.method} ${r.path}`);
 // Happy path
 // ---------------------------------------------------------------------------
 
-// §5.1 steps 4-6: health, then register, then lessons — in that order, and nothing else.
+// Health, then register, then lessons — in that order, and nothing else.
 test('startup calls health -> register -> the activity feed, in that order', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -155,7 +155,7 @@ test('the standing-lessons request is one full-projection page of lesson entries
   );
 });
 
-// §5.1 stdout — the steer block names the run and mode, tells the model recall is
+// Stdout — the steer block names the run and mode, tells the model recall is
 // automatic (so it does not burn a turn searching), and the systemMessage is one line.
 test('stdout is a SessionStart steer block plus a one-line systemMessage', async (t) => {
   const server = await fakeMubit();
@@ -328,7 +328,7 @@ test('no endpoint reports unconfigured, dials nothing, and names the fix', async
 // The `source` table
 // ---------------------------------------------------------------------------
 
-// §4.3 `startup`: derive fresh, write the session map, RegisterAgent.
+// `startup`: derive fresh, write the session map, RegisterAgent.
 test('source=startup derives a fresh run, writes the session map and registers', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -346,8 +346,8 @@ test('source=startup derives a fresh run, writes the session map and registers',
   assert.match(rec.run_id, /^cc-/);
 });
 
-// §4.3 `resume`: reuse the mapped run and send a heartbeat INSTEAD of re-registering.
-// Re-registering an agent that never left is noise the control plane has to reconcile.
+// `resume`: reuse the mapped run and send a heartbeat INSTEAD of re-registering.
+// Re-registering an agent that never left is a call with nothing to say.
 test('source=resume reuses the mapped run and heartbeats instead of registering', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -363,7 +363,7 @@ test('source=resume reuses the mapped run and heartbeats instead of registering'
   assert.deepEqual(outgoingRunIds(server), [MAPPED_RUN]);
 });
 
-// §4.3 `clear`: /clear means "forget the thread", so reusing the stable per-directory
+// `clear`: /clear means "forget the thread", so reusing the stable per-directory
 // run would defeat it. A new run id, tracked by the record's clear counter.
 test('source=clear produces a NEW run, not the mapped one', async (t) => {
   const server = await fakeMubit();
@@ -385,7 +385,7 @@ test('source=clear produces a NEW run, not the mapped one', async (t) => {
   assert.equal(rec.run_id, runIds[0], 'the session map must follow the new run');
 });
 
-// §4.3 `compact`: compaction is one conversation continuing, so the run continues too.
+// `compact`: compaction is one conversation continuing, so the run continues too.
 test('source=compact reuses the parent session record run', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -448,7 +448,7 @@ test('source=startup does not re-anchor, even with a stored checkpoint', async (
 });
 
 // With nothing stored there is nothing to anchor to. `--pre` never ran for this run,
-// its call failed, or §7's sweep took the file. Saying "checkpoint undefined holds your
+// its call failed, or the TTL sweep took the file. Saying "checkpoint undefined holds your
 // context" is strictly worse than silence.
 test('source=compact with no stored checkpoint steers normally and names no anchor', async (t) => {
   const server = await fakeMubit();
@@ -467,7 +467,7 @@ test('source=compact with no stored checkpoint steers normally and names no anch
 });
 
 /**
- * §4.3 `fork`: `--fork-session`, the `/fork` background copy and `/branch` all continue an
+ * `fork`: `--fork-session`, the `/fork` background copy and `/branch` all continue an
  * existing conversation, so the run continues with them — the same rule `compact` and
  * `resume` follow, for the same reason.
  *
@@ -499,8 +499,8 @@ test('source=fork reuses the parent run and heartbeats instead of registering', 
     'GET /v2/core/health',
     'POST /v2/control/agents/heartbeat',
     'POST /v2/control/activity',
-  ], 'a fork continues a session that never left, so re-announcing its agent is noise the '
-    + 'control plane has to reconcile');
+  ], 'a fork continues a session that never left, so re-announcing its agent is a call with '
+    + 'nothing to say');
   server.assertNotCalled('POST', '/v2/control/agents/register');
 
   assert.deepEqual(outgoingRunIds(server), [MAPPED_RUN],
@@ -513,7 +513,7 @@ test('source=fork reuses the parent run and heartbeats instead of registering', 
   assert.deepEqual(markers, [`${MAPPED_RUN}.json`],
     'the marker must be written under the inherited run, not a fresh one or none');
 
-  // The claim this ticket exists to prove: a forked session is given the memory a resumed one
+  // The claim this test exists to prove: a forked session is given the memory a resumed one
   // is given — the run named, and the standing lessons rendered.
   const ctx = r.json.hookSpecificOutput.additionalContext;
   assert.ok(ctx.includes(MAPPED_RUN),
@@ -579,7 +579,7 @@ test('an unmapped fork session id still lands on the run its parent derived', as
 });
 
 // ---------------------------------------------------------------------------
-// Degraded paths "Failure", §4.9 "never blocks"
+// Degraded paths: "never blocks"
 // ---------------------------------------------------------------------------
 
 // Health not ok -> skip register and lessons, but STILL steer, so the
@@ -656,8 +656,8 @@ test('health down skips register and lessons but still emits a steer block', asy
   assert.match(r.json.systemMessage, /^mubit: offline \([a-z_]+\) · capture buffered$/);
 });
 
-// §5.1 "Failure" — the exact offline line, with nothing listening at all.
-// Grace is pinned to 0 so §4.7's cold-start suppression cannot mask it.
+// The exact offline line, with nothing listening at all.
+// Grace is pinned to 0 so the cold-start suppression cannot mask it.
 test('unreachable endpoint emits the exact offline systemMessage and exits 0', async (t) => {
   const dead = await fakeMubit();
   const deadUrl = dead.url;
@@ -695,7 +695,7 @@ test('capture and recall both disabled emits {} with zero HTTP', async (t) => {
 // budget must clear a realistic cold answer, not a warm one.
 test('a healthy instance that answers health slowly is ready, not offline', async (t) => {
   const server = await fakeMubit({
-    // Correct answer (§1.2: the bare string `OK`), just slow.
+    // Correct answer (the bare string `OK`), just slow.
     'GET /v2/core/health': { text: 'OK', delayMs: 700 },
   });
   t.after(() => server.close());
@@ -742,7 +742,7 @@ test('a slow health plus a stalled lessons call still fits the harness budget', 
   assert.ok(r.ms < 3200, `session-start took ${r.ms}ms, past its 3200ms harness budget`);
 });
 
-// §5.1 "Missing a sub-budget degrades that section only." Lessons stalls past its
+// Missing a sub-budget degrades that section only. Lessons stalls past its
 // 900 ms sub-budget; the hook still steers, just without a lesson section.
 test('a lessons call past its 900ms sub-budget degrades only that section', async (t) => {
   const server = await fakeMubit({

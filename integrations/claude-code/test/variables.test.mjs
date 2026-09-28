@@ -7,14 +7,12 @@
  * only way a client of this plugin reaches `/v2/control/variables/*`, which makes the guards
  * here the whole contract rather than a second line of defence.
  *
- * Every test below is about something the server will not tell you about:
+ * Every test below is a check this module makes before anything is sent, or a property of
+ * the answer:
  *
- *   - A missing `run_id` is a 422 that names nothing useful; a missing `name` writes a
- *     variable called `""`.
- *   - `run_id: "default"` is accepted rather than refused, so nothing upstream stops a
- *     variable being filed under the fallback run id.
- *   - `value_json` is parsed server-side with `serde_json::from_str`, so a value that is not
- *     valid JSON is an `invalid_argument` after a full round trip.
+ *   - `run_id` and `name` are required, and checked here.
+ *   - `run_id: "default"` is refused.
+ *   - `value_json` must be valid JSON, checked before the round trip.
  *   - `list` returns *every* variable in the run, including ones written by other clients.
  */
 
@@ -102,9 +100,7 @@ test('variables: a missing run_id or name is refused before a socket exists', as
 });
 
 /**
- * `MUBIT_DEFAULT_SESSION_ID` defaults to the literal `"default"` on the MCP server, so a
- * variable written under it is filed against no project in particular — and a *pin* is a
- * standing constraint, which is the last thing to leave at an address that is not yours.
+ * `"default"` names no project, and a *pin* is a standing constraint, which is the last thing to leave at an address that is not yours.
  *
  * `lib/http.mjs` refuses it too, on the body. This is the belt: the guard has to hold for
  * `list` and `delete`, which carry a run id in a body that guard does not inspect the same
@@ -133,8 +129,7 @@ test('variables: the poisoned "default" run id never reaches the wire', async (t
 });
 
 /**
- * The server parses `value_json` with `serde_json::from_str` and answers `invalid_argument`
- * on failure. A circular object or a `BigInt` would therefore cost a full round trip to learn
+ * A `value_json` that is not valid JSON is answered `invalid_argument`. A circular object or a `BigInt` would therefore cost a full round trip to learn
  * something this process already knew — and, worse, would look like an instance fault to the
  * circuit breaker.
  */

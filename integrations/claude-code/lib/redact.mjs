@@ -1,7 +1,6 @@
 // @ts-check
 /**
- * `lib/redact.mjs` — the three-stage sanitisation pipeline (
- * spec §6.4).
+ * `lib/redact.mjs` — the three-stage sanitisation pipeline.
  *
  * This is the price of involuntary capture, and the reason it is defensible at
  * all: a hook that records every tool call without the model's participation
@@ -30,9 +29,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 // ---------------------------------------------------------------------------
 
 /**
- * §4.4 writes the placeholder uppercase; spec §6.4 writes it lowercase. The
- * build guide is the implementation contract, so uppercase wins and a test
- * explicitly rejects the lowercase form.
+ * The placeholder is uppercase, and a test explicitly rejects the lowercase form.
  * @param {string} kind
  */
 const PH = (kind) => `[REDACTED:${kind}]`;
@@ -44,7 +41,7 @@ const PH = (kind) => `[REDACTED:${kind}]`;
 /**
  * An idempotency key is not a secret and must survive the scrub.
  *
- * The plugin sets an idempotency key on EVERY ingest batch (§4.2 `postIngest`),
+ * The plugin sets an idempotency key on EVERY ingest batch (`postIngest`),
  * so redacting it destroys the only handle a human has on "did this batch get
  * sent twice?". It looks random enough that the generic rule would take it,
  * which is the whole reason this guard exists.
@@ -56,13 +53,8 @@ const EXEMPT_RE = /idempotency[-_]key/i;
 // ---------------------------------------------------------------------------
 
 /**
- * Matched as a substring of the assignment's *name*, lowercased.
- *
- * Started aligned with the server's own redaction policy so client and server agreed on what
- * counts as a secret. It is now deliberately wider in one direction: `passphrase` and
- * `passwd` were added because a re-probe found `MY_PASSPHRASE=hunter2` surviving intact, and
- * a client that scrubs more than the server is the safe side of that divergence — the server
- * never sees what this removes.
+ * Matched as a substring of the assignment's *name*, lowercased. `passphrase` and `passwd`
+ * are included alongside the usual names.
  */
 const ASSIGNMENT_KEYWORDS = [
   'secret', 'token', 'password', 'passphrase', 'passwd', 'credential', 'assertion',
@@ -83,10 +75,10 @@ const ASSIGNMENT_NAME_SUFFIXES = ['pass'];
 /**
  * `NAME<sep>VALUE`, where NAME is a whole `[A-Za-z0-9_-]` token.
  *
- * §4.4 sketches this with `\b`, but the canonical fixture is
+ * A `\b` boundary looks natural here, but the canonical fixture is
  * `DATABASE_PASSWORD=…` — and `_` is a word character, so a literal `\b` never
  * fires before `PASSWORD`. Matching the whole name token and then testing it
- * with `includes()` mirrors the server (`lower.contains(s)`) and catches
+ * with `includes()` catches
  * `DATABASE_PASSWORD=`, `AWS_SECRET_ACCESS_KEY=` and `X_API_TOKEN=`, which is
  * the single most common shape of a leaked secret.
  *
@@ -139,7 +131,7 @@ const ENTROPY_MIN_LEN = 32;
 const ENTROPY_THRESHOLD = 4.0;
 
 /**
- * The §4.4 pattern table, in application order.
+ * The pattern table, in application order.
  *
  * `assignment` runs FIRST so a keyword-anchored rule always wins the label over
  * the generic ones — `DATABASE_PASSWORD=<b64>` must report `assignment`, not
@@ -441,7 +433,7 @@ function walk(v, cfg, count, depth) {
 // ---------------------------------------------------------------------------
 
 /**
- * §4.4 / spec §6.4. Matching captures are dropped entirely, not scrubbed —
+ * Matching captures are dropped entirely, not scrubbed —
  * a scrubbed `.env` is still a map of which secrets the project holds.
  * `MUBIT_CC_CAPTURE_DENY` appends to this floor; it never replaces it.
  */
@@ -529,7 +521,7 @@ const _ignoreCache = new Map();
  * already declared those paths not-for-sharing and honouring that declaration
  * costs them no new configuration.
  *
- * Memoised per (repo, path): §4.4 wants one `git check-ignore` per drain batch,
+ * Memoised per (repo, path): one `git check-ignore` per drain batch,
  * never one per capture.
  *
  * @param {string} p
@@ -731,9 +723,9 @@ const SHELL_INPUT_KEYS = {
 };
 
 /**
- * §4.4. Without this the plugin records its own traffic, recalls it, then
+ * Without this the plugin records its own traffic, recalls it, then
  * records the recall — and the store fills with
- * `curl https://eu.mubit.ai/v2/control/context`.
+ * `curl https://api.mubit.ai/v2/control/context`.
  *
  * @param {string|undefined} toolName
  * @param {Record<string, any>|undefined} toolInput

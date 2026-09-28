@@ -3,15 +3,13 @@
  * `lib/classify.mjs` — tool event -> `{intent, importance, contentType}`, plus the lesson
  * templates the `remember` skill expands.
  *
- * The mapping table, why `intent` is mandatory, and the type
- * inventory); spec §6.2 (categorisation).
+ * The mapping table, why `intent` is mandatory, and the type inventory.
  *
  * ---------------------------------------------------------------------------
  * The performance fact this whole module exists to serve
  * ---------------------------------------------------------------------------
- * An item that arrives at ingest already carrying a real intent is classified far more
- * cheaply than one that arrives without it. At tool-call frequency that difference is
- * the difference between a plugin you leave on and one you uninstall.
+ * Ingest is faster for an item that already carries a real intent than for one that arrives
+ * without it. At tool-call frequency that difference is the difference between a plugin you leave on and one you uninstall.
  *
  * So: **there is no path through this file that returns an empty, missing, or
  * `unclassified` intent.** Unknown tool, blank name, `undefined`, `null` — all land on a
@@ -26,7 +24,7 @@
 const CONTENT_TYPE = 'text';
 
 /**
- * §4.5, the `tool_name` table. Values are `[intent, importance]`.
+ * The `tool_name` table. Values are `[intent, importance]`.
  *
  * The three groups, and why:
  *   - Read-shaped tools (`Read`/`Grep`/`Glob`/`Bash`/web) are `tool_output`/`low`: cheap,
@@ -37,9 +35,8 @@ const CONTENT_TYPE = 'text';
  *   - `Task` is `trace`/`medium` because dispatching a subagent is an episode, not an
  *     output — the output arrives later, at that subagent's `SubagentStop`.
  *
- * The rows below the guide's table are the remaining real Claude Code built-ins. They are
- * not in §4.5, but §1.5 admits no exceptions, and a named row is always better than the
- * fallback: `AskUserQuestion` in particular is genuine `feedback` — the one entry type
+ * The rows after those three groups are the remaining real Claude Code built-ins. Every tool
+ * gets an intent, and a named row is always better than the fallback: `AskUserQuestion` in particular is genuine `feedback` — the one entry type
  * that records what the human, not the model, decided.
  *
  * The last block is Codex's tool set, for the sibling plugin that shares this file. The two
@@ -60,7 +57,7 @@ const TOOL_TABLE = {
   MultiEdit: ['trace', 'medium'],
   NotebookEdit: ['trace', 'medium'],
 
-  // Shell — also subject to §4.4 self-reference suppression, which runs upstream of this
+  // Shell — also subject to self-reference suppression, which runs upstream of this
   // module in `capture.mjs` step 2.
   Bash: ['tool_output', 'low'],
   BashOutput: ['tool_output', 'low'],
@@ -188,7 +185,7 @@ export function classifyTool(toolName, toolInput, outcome = 'ok') {
 }
 
 /**
- * §4.5, the turn-level rows:
+ * The turn-level rows:
  *
  *   | Stop Q&A pair | `task_result` | `medium` | staged prompt + final message |
  *   | SubagentStop  | `handoff`     | `medium` | attributed to the subagent `agent_id`; the note it hands back |
@@ -196,9 +193,8 @@ export function classifyTool(toolName, toolInput, outcome = 'ok') {
  *
  * A subagent's result is a `handoff` rather than a `task_result` because that is what it is:
  * an answer handed back to the parent role for review, which the parent — or a person — can
- * answer with feedback. The server files `handoff` and `task_result` in the same promotion
- * tier, so nothing is lost by the distinction, and `lib/handoff.mjs` gains the one thing it
- * needs: a fan-out's results listed as open handoffs until each is answered.
+ * answer with feedback. `lib/handoff.mjs` needs exactly that: a fan-out's results listed as
+ * open handoffs until each is answered.
  *
  * `PreCompact`'s importance is "—" in the table because the item never reaches ingest: it
  * goes to `POST /v2/control/checkpoint`, which has no importance field. A valid
@@ -206,7 +202,7 @@ export function classifyTool(toolName, toolInput, outcome = 'ok') {
  * invalid one.
  *
  * `agentId` is the payload's raw `agent_id`; turning it into the wire-level
- * `claude-code-<sessionShort>-sub-<agentShort>` is `deriveAgentId`'s job in §4.3. A
+ * `claude-code-<sessionShort>-sub-<agentShort>` is `deriveAgentId`'s job. A
  * subagent must own its own result — attributing it to the parent session is how a
  * six-subagent fan-out collapses into one indistinguishable blob at recall time.
  *

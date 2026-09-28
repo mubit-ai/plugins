@@ -98,7 +98,7 @@
  * stamps `pin_tokens` on the marker, and doing the same here is precisely the attribution
  * error above, so the pin spend goes on the sub-run record with everything else.
  *
- * §4.9 throughout: never blocks, never exits non-zero. The only thing a failure here costs
+ * Throughout: never blocks, never exits non-zero. The only thing a failure here costs
  * is the memory.
  */
 
@@ -130,7 +130,7 @@ import { readJson, runDir, safeSegment, writeJsonAtomic } from '../../lib/state.
  */
 const OWN_AGENTS = new Set(['mubit-recall', 'mubit-memory:mubit-recall']);
 
-/** Recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
+/** Recall quality does not improve past this, and a 40 KB paste is a slow query. */
 const MAX_QUERY_CHARS = 2000;
 
 /** `prompt_id` and the run ids name files, so they are untrusted input to a path. */

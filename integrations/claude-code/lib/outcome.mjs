@@ -3,9 +3,8 @@
  * `lib/outcome.mjs` — a staged turn -> the one implicit `/v2/control/outcome` record it
  * deserves, or a clear "post nothing".
  *
- * The outcome call and its four cases, the flush of
- * turns the drain never reached), §1.3 (`reference_id` must be non-empty), §6.1
- * (`outcomeMode`).
+ * The outcome call and its four cases, the flush of turns the drain never reached, the
+ * non-empty `reference_id`, and `outcomeMode`.
  *
  * ---------------------------------------------------------------------------
  * Why this is a module and not a function each hook keeps a copy of
@@ -30,8 +29,8 @@
  */
 
 /**
- * "the implicit signal is deliberately weak (0.2, not 1.0) — a turn completing is not
- * proof the recalled memory helped, only weak positive evidence." A failed turn is stronger
+ * The implicit signal is deliberately weak (0.2, not 1.0): a turn completing is not proof
+ * the recalled memory helped, only weak positive evidence. A failed turn is stronger
  * evidence in the other direction, but still an inference, not a user verdict.
  *
  * They are spent only on turns where `capture --stop` found the injected memory's own

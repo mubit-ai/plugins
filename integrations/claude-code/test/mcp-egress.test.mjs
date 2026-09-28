@@ -5,22 +5,18 @@
  * Every other outbound call in this plugin goes through `lib/http.mjs`, which refuses a
  * poisoned run id and scrubs the body first. The MCP server is the exception:
  * it is a vendored bundle that dials the endpoint itself, and nothing in this repo saw the
- * request. Two things used to go out through that gap.
+ * request. The guard sets two things on those requests.
  *
  *   1. **Scope.** `mubit_learned` is the only write tool a default install exposes, and the
- *      bundled SDK hard-codes `lesson_scope: "session"` on it. `"session"` is not the
- *      per-run scope its name suggests — only `"run"` is — while the plugin promises the
- *      opposite in two places a user reads: `plugin.json` (`reflectOnEnd` — "the only path
- *      that promotes a lesson beyond its own run") and `skills/remember/SKILL.md`. The
- *      guard makes the wire match the promise.
+ *      bundled SDK sets `lesson_scope` on it itself. The plugin has its own setting for that
+ *      scope (`mcpLessonScope`), and the guard makes the wire match the setting.
  *
- *   2. **The run id.** Every write tool takes an optional `session_id`, so without the guard
- *      the run a write lands in is whatever the caller passed rather than the one the
- *      launcher derived.
+ *   2. **The run id.** A write lands in the run the launcher derived, whatever
+ *      `session_id` the caller passes.
  *
  * These tests assert on the **wire**, never on the mechanism: `mcpCallTool` runs the shipped
  * `mcp/dist/index.js` for real against a `fakeMubit` and hands back what it sent. A future
- * rebuild that fixes this upstream, or a different guard entirely, passes unchanged.
+ * rebuild that does this upstream, or a different guard entirely, passes unchanged.
  */
 
 import test from 'node:test';
@@ -69,10 +65,8 @@ const wrote = (server) => {
 // What the guard pins
 // ---------------------------------------------------------------------------
 
-// The default, and the one thing on this wire a user can change. `run` was the default until
-// it was measured: on a live instance a reflect over a run holding an agent-written lesson
-// stored its own output at `run` too, so a lesson stamped `run` had no path out of its run at
-// all. `session` is also what the tool's own frozen description tells the model it does.
+// The default, and the one thing on this wire a user can change. `session` is also what the
+// tool's own frozen description tells the model it does.
 test('mubit_learned writes lesson_scope "session" at the default ceiling', async (t) => {
   const { server } = await call(t, 'mubit_learned', { text: LESSON });
   const { item } = wrote(server);
@@ -91,7 +85,7 @@ test('a ceiling of "run" keeps an agent-written lesson inside its own run', asyn
 });
 
 // The tool still has to work. A guard that silently dropped the lesson would pass the test
-// above and be far worse than the bug.
+// above and be worse than no guard.
 test('the lesson itself still reaches the wire intact', async (t) => {
   const { server } = await call(t, 'mubit_learned', { text: LESSON });
   const { body, item } = wrote(server);
@@ -102,17 +96,14 @@ test('the lesson itself still reaches the wire intact', async (t) => {
   assert.equal(item.source, 'agent');
 });
 
-// The launcher exists to derive the run id rather than let it be defaulted. The tool
-// schema then hands the caller a `session_id` parameter that would override it. Closing the
-// second hole is what makes the first one worth closing.
+// The launcher derives the run id; a caller-supplied `session_id` does not override it.
 test('a caller-supplied session_id does not move the write out of the derived run', async (t) => {
   const { server } = await call(t, 'mubit_learned',
     { text: LESSON, session_id: 'someone-elses-run' });
   const { body } = wrote(server);
 
   assert.equal(body.run_id, RUN,
-    'the agent named another run and the write followed it — per-run isolation is only as '
-    + 'good as the run id the write lands in');
+    'a caller-supplied session_id moved the write out of the launcher\'s run');
 });
 
 // ---------------------------------------------------------------------------
@@ -147,9 +138,8 @@ test('an unrecognised ceiling takes the default, never the widest scope', async 
   assert.equal(wrote(server).item.lesson_scope, 'session');
 });
 
-// The original report's exact path: `mubit_remember` is off by default, but `mcpTools`
-// restores it, and its `lesson_scope` is caller-chosen. Restoring a tool must not restore
-// the defect.
+// `mubit_remember` is off by default, but `mcpTools` restores it, and its `lesson_scope` is
+// caller-chosen. Restoring a tool must not lift the ceiling.
 test('a restored mubit_remember cannot write above the ceiling', async (t) => {
   const { server } = await call(t, 'mubit_remember',
     { text: LESSON, intent: 'lesson', lesson_scope: 'global' },
@@ -281,7 +271,7 @@ test('resolveCeiling defaults to run and refuses anything it does not know', asy
   }
 });
 
-// `org` is promotion-only and must never be client-written. It sits above `global`,
+// `org` is never client-written. It sits above `global`,
 // so a ceiling of `global` has to bring it down like anything else.
 test('guardIngest clamps down the whole lattice and never up', async () => {
   const { guardIngest } = await E();
@@ -366,7 +356,7 @@ test('guardIngest is inert on a body it does not understand', async () => {
 
 /**
  * The guard exists because the fix belongs upstream and cannot be made here: the constant
- * lives inside a 5.9 MB vendored bundle whose TypeScript source is not in this repo.
+ * lives inside the vendored server bundle.
  *
  * So this test states the premise. When it fails, the bundle has been rebuilt from an SDK
  * that no longer hard-codes `session` — at which point the guard is clamping something that

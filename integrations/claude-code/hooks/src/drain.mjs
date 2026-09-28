@@ -65,7 +65,7 @@ import {
   ensureDir, pruneStale, readJson, resolveDataDir, runDir, safeSegment, writeJsonAtomic,
 } from '../../lib/state.mjs';
 
-/** "Budget 10 s soft" — nothing waits on it, but it still bounds itself. */
+/** A 10 s soft budget — nothing waits on it, but it still bounds itself. */
 const BUDGET_MS = 10_000;
 
 /** The hard stop, for the case the soft budget cannot be reached (a wedged socket). */
@@ -109,13 +109,13 @@ const CORRECTION_LOCK_WAIT_MS = HARD_STOP_MS + 3_000;
 /** How often to re-try the lock while waiting. */
 const LOCK_POLL_MS = 25;
 
-/** §6.1 `MUBIT_CC_BATCH_MAX_ITEMS`, used when a config could not be resolved. */
+/** `MUBIT_CC_BATCH_MAX_ITEMS`, used when a config could not be resolved. */
 const DEFAULT_BATCH = 32;
 
 /**
  * The 4xx that are NOT a verdict on the payload.
  *
- * 408/429 are the two §5.5 names outright: a timeout and backpressure both mean "ask again".
+ * 408/429 are the obvious two: a timeout and backpressure both mean "ask again".
  * 401/403 are here because quarantining on them would delete a user's memory over a missing
  * `MUBIT_API_KEY` — the one error they can fix in ten seconds — and 404 because a proxy or an
  * older instance without these routes is a deployment problem, not a bad batch. Everything
@@ -142,12 +142,12 @@ function letGo() {
   } catch { /* already released, or stolen past the TTL */ }
   heldLock = null;
   if (payloadFile) {
-    try { unlinkSync(payloadFile); } catch { /* the §7 tmp sweep will get it */ }
+    try { unlinkSync(payloadFile); } catch { /* the tmp sweep will get it */ }
     payloadFile = '';
   }
 }
 
-// "This plugin never exits 2 and never exits non-zero." Not even on a bug of ours.
+// This plugin never exits 2 and never exits non-zero — not even on a bug of ours.
 process.on('uncaughtException', (err) => {
   try { log(cfgRef, 'error', `drain: uncaught ${messageOf(err)}`); } catch { /* nothing left */ }
   letGo();
@@ -233,7 +233,7 @@ async function main() {
   try {
     const drained = await drainSpool(cfg, runId, agentId, promptId, started);
 
-    //
+    // The outcome step.
     await flushOutcome(cfg, runId, agentId, promptId, wantsOutcome);
     if (correctArg && !breakerOpen(cfg)) await sendCorrection(cfg, runId, agentId, correctArg);
 
@@ -287,13 +287,13 @@ async function main() {
     // which is the behaviour that matters — see `lib/pins.mjs`.
   }
 
-  // §7's TTL sweep runs only from here and from `session-end` — never on a blocking hook's
+  // The TTL sweep runs only from here and from `session-end` — never on a blocking hook's
   // critical path — and is itself gated to at most once an hour.
   try { pruneStale(cfg); } catch { /* a sweep is never worth a failure */ }
 }
 
 // ---------------------------------------------------------------------------
-// The drain loop.5 steps 2-6, 8
+// The drain loop
 // ---------------------------------------------------------------------------
 
 /**
@@ -319,14 +319,14 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
       break;
     }
 
-    // §5.5 step 2. A pure read: `request()` consults `allowRequest` itself, and consulting
+    // A pure read: `request()` consults `allowRequest` itself, and consulting
     // it twice would spend the single half-open probe that the dial is entitled to.
     if (breakerOpen(cfg)) {
       log(cfg, 'debug', 'drain: breaker open; items stay spooled', { run_id: runId });
       break;
     }
 
-    // §5.5 steps 3-4. Oldest first, so the wire order is the order things happened.
+    // Oldest first, so the wire order is the order things happened.
     const batch = readBatch(cfg, runId, max);
     if (batch.length === 0) break;
 
@@ -347,7 +347,7 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
     batches++;
 
     if (res.ok) {
-      // §5.5 step 6. `status: "queued"` means accepted, NOT durable — nothing here waits on
+      // `status: "queued"` means accepted, NOT durable — nothing here waits on
       // the job; only the doctor skill polls it. Unlinking on "queued" is deliberate: the
       // alternative is holding every item until a poll that no hot path can afford.
       commitBatch(batch);
@@ -367,7 +367,7 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
     // 5xx, a transport failure, or a breaker that closed the door mid-loop. The batch is
     // still good: leave every file exactly where it is and stop. `lib/http.mjs` has already
     // recorded the failure with the breaker — recording it again here would escalate twice
-    // as fast as §4.7 allows.
+    // as fast as the breaker allows.
     noteFailure(cfg, runId, res);
     break;
   }
@@ -380,12 +380,12 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
  * empty at creation, and an empty lock reads as orphaned to the drainer right behind us).
  *
  * A drainer with nothing to attribute loses the race and stands down at once — that is the
- * §5.5 contract, and the cheap thing to do when another process is already sending the same
+ * contract, and the cheap thing to do when another process is already sending the same
  * spool. A drainer carrying `--with-outcome` waits a little for the lock instead, because
  * `capture --stop` *always* spawns a detached drain first, so the drain behind
  * it is normally the loser. Standing down immediately would mean a failed outcome post is
  * never retried before SessionEnd — the turn's credit lands nowhere, which is the one thing
- * §5.5 step 7 exists to prevent.
+ * the outcome step exists to prevent.
  *
  * It waits for the lock rather than posting without it. A drainer that stood down still
  * never dials: the lock is what makes "exactly one drainer per run" true, and attribution
@@ -454,7 +454,7 @@ function isRejectedPayload(res) {
 
 /**
  * Move the batch to `runs/<run_id>/spool/rejected/`. Quarantined, not deleted — it
- * is evidence, it is what the user pastes into an issue, and §7 expires it after 7 days.
+ * is evidence, it is what the user pastes into an issue, and the sweep expires it after 7 days.
  *
  * @param {Record<string, any>} cfg @param {string} runId
  * @param {{path: string, item: any}[]} batch @param {any} res
@@ -480,7 +480,7 @@ function quarantine(cfg, runId, batch, res) {
       try {
         writeFileSync(to, JSON.stringify(entry.item ?? null), 'utf8');
         unlinkSync(from);
-      } catch { /* leave it; the next drain will try again and §7 will expire it */ }
+      } catch { /* leave it; the next drain will try again and the sweep will expire it */ }
     }
   }
 }
@@ -558,7 +558,7 @@ function advanceMarker(cfg, runId, n) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.5 step 7, deliberately **not** gated on the drain lock.
+ * The outcome step, deliberately **not** gated on the drain lock.
  *
  * The lock guards the spool: one drainer per run, so a batch is never sent twice. The outcome
  * is a different resource — per turn, guarded by `outcome_sent_at` locally and by a stable
@@ -570,7 +570,7 @@ function advanceMarker(cfg, runId, n) {
  * would take the attribution with it. Attribution is the whole point of the turn ending.
  *
  * Skipped while the breaker is open — an outcome dialed into a dead endpoint is one more
- * failure and no attribution. The turn stays `outcome_pending` and §5.7 step 3 flushes it.
+ * failure and no attribution. The turn stays `outcome_pending` and SessionEnd flushes it.
  *
  * @param {Record<string, any>} cfg @param {string} runId @param {string} agentId
  * @param {string} promptId @param {boolean} wanted
@@ -709,7 +709,7 @@ function outcomeLedgerRow(runId, promptId, decision, attempts) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.5 step 2, as a pure read.
+ * Whether the breaker is open, as a pure read.
  *
  * `allowRequest()` is not used here on purpose: while the breaker is open it *consumes* the
  * single half-open probe, and `lib/http.mjs` calls it again on the way to the socket. Asking
@@ -750,7 +750,7 @@ function breakerOpen(cfg) {
 async function readPayload(payloadPath) {
   if (payloadPath) {
     const fromFile = readJson(payloadPath, null);
-    // "the child unlinks the file when done."
+    // The child unlinks the file when done.
     if (process.env.MUBIT_CC_DETACHED === '1') payloadFile = payloadPath;
     if (fromFile && typeof fromFile === 'object' && !Array.isArray(fromFile)) return fromFile;
   }
@@ -829,7 +829,7 @@ function flagValue(argv, name) {
 // Paths and coercion
 // ---------------------------------------------------------------------------
 
-/** §6.1 `MUBIT_CC_BATCH_MAX_ITEMS`. @param {Record<string, any>} cfg @returns {number} */
+/** `MUBIT_CC_BATCH_MAX_ITEMS`. @param {Record<string, any>} cfg @returns {number} */
 function batchMax(cfg) {
   const n = Math.trunc(numOr(cfg?.batchMaxItems, DEFAULT_BATCH));
   return n > 0 ? n : DEFAULT_BATCH;

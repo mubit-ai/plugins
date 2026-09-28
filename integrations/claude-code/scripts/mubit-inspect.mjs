@@ -308,8 +308,8 @@ async function resolveIds(ids, runId, dir) {
 }
 
 /** `POST /v2/control/dereference` answers `{found, evidence:{...}}` — one object, not a list.
- *  `knowledge_confidence` is the stored belief that outcomes move over time; `score` on a
- *  search hit is per-query relevance and a different number entirely. */
+ *  `knowledge_confidence` is the entry's stored confidence; `score` on a search hit is
+ *  per-query relevance and a different number entirely. */
 function gloss(item) {
   if (item.error) return `(${item.error})`;
   if (item.status !== 200) return `(HTTP ${item.status}${item.raw ? ` ${item.raw}` : ''})`;

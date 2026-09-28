@@ -2,13 +2,8 @@
 /**
  * `lib/classify.mjs` — tool event → `{intent, importance}` and lesson templates.
  *
- * Guide §4.5 (the mapping table), §12.6 (test plan), §1.5 (why `intent` is
- * mandatory), §1.6 (the type inventory); spec §6.2 (categorisation).
- *
- * The stake, from §1.5: an item that arrives already carrying a real intent is
- * classified far more cheaply than one that arrives without it. At tool-call
- * frequency that difference is the difference between a plugin you leave on and
- * one you uninstall.
+ * Under test: the tool mapping table, the type inventory, and the rule that every item
+ * the plugin produces carries a real `intent`.
  */
 
 import { describe, it } from 'node:test';
@@ -47,16 +42,16 @@ const IMPORTANCE = ['low', 'medium', 'high', 'critical'];
 /** Lesson types. */
 const LESSON_TYPES = ['success', 'failure', 'observation', 'rule', 'preference'];
 
-/** lesson scope; `org` is promotion-only, never client-written. */
+/** lesson scope; `org` is never client-written. */
 const LESSON_SCOPES = ['run', 'session', 'global', 'org'];
 
 // ===========================================================================
-// The §4.5 tool table
+// The tool table
 // ===========================================================================
 
-describe('classifyTool — the §4.5 tool_name table', () => {
+describe('classifyTool — the tool_name table', () => {
   /**
-   * One row per line of the §4.5 table. `input` is a realistic `tool_input`
+   * One row per line of the table. `input` is a realistic `tool_input`
    * for that tool; the classifier must not need it to reach the intent, but it
    * must not choke on it either.
    */
@@ -85,7 +80,7 @@ describe('classifyTool — the §4.5 tool_name table', () => {
   ];
 
   for (const row of TABLE) {
-    // §4.5 tool_name → {intent, importance}, one assertion per table row.
+    // tool_name → {intent, importance}, one assertion per table row.
     it(`${row.tool} → ${row.intent}/${row.importance}`, async () => {
       const { classifyTool } = await C();
       const r = classifyTool(row.tool, row.input, 'ok');
@@ -194,9 +189,8 @@ describe('classifyTurn — Stop, SubagentStop, PreCompact', () => {
 
   /**
    * SubagentStop → handoff/medium, "attributed to the subagent agent_id". A subagent's
-   * result is the note it hands back to the parent for review — the server files `handoff`
-   * and `task_result` in one promotion tier, so nothing is lost, and the handoff lane gains a
-   * fan-out's results listed as open until each is answered. The third argument is the
+   * result is the note it hands back to the parent for review, so nothing is lost, and the
+   * handoffs list gains a fan-out's results listed as open until each is answered. The third argument is the
    * options bag carrying the hook event and the payload's `agent_id`, which `deriveAgentId`
    * turns into `claude-code-<sessionShort>-sub-<agentShort>`.
    */
@@ -225,8 +219,8 @@ describe('classifyTurn — Stop, SubagentStop, PreCompact', () => {
 
   /**
    * PreCompact → `checkpoint`. Importance is "—" in the table because the
-   * item never reaches ingest: it goes via `POST /v2/control/checkpoint`
-   *, which has no importance field.
+   * item never reaches ingest: it goes via `POST /v2/control/checkpoint`,
+   * which has no importance field.
    */
   it('PreCompact → checkpoint', async () => {
     const { classifyTurn } = await C();
@@ -244,16 +238,15 @@ describe('classifyTurn — Stop, SubagentStop, PreCompact', () => {
 });
 
 // ===========================================================================
-// The §1.5 guarantee
+// The intent guarantee
 // ===========================================================================
 
-describe('§1.5 — every produced item carries a real intent', () => {
+describe('every produced item carries a real intent', () => {
   /**
    * Every tool name the plugin can plausibly see, plus the degenerate ones.
    * The fallback for an unknown tool must still be a real intent: omitting
-   * `intent`, or emitting `unclassified`, sends the item down the LLM
-   * classification path in the server— one round trip per
-   * captured item, at tool-call frequency.
+   * `intent`, or emitting `unclassified`, leaves the item unclassified, at
+   * tool-call frequency.
    */
   const ALL_TOOLS = [
     'Read', 'Grep', 'Glob', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit',
@@ -281,7 +274,7 @@ describe('§1.5 — every produced item carries a real intent', () => {
         assert.equal(typeof r.intent, 'string', `${tool}: intent must be a string`);
         assert.ok(r.intent.length > 0, `${tool}: intent must be non-empty`);
         assert.notEqual(r.intent, 'unclassified',
-          `${tool}: 'unclassified' costs one LLM call per item`);
+          `${tool}: 'unclassified' is not a classification`);
         assert.ok(INTENT_TAGS.includes(r.intent), `${tool}: '${r.intent}' is not a valid intent`);
       });
     }
@@ -294,7 +287,7 @@ describe('§1.5 — every produced item carries a real intent', () => {
 
       assert.equal(typeof r.intent, 'string');
       assert.ok(r.intent.length > 0, 'the fallback must not be empty');
-      assert.notEqual(r.intent, 'unclassified', 'the fallback must not be the LLM trigger');
+      assert.notEqual(r.intent, 'unclassified', 'the fallback must not be unclassified');
       assert.ok(INTENT_TAGS.includes(r.intent),
         `fallback '${r.intent}' is not one of the 19 intent values`);
       assert.ok(IMPORTANCE.includes(r.importance),

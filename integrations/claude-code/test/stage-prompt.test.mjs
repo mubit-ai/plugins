@@ -10,7 +10,7 @@
  * The interesting part is that it shares `runs/<run_id>/turns/<prompt_id>.json` with
  * `prompt-recall`, which fills `recalled` in the same file on the same event. Both
  * orderings must end with a file carrying the prompt AND the recalled ids; neither hook
- * may clobber the other's field. That is the race §5.3 calls out, and it is the reason
+ * may clobber the other's field. That race is the reason
  * both hooks are specified as read-modify-write-atomic.
  */
 
@@ -32,7 +32,7 @@ const RUN_ID = 'cc-test-0000';
 const PROMPT = 'why is the ingest job stuck in queued?';
 
 // What `stage-prompt` may cost on top of starting node — `assertWithinBudget` measures that
-// floor rather than assuming it. The §5.3 target is 25 ms of work; 800 is set from the other
+// floor rather than assuming it. The target is 25 ms of work; 800 is set from the other
 // end, above the 449 ms seen with four suites running at once (see `capture.test.mjs` for the
 // full reasoning). A guard-rail against a gross regression, not a stopwatch: a network call
 // sneaking onto the fast path is caught exactly, by the zero-request assertion below.

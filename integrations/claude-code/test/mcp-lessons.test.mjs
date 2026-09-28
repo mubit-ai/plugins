@@ -3,11 +3,8 @@
  * What `mubit_lessons` actually reads.
  *
  * The tool takes an optional `session_id` and, alone among the read tools, resolves no
- * default for it: with the argument absent the bundled server sends `run_id: ""`. An empty
- * run id is not "no filter applied at the client" — it is a value the control plane reads as
- * "every run this key can see", so the catalogue a model was shown came back from runs that
- * had nothing to do with the one it was working in, in no particular order, cut off at
- * whatever the row limit happened to be.
+ * default for it. The launcher fills in the run it derived, so the catalogue a model is
+ * shown comes from the run it is working in, newest first.
  *
  * The tool's schema cannot be changed: it lives in a vendored bundle this repo cannot
  * rebuild. So the correction goes where every other correction to that bundle goes — the
@@ -102,9 +99,7 @@ function shown(out) {
 // Where the answer comes from
 // ---------------------------------------------------------------------------
 
-// The headline. A default read used to dial the one route whose `limit` is applied before its
-// filter, with the one run id that means "every run" — so it asked the wrong question of the
-// wrong lane. It now asks the feed instead, and the feed collects and sorts before it pages.
+// The headline. A default read comes from the activity feed, pinned to this run.
 test('a default read asks the activity feed, and never the lessons route', async (t) => {
   const { server } = await ask(t, {}, feed([
     lesson({ id: 'a', run: RUN, content: 'mine' }),
@@ -125,7 +120,7 @@ test('another run\'s run-scoped lesson is absent; my own is present', async (t) 
   const contents = shown(out).map((l) => l.content);
   assert.ok(contents.includes('MINE run-scoped'), `own lesson missing from ${JSON.stringify(contents)}`);
   assert.ok(!contents.includes('THEIRS run-scoped'),
-    `another run's run-scoped lesson leaked into the default read: ${JSON.stringify(contents)}`);
+    `another run's run-scoped lesson appeared in the default read: ${JSON.stringify(contents)}`);
 });
 
 // A lesson that was deliberately widened is *supposed* to travel. Narrowing the default read
@@ -180,10 +175,9 @@ test('a lesson of mine is mine under either spelling of the run id', async (t) =
 // The false negative this replaces
 // ---------------------------------------------------------------------------
 
-// The regression test for the whole exercise. On the lessons route `limit` is applied before
-// the scope filter, so `{scope:"global", limit:2}` over a busy instance means "take two
-// arbitrary rows, keep whichever are global" — reliably zero, and indistinguishable from an
-// instance that has never promoted anything. Filtering before limiting is the fix.
+// The regression test for the whole exercise: `{scope:"global", limit:2}` must find the
+// global lessons even when most rows on the instance are not global. The client filters
+// before it limits.
 test('scope:"global" with a small limit finds the global lessons anyway', async (t) => {
   const entries = [];
   for (let i = 0; i < 30; i += 1) {
@@ -274,7 +268,7 @@ test('an explicit session_id dials the lessons route and skips the census', asyn
 // Failure is narrow, not wide
 // ---------------------------------------------------------------------------
 
-// Failing open would restore the defect at exactly the moment nobody can see it. A default
+// Failing open would widen the read at exactly the moment nobody can see it. A default
 // read whose census died goes out with the run id FILLED IN, which is the narrow direction.
 test('a dead feed falls back to a pinned request, not the wide one', async (t) => {
   const { server, out } = await ask(t, {}, feed([], {

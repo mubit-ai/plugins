@@ -2,19 +2,15 @@
 /**
  * `hooks/src/session-end.mjs` — SessionEnd.
  *
- * Guide sections under test:
- *   §5.7  the ordered flow, the reflect body, the once-marker, best-effort failure
- *   §1.4  background extraction produces lessons but NEVER widens their scope
- *   §4.6  `claimOnce` — the once-marker, and "proceed on marker failure"
- *   §7    `runs/<run_id>/flushed-<session_id>.marker`, spool keyed by run_id
- *   §12.4 session-end drains, reflects by default, then heartbeats idle
+ * Under test:
+ *   - the ordered flow, the reflect body, the once-marker, best-effort failure
+ *   - `claimOnce` — the once-marker, and "proceed on marker failure"
+ *   - `runs/<run_id>/flushed-<session_id>.marker`, spool keyed by run_id
+ *   - session-end drains, reflects by default, then heartbeats idle
  *
- * The fact this whole file exists to protect: Mubit extracts lessons on its own as
- * it ingests, but those keep the scope they were extracted at — and a `run`-scoped lesson
- * is invisible to the next session. Widening scope is reserved for the explicit reflect
- * path, so `POST /v2/control/reflect` at SessionEnd is the ONLY call that can widen a
- * lesson's scope past `run`. Deleting it must fail these tests loudly, not quietly cost
- * cross-session memory.
+ * The fact this whole file exists to protect: `POST /v2/control/reflect` at SessionEnd is
+ * what turns this session into lessons a later session can recall. Deleting it must fail
+ * these tests loudly, not quietly cost cross-session memory.
  *
  * Budget 8000 ms internal / 12 s hook timeout. Runs INLINE, not detached — the process
  * is going away and a detached child may be reaped before it finishes.
@@ -99,7 +95,7 @@ const seq = (server) => server.requests.map((r) => `${r.method} ${r.path}`).join
 // The ordered flow
 // ---------------------------------------------------------------------------
 
-// §5.7 steps 2-6: drain, reflect, heartbeat idle, marker — in that order.
+// Drain, reflect, heartbeat idle, marker — in that order.
 test('drains the spool, then reflects, then heartbeats idle', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -128,7 +124,7 @@ test('drains the spool, then reflects, then heartbeats idle', async (t) => {
   assert.equal(items.length, 3);
   assert.equal(server.lastCall('POST', '/v2/control/ingest').body.run_id, RUN_ID);
   for (const it of items) {
-    // A missing intent costs one LLM round trip per item, server-side.
+    // Every item keeps its intent.
     assert.ok(it.intent && it.intent !== 'unclassified', `item ${it.item_id} lost its intent`);
     assert.ok(it.item_id && it.content_type, 'item_id and content_type are required');
   }
@@ -137,9 +133,8 @@ test('drains the spool, then reflects, then heartbeats idle', async (t) => {
   assert.equal(spoolFiles(dataDir, RUN_ID).length, 0, 'a committed batch is unlinked');
 });
 
-// §5.7 step 4 + §1.4 — THE test. Reflect is on by default because it is the only path
-// that widens a lesson's scope past `run`; auto-reflection's lessons are skipped by the
-// promotion loop by design. A default of "off" would silently cost cross-session memory.
+// THE test. Reflect is on by default: a default of "off" would silently cost
+// cross-session memory.
 test('issues POST /v2/control/reflect BY DEFAULT with no opt-in env', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -152,8 +147,7 @@ test('issues POST /v2/control/reflect BY DEFAULT with no opt-in env', async (t) 
   assertHookContract(r);
   server.assertCalled('POST', '/v2/control/reflect', 1);
 
-  // The body, verbatim. `include_step_outcomes` folds outcome signals in
-  // (`control.proto`) — the NEGATIVE ones produce the highest-value lessons. `last_n_items`
+  // The body, verbatim. `include_step_outcomes` includes the run's outcome signals. `last_n_items`
   // bounds the evidence to the most recent items of the run, which at a session end is
   // this session.
   const body = server.lastCall('POST', '/v2/control/reflect').body;
@@ -223,7 +217,7 @@ test('stops after two reflect attempts when the 504 persists', async (t) => {
   const r = await runHook('session-end', fx.sessionEnd({ cwd: PROJECT_DIR }),
     { env: env(dataDir, server.url) });
 
-  // A failing reflect is best-effort. It costs scope promotion, never the hook.
+  // A failing reflect is best-effort. It costs this session's lessons, never the hook.
   assertHookContract(r);
   assert.deepEqual(r.json, { suppressOutput: true });
   server.assertCalled('POST', '/v2/control/reflect', 2);
@@ -282,7 +276,7 @@ test('drains inline, not detached — the ingest lands before the process exits'
 });
 
 // A turn left `outcome_pending` by `capture --stop` is attributed before
-// reflect, so the reflection sees the outcome signals (§5.5: reference_id "global" is the
+// reflect, so the reflection sees the outcome signals (reference_id "global" is the
 // run-level sentinel; the real attribution lives in entry_ids[]).
 test('flushes a turn left outcome_pending, before reflecting', async (t) => {
   const server = await fakeMubit();
@@ -377,7 +371,7 @@ test('a correction already delivered is not posted again at session end', async 
 });
 
 // ---------------------------------------------------------------------------
-// §5.7 step 3, conditioned on evidence — one rule, shared with `drain`
+// The outcome flush, conditioned on evidence — one rule, shared with `drain`
 // ---------------------------------------------------------------------------
 
 /**
@@ -504,8 +498,8 @@ for (const mode of ['off', 'explicit']) {
 
 /**
  * THE test for this divergence: the same turn file, through both hooks, must reach the wire
- * as the same record — down to the idempotency key, which is what makes a concurrent drain
- * and a session-end flush a no-op instead of double reinforcement.
+ * as the same record — down to the idempotency key, so a concurrent drain and a session-end
+ * flush post it once, not twice.
  *
  * Both hooks are given the same run id, the same prompt id and a payload carrying the same
  * session id, so every field of the request is a function of the turn file alone. Anything
@@ -553,7 +547,7 @@ for (const row of [
 }
 
 /**
- * THE test for this ticket, on the flush side — and the one that has to exist because of
+ * THE test for this change, on the flush side — and the one that has to exist because of
  * *how* `StopFailure` fires.
  *
  * The host's registry (Claude Code 2.1.235) has `StopFailure` firing **instead of** Stop when
@@ -630,8 +624,8 @@ test('skips reflect when MUBIT_CC_REFLECT_ON_END=0, but still drains and heartbe
   server.assertCalled('POST', '/v2/control/agents/heartbeat', 1);
 });
 
-// Nothing ingested this session means there is nothing to reflect ON; an
-// LLM-backed call over an empty tail is pure cost.
+// Nothing ingested this session means there is nothing to reflect ON; a
+// reflect over an empty tail is pure cost.
 /**
  * Reflection reads the server's tail of the run, so it is only meaningful over a run the
  * server actually has. A non-empty spool means two opposite things: another drainer is about
@@ -706,9 +700,9 @@ test('reflects a session whose only ingest went through the MCP server', async (
 // Idempotence and durability
 // ---------------------------------------------------------------------------
 
-// §5.7 step 1 + §4.6 — `claimOnce(flushed-<session_id>)`. SessionEnd can fire more than
+// `claimOnce(flushed-<session_id>)`. SessionEnd can fire more than
 // once (reason=exit after reason=clear, a wrapper re-running the hook); the second
-// invocation must not re-send. §7 names the marker file.
+// invocation must not re-send.
 test('running session-end twice sends the ingest exactly once', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
@@ -735,7 +729,7 @@ test('running session-end twice sends the ingest exactly once', async (t) => {
   assert.equal(server.countOf('POST', '/v2/control/reflect'), 1);
 });
 
-// §5.7 "Failure" / §7 — the spool is keyed by run_id, not by session, so a session that
+// The spool is keyed by run_id, not by session, so a session that
 // crashed without ending still has its captures picked up by the next session's flush.
 test('drains a crashed session spool, because the spool is keyed by run_id', async (t) => {
   const server = await fakeMubit();
@@ -773,10 +767,10 @@ test('marker gains reflect {at, lessons_stored, status} from the response', asyn
   assert.ok(marker.reflect.at >= before);
 });
 
-// §5.7 "Failure" / §12.1 — a failed reflect is best-effort. What must NOT happen is
+// A failed reflect is best-effort. What must NOT happen is
 // losing the drain with it: the captures are already gone from the spool's perspective.
 test('a failed reflect is logged, marked failed, exits 0 — and the drain still commits', async (t) => {
-  const server = await fakeMubit({ 'POST /v2/control/reflect': { status: 500, json: { error: 'llm down' } } });
+  const server = await fakeMubit({ 'POST /v2/control/reflect': { status: 500, json: { error: 'reflect down' } } });
   t.after(() => server.close());
   const dataDir = makeDataDir();
   seedSpool(dataDir, 3);
@@ -800,13 +794,10 @@ test('a failed reflect is logged, marked failed, exits 0 — and the drain still
 // ---------------------------------------------------------------------------
 
 /**
- * §1.4 / §5.7 "Expectation-setting". A reflect that stores 3 lessons has NOT made them
- * cross-session durable. Storing a lesson and that lesson outliving its own run are two
- * different events; only the first is anything this hook can see, and nothing in the reflect
- * response says whether the second will follow.
+ * A reflect that stores 3 lessons has not promised they will be recalled in a later session:
+ * the hook sees only that they were stored, and nothing in the reflect response says more.
  *
- * One reflect per session is the NECESSARY condition, not the sufficient one. So the hook
- * reports a count and nothing more — a marker or systemMessage promising durability would
+ * So the hook reports a count and nothing more — a marker or systemMessage promising durability would
  * be a lie the user only discovers two sessions later, when the lesson is not there.
  */
 test('reflect reports lessons_stored without claiming cross-session durability', async (t) => {

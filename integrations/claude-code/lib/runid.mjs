@@ -55,11 +55,11 @@ import { dataDir, readJson, runDir, safeSegment, writeJsonAtomic } from './state
 // Constants
 // ---------------------------------------------------------------------------
 
-/** §4.3 strategies. Anything else resolves to the default rather than failing. */
+/** Run strategies. Anything else resolves to the default rather than failing. */
 const STRATEGIES = new Set(['per-directory', 'git-branch', 'per-conversation', 'static']);
 const DEFAULT_STRATEGY = 'per-directory';
 
-/** §4.3 `SessionStart.source`. An unrecognised source is treated as "no source". */
+/** `SessionStart.source`. An unrecognised source is treated as "no source". */
 const SOURCES = new Set(['startup', 'resume', 'clear', 'compact', 'fork']);
 
 /**
@@ -117,7 +117,7 @@ function agentRole(env = process.env) {
 const AGENT_SHORT = 12;
 
 const HASH_LEN = 8;
-/** §7 names `breaker/<endpoint_hash>.json` as `sha256(endpoint).slice(0, 12)`. */
+/** `breaker/<endpoint_hash>.json` uses `sha256(endpoint).slice(0, 12)`. */
 const ENDPOINT_HASH_LEN = 12;
 
 const MAX_SLUG = 32;
@@ -133,7 +133,7 @@ const TOUCH_INTERVAL_MS = 60 * 1000;
 // ---------------------------------------------------------------------------
 
 /**
- * The run id for this session, honouring `cfg.runStrategy` and the §4.3
+ * The run id for this session, honouring `cfg.runStrategy` and the
  * `SessionStart.source` table:
  *
  * | source | behaviour |
@@ -144,7 +144,7 @@ const TOUCH_INTERVAL_MS = 60 * 1000;
  * | `compact`, `fork` | reuse the parent session record's run |
  * | absent / unknown | reuse the mapped run when there is one (a `PostToolUse` after a `/clear` belongs to the cleared run), else derive |
  *
- * Writes the §4.3 `SessionRecord` back to `sessions/<host_session_id>.json`
+ * Writes the `SessionRecord` back to `sessions/<host_session_id>.json`
  * whenever the mapping changes — which is what makes two successive `/clear`s
  * yield `-c1` then `-c2`.
  *
@@ -240,7 +240,7 @@ function deriveFresh(cfg, payload, strategy) {
 }
 
 /**
- * §4.3 `static`: "the literal `MUBIT_CC_RUN_ID`" — with one hard exception. A
+ * `static`: the literal `MUBIT_CC_RUN_ID` — with one hard exception. A
  * pin of `"default"` or of nothing but whitespace is the failure this whole
  * module exists to prevent, so it is a config error rather than a value.
  * @param {Record<string, any>} cfg
@@ -361,7 +361,7 @@ function assertUsableRunId(id) {
     throw new Error(
       `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. `
       + 'An empty run id, a bare "cc-" prefix, or the literal "default" would write this '
-      + "project's memory into a run shared by every user and project on the machine.");
+      + "project's memory into a run that names no project.");
   }
   return s;
 }
@@ -940,7 +940,7 @@ export function scanRunMarkers(root) {
       }
       out.push({ runId, at, clearCount: Number(/-c(\d+)$/.exec(runId)?.[1] ?? 0) });
     }
-  } catch { /* §4.9: an unreadable data dir is no runs, not a crash */ }
+  } catch { /* an unreadable data dir is no runs, not a crash */ }
   return out;
 }
 

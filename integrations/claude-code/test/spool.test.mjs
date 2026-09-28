@@ -2,8 +2,8 @@
 /**
  * `lib/spool.mjs` — the capture buffer that sits between a hook and the network.
  *
- * Guide sections under test: §4.6 (the module), §7 (state layout and the 60 s drain-lock
- * TTL), §5.4/§5.5 (who calls it), §12.6 (the 200-concurrent-append property).
+ * Under test: the module, the state layout and the 60 s drain-lock TTL, who calls it, and
+ * the 200-concurrent-append property.
  *
  * The design decision this file exists to defend: **one file per item, not an append-only
  * NDJSON log.** `fs.appendFileSync` with `O_APPEND` is only atomic below `PIPE_BUF`,
@@ -96,7 +96,7 @@ test('appendItem: the file is the item, verbatim and parseable', async () => {
   const got = readSpool(dataDir, listSpool(dataDir)[0]);
   assert.equal(got.item_id, 'i-verbatim');
   assert.equal(got.content_type, 'text');
-  assert.equal(got.intent, it.intent, '§1.5: intent must survive the round trip');
+  assert.equal(got.intent, it.intent, 'intent must survive the round trip');
 });
 
 // THE property that justifies file-per-item. Eight real processes, 25 items
@@ -150,7 +150,7 @@ test('appendItem: 200 concurrent appends across processes produce 200 individual
 });
 
 // ---------------------------------------------------------------------------
-// readBatch.6 (oldest first, respects max, unlinks unparseable files)
+// readBatch (oldest first, respects max, unlinks unparseable files)
 // ---------------------------------------------------------------------------
 
 // Oldest first. The store's episodic ordering is only as good as the drain's.
@@ -233,7 +233,7 @@ test('readBatch: ignores the spool/rejected/ quarantine directory', async () => 
 });
 
 // ---------------------------------------------------------------------------
-// commitBatch.5 step 6 ("2xx → commitBatch")
+// commitBatch ("2xx → commitBatch")
 // ---------------------------------------------------------------------------
 
 // Unlink only after a 2xx. A 5xx or a network failure leaves the files in place.
@@ -269,7 +269,7 @@ test('commitBatch: an empty batch is a no-op', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The drain lock, §7 (`runs/<run_id>/drain.lock`, stale at 60 s)
+// The drain lock (`runs/<run_id>/drain.lock`, stale at 60 s)
 // ---------------------------------------------------------------------------
 
 // Single drainer. Two hooks can fire a detached drain within milliseconds of
@@ -411,7 +411,7 @@ test('acquireFlushLease: a lease past the TTL is stolen even from a live pid', a
   assert.ok(S.acquireFlushLease(cfg, RUN, SESSION)?.path);
 });
 
-// §4.6's direction of failure, restated for the lease: an unwritable data dir may not veto
+// The spool's direction of failure, restated for the lease: an unwritable data dir may not veto
 // the flush. `create` reports the same 0 for "someone holds it" and for "this directory took
 // nothing", so the lock file's own absence is what tells them apart.
 test('acquireFlushLease: an unwritable run dir proceeds rather than standing down', async (t) => {
@@ -483,7 +483,7 @@ test('claimOnce: returns true when the marker cannot be written at all (EACCES)'
 });
 
 // ---------------------------------------------------------------------------
-// spoolStats.3 (the drain trigger)
+// spoolStats (the drain trigger)
 // ---------------------------------------------------------------------------
 
 // `count >= batchMaxItems OR oldestMs >= batchMaxAgeMs` triggers a detached drain, so

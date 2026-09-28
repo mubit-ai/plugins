@@ -157,7 +157,7 @@ if (hooks) {
   const missing = expectedEvents.filter((e) => !events.includes(e));
   const extra = events.filter((e) => !expectedEvents.includes(e));
   ok(missing.length === 0 && extra.length === 0,
-    `hooks.json must register exactly the ten events in §3.2; missing [${missing}], unexpected [${extra}]`);
+    `hooks.json must register exactly the ten expected events; missing [${missing}], unexpected [${extra}]`);
 
   // StopFailure's matcher filters on the payload's `error`, and that taxonomy is not a fixed
   // list: Claude Code 2.1.235 publishes ten values plus a feature-flagged eleventh
@@ -408,8 +408,8 @@ if (existsSync(P.readme)) {
     + 'some other install path.');
 
   ok(has('reflectOnEnd') && /reflectOnEnd[\s\S]{0,600}?(cross-session|beyond its own run)/.test(readme),
-    'README.md must state what turning off `reflectOnEnd` costs: it is the only path that promotes a lesson '
-    + 'beyond its own run, so disabling it for latency trades away cross-session memory');
+    'README.md must state what turning off `reflectOnEnd` costs: a session that ends without reflecting '
+    + 'does not carry its lessons beyond its own run, so disabling it for latency trades away cross-session memory');
 
   ok(has('per-conversation', 'per-directory')
     && /per-conversation[\s\S]{0,600}?(hook|capture)[\s\S]{0,200}?MCP/i.test(readme),
@@ -418,7 +418,7 @@ if (existsSync(P.readme)) {
 
   ok(has('/plugin marketplace add mubit-ai/plugins', '/plugin install mubit-memory@mubit'),
     'README.md must give both install commands verbatim: `/plugin marketplace add mubit-ai/plugins` then '
-    + '`/plugin install mubit-memory@mubit` (§13 "Done when")');
+    + '`/plugin install mubit-memory@mubit`');
 
   for (const key of Object.keys(plugin?.userConfig ?? {})) {
     ok(new RegExp(`\\b${key}\\b`).test(readme),
@@ -440,7 +440,7 @@ if (existsSync(P.readme)) {
     'README.md must show the literal `[REDACTED:<kind>]` placeholder — the redaction guarantee is '
     + 'the plugin\'s headline differentiator and reads as marketing until the reader sees its output');
   ok(has('denylist'),
-    'README.md must describe the path denylist (§4.4 stage 2) — matching captures are DROPPED, not scrubbed, '
+    'README.md must describe the path denylist — matching captures are DROPPED, not scrubbed, '
     + 'which is a stronger guarantee than the pattern scrub and is invisible if unstated');
 } else {
   fail(`README.md does not exist: ${P.readme}\n`

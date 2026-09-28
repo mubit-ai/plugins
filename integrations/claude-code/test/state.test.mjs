@@ -37,7 +37,7 @@ const DAY = 24 * HOUR;
 const MIB = 1024 * 1024;
 
 /**
- * A full §4.1 `Config` literal carrying the §6.1 defaults. These modules take a
+ * A full `Config` literal carrying the documented defaults. These modules take a
  * `cfg` and read `dataDir`/`logLevel`/`redact` off it; handing them a complete
  * object keeps a test failure about state, not about a missing field.
  * @param {string} dataDir
@@ -61,7 +61,7 @@ function mkCfg(dataDir, over = {}) {
 /**
  * Run a synchronous call with the data dir pinned in `process.env` too, so the
  * test passes whether the module reads `cfg.dataDir` or resolves from the
- * environment (§4.8 `dataDir()`).
+ * environment (`dataDir()`).
  * @template T
  * @param {string} dir
  * @param {() => T} fn
@@ -131,7 +131,7 @@ test('dataDir(): falls back to CLAUDE_PLUGIN_DATA when the override is unset', a
   assert.equal(got, host);
 });
 
-// §4.8 + §7: resolution order, level 3 — ~/.claude/plugins/data/mubit-memory.
+// Resolution order, level 3 — ~/.claude/plugins/data/mubit-memory.
 test('dataDir(): falls back to ~/.claude/plugins/data/mubit-memory', async () => {
   const state = await lib('state.mjs');
   const home = tempDir('mubit-cc-home-');
@@ -243,7 +243,7 @@ test('readJson(): returns the fallback for a missing file', async () => {
   assert.deepEqual(state.readJson(join(dir, 'status', 'nope.json'), sentinel), sentinel);
 });
 
-// §4.8 + §12.1: a truncated or corrupt file is normal after a SIGKILL.
+// A truncated or corrupt file is normal after a SIGKILL.
 test('readJson(): returns the fallback for corrupt and truncated files', async () => {
   const state = await lib('state.mjs');
   const dir = makeDataDir();
@@ -274,7 +274,7 @@ test('readJson(): defaults the fallback to null, and parses valid JSON', async (
 // ===========================================================================
 
 /**
- * The §7 TTL table, one row per path class. Each row is exercised in two fresh
+ * The TTL table, one row per path class. Each row is exercised in two fresh
  * data dirs — one where the file is past its TTL and must vanish, one where it
  * is well inside it and must survive. Two dirs rather than two files because
  * `status/health.json` is a fixed name and cannot have a sibling.
@@ -315,7 +315,7 @@ const TTL_ROWS = [
 ];
 
 for (const row of TTL_ROWS) {
-  // §7 TTL table: anything past its TTL is swept.
+  // TTL table: anything past its TTL is swept.
   test(`pruneStale(): drops a stale ${row.what} (TTL ${row.ttl}ms)`, async () => {
     const state = await lib('state.mjs');
     const dir = makeDataDir();
@@ -324,7 +324,7 @@ for (const row of TTL_ROWS) {
     assert.equal(existsSync(p), false, `${row.rel} was past its ${row.ttl}ms TTL and should be gone`);
   });
 
-  // §7 TTL table: anything inside its TTL is untouched — pruning must not eat live state.
+  // TTL table: anything inside its TTL is untouched — pruning must not eat live state.
   test(`pruneStale(): keeps a fresh ${row.what} (TTL ${row.ttl}ms)`, async () => {
     const state = await lib('state.mjs');
     const dir = makeDataDir();
@@ -424,8 +424,8 @@ const MARKER = {
   last_error: '',
 };
 
-// §4.8 + §7: the marker lives at status/<run_id>.json and round-trips whole.
-test('updateMarker()/readMarker(): the §4.8 Marker round-trips at status/<run_id>.json', async () => {
+// The marker lives at status/<run_id>.json and round-trips whole.
+test('updateMarker()/readMarker(): the Marker round-trips at status/<run_id>.json', async () => {
   const markers = await lib('markers.mjs');
   const dir = makeDataDir();
   const cfg = mkCfg(dir);
@@ -537,7 +537,7 @@ test('log(): redacts secrets in the message before they reach the file', async (
   assert.ok(body.includes('[REDACTED'), 'the redaction marker is missing');
 });
 
-// §4.8 + §4.4: structured fields go out through the same scrub as the message.
+// Structured fields go out through the same scrub as the message.
 test('log(): redacts secrets in the fields object too', async () => {
   const log = await lib('log.mjs');
   const dir = makeDataDir();
@@ -553,7 +553,7 @@ test('log(): redacts secrets in the fields object too', async () => {
   assert.equal(body.includes(fx.SECRETS.githubToken), false, 'a token leaked through nested fields');
 });
 
-// §6.1 `MUBIT_CC_LOG_LEVEL`: below-threshold messages cost nothing.
+// `MUBIT_CC_LOG_LEVEL`: below-threshold messages cost nothing.
 test('log(): honours the configured level', async () => {
   const log = await lib('log.mjs');
   const dir = makeDataDir();

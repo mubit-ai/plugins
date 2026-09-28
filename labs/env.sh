@@ -25,16 +25,15 @@ export MUBIT_CC_DATA_DIR="$CLAUDE_PLUGIN_DATA"
 export MUBIT_ENDPOINT="http://127.0.0.1:${LAB_PORT:-8787}"
 export MUBIT_API_KEY="mbt_lab_0123456789abcdef0123456789abcdef"
 export MUBIT_CC_LOG_LEVEL="debug"
-# The MCP server's poisoned default. Blanked so nothing can inherit it.
+# Blank, so the lab never inherits a session id from the shell.
 export MUBIT_DEFAULT_SESSION_ID=""
 
 export HOOKS="$CLAUDE_PLUGIN_ROOT/hooks/src"
 export PAYLOADS="$LAB_ROOT/payloads"
 
-# The run id these settings derive. The fake instance reads it to decide which of its lessons
-# belong to "your" run: the activity feed is asked for the whole account and filtered by the
-# client, so that request names no run at all. The id is a hash of the project path, so it
-# differs per worktree and cannot be hardcoded anywhere.
+# The run id these settings derive. LAB_RUN_ID marks which of the fake instance's sample
+# lessons are yours; the id is a hash of the project path, so it differs per worktree and
+# cannot be hardcoded anywhere.
 LAB_RUN_ID="$(node "$LAB_ROOT/runid.mjs" 2>/dev/null | awk '/^run_id/ { print $2 }')"
 export LAB_RUN_ID
 

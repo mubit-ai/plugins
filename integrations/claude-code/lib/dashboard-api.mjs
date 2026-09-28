@@ -214,27 +214,22 @@ export function normalizeLesson(raw, ctx = {}) {
  * The same lesson as it arrives on the **activity** feed, normalised to the same keys.
  *
  * The Memory tab reads lessons from `/v2/control/activity` rather than `/v2/control/lessons`,
- * because that route applies `limit` before it filters to `entry_type == "lesson"` — `limit:
- * 200` means "take two hundred arbitrary facts and keep whichever happen to be lessons", and
- * on a busy instance that is reliably none of them. The feed collects, filters, sorts, and only
- * then pages.
+ * because the feed collects, filters by entry type, sorts, and only then pages.
  *
- * Nothing is lost in the swap. `list_lessons` builds every field it returns out of
- * `f.metadata`, and `metadata_json` is that same map serialised whole — so the fields are all
- * still here, one indirection further in, plus `created_at`, which `LessonEntry` has no room
+ * Nothing is lost in the swap. `metadata_json` carries the lesson's fields whole — so they are
+ * all still here, one indirection further in, plus `created_at`, which `LessonEntry` has no room
  * for and `createdAtIndex` below exists to go and fetch, plus `env_tags`.
  *
- * Two fields differ in ways that matter. `list_lessons` falls back to `&f.run_id`, the
- * *scoped* run id as stored, where the feed serialises `unscoped_run_id_for_owner` — so off the
- * lessons route `sourceRunId` and the page's current run are different strings even when they
- * name the same run, and every lesson reads as foreign. And an absent scope becomes `run` here,
- * matching the server's own default, rather than an empty string belonging to neither side of
+ * Two fields differ in ways that matter. The lessons route returns the *scoped* run id as
+ * stored, where the feed returns the unscoped one — so off the lessons route `sourceRunId` and
+ * the page's current run are different strings even when they name the same run, and every
+ * lesson reads as foreign. And an absent scope becomes `run` here, matching the API's default, rather than an empty string belonging to neither side of
  * the leak filter.
  *
- * ## The promotion keys
+ * ## Pass-through keys
  *
- * Three fields are carried through untouched rather than coerced: whatever an instance stamps
- * about whether a lesson is travelling is the answer, and rewriting it into this module's own
+ * Three metadata fields are carried through untouched rather than coerced: whatever an
+ * instance stamps on a lesson is the answer, and rewriting it into this module's own
  * vocabulary would put an interpretation between a reader and the only evidence there is.
  *
  * `promotionStamped` is separate from the values because an absent key and a key set to
@@ -250,8 +245,8 @@ export function normalizeLesson(raw, ctx = {}) {
 export function normalizeActivityLesson(entry, ctx = {}) {
   const e = (entry && typeof entry === 'object') ? entry : {};
   const meta = parseMetadata(e.metadata_json) || {};
-  // The same `or_else` pair, in the same order, that `list_lessons` reads: an instance with
-  // both conventions in its history serves both, and the server accepts both.
+  // Both `scope` and `lesson_scope` are accepted, in that order: an instance with both
+  // conventions in its history serves both.
   const stated = str(meta.scope) || str(meta.lesson_scope);
   const scope = stated || DEFAULT_SCOPE;
   const sourceRun = String(meta.source_run_id || e.run_id || '');
@@ -313,18 +308,16 @@ function provenanceOf(meta) {
   };
 }
 
-/** The four per-outcome counters `bump_outcome_counters` keeps. Any one present means the lesson has been credited. */
+/** The four per-outcome counters a lesson's metadata may carry. Any one present means the lesson has been credited. */
 const COUNTER_KEYS = Object.freeze(['success_count', 'failure_count', 'partial_count', 'neutral_count']);
 
 /**
  * What the instance already knows about a lesson's track record, read off its metadata.
  *
- * Every accepted outcome runs `bump_outcome_counters` server-side, which stamps
- * `success_count`, `reinforcement_count`, `confidence`, `last_outcome`, `last_outcome_at` and
- * `last_outcome_actor` into the lesson's metadata — and `failure_count`, `partial_count` and
- * `neutral_count` only once such an outcome has landed. Measured on a hosted instance: twenty
- * of sixty-six lessons carried counters, none carried a failure count yet. The lessons route
- * serialises none of this; the census (`projection: 'full'`) carries the metadata whole, so
+ * A credited lesson's metadata may carry `success_count`, `reinforcement_count`,
+ * `confidence`, `last_outcome`, `last_outcome_at` and `last_outcome_actor` — and
+ * `failure_count`, `partial_count` and `neutral_count` once such an outcome is recorded. The
+ * lessons route returns none of this; the census (`projection: 'full'`) carries the metadata whole, so
  * the counters ride the same path as scope and provenance.
  *
  * Absent counts are zero: a counter that was never bumped is a count of nothing, and a page
@@ -474,9 +467,8 @@ export function normalizeEvidence(raw) {
 /**
  * `POST /v2/control/dereference` — one entry by id, whatever its type.
  *
- * The body is exactly two fields. `user_id` and `agent_id` are accepted by the route and are
- * retrieval filters server-side; sending either empty is the trap the ingest side already
- * fell into once. `found: false` is the caller's 404, not a 200 with nothing in it.
+ * The body is exactly two fields. `user_id` and `agent_id` are accepted by the route and act
+ * as filters, so neither is sent. `found: false` is the caller's 404, not a 200 with nothing in it.
  *
  * @param {Record<string, any>} cfg
  * @param {{run?: string, id?: string}} [params]
@@ -541,8 +533,8 @@ export function parseMetadata(raw) {
 /**
  * `POST /v2/control/lessons`, joined against `POST /v2/control/activity` for `created_at`.
  *
- * `run_id` is optional on the lessons route and an absent one means every run, which is what
- * a global-lessons view wants — so an empty `run` is passed through rather than defaulted.
+ * `run_id` is optional on the lessons route, and the global-lessons view sends none on
+ * purpose — so an empty `run` is passed through rather than defaulted.
  *
  * The join degrades on its own: a failed activity call leaves every `createdAt` empty and sets
  * `joined: false`, and the lessons still render. Failing the whole route because a timestamp
@@ -584,9 +576,8 @@ export async function fetchLessons(cfg, params = {}) {
  * `id -> created_at`, built from the activity feed.
  *
  * **`entry_types: ['lesson']` is load-bearing.** The feed is every entry type in descending
- * time order, and on a run with real history it is overwhelmingly traces — measured against a
- * hosted instance, the newest three hundred entries out of seventeen thousand contained not a
- * single lesson. An unfiltered page therefore joins nothing while looking like it worked.
+ * time order, and on a run with real history it is overwhelmingly traces, so an unfiltered
+ * page can join nothing while looking like it worked.
  *
  * `ActivityEntry` carries both `id` and `reference_id` and a lesson can be addressed by
  * either, so both are indexed.
@@ -637,10 +628,8 @@ async function createdAtIndex(cfg, run, lessonCount) {
  *
  * The last five parameters are `ListActivityRequest` fields the dashboard never needed and
  * `lib/activity.mjs` does. Every one of them is emitted **only when set**, which is not
- * fastidiousness: an unconditional `user_id: ''` is read server-side by
- * `effective_logical_user_scope` and becomes a retrieval filter nobody asked for — the same
- * shape as the trap on the ingest side, where filling `user_id` made new captures
- * unrecallable. `exclude_derived: false` is likewise absent rather than false, so a request
+ * fastidiousness: an empty `user_id` is treated as a filter, so it is omitted rather than
+ * sent. `exclude_derived: false` is likewise absent rather than false, so a request
  * body says only what the caller actually asked for.
  *
  * `opts` is additive and merges over the read-only defaults. A caller on a hook's budget has
@@ -690,8 +679,8 @@ export async function fetchActivity(cfg, params = {}, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * `POST /v2/control/memory_health`. `run_id` is required — this is the one route where an
- * empty scope is a client bug rather than "every run".
+ * `POST /v2/control/memory_health`. `run_id` is required — on this route an empty scope is a
+ * client bug.
  *
  * @param {Record<string, any>} cfg
  * @param {{run?: string}} [params]
@@ -732,8 +721,8 @@ export async function fetchRemoteRuns(cfg, params = {}) {
  * on-demand search: the page gets ranked evidence back without paying for a written answer it
  * would only render as a list anyway.
  *
- * `mode` is validated by `postQuery` before anything is dialled, because the server has no
- * error for a wrong one — only a bill.
+ * `mode` is validated by `postQuery` before anything is dialled, because a wrong one produces
+ * no error, only a slower search.
  *
  * @param {Record<string, any>} cfg
  * @param {{run?: string, query?: string, mode?: string, limit?: number,

@@ -180,7 +180,7 @@ export async function runHook(name, options = {}) {
     const raw = payloadPath ? readFileText(payloadPath) : await readStdin();
     const parsed = parseObject(raw);
     if (!parsed.ok) {
-      // Exactly one line, and it is the only thing this process says. §12.1 counts it.
+      // Exactly one line, and it is the only thing this process says. A test counts it.
       safely(() => log(cfg, 'warn',
         `hook ${name}: stdin payload was not parseable JSON; emitting {} and exiting 0`,
         { hook: name, bytes: raw.length }));
@@ -294,7 +294,7 @@ export function stashPayload(cfg, payload) {
       : resolveDataRoot(cfg ?? {});
     const dir = join(root, 'tmp');
     mkdirSync(dir, { recursive: true });
-    // §4.9 names the handoff file `<uuid>.json`, and a test pins the v4 shape: two hooks
+    // The handoff file is `<uuid>.json`, and a test pins the v4 shape: two hooks
     // firing in the same millisecond must not collide on it.
     const path = join(dir, `${randomUUID()}.json`);
     let body;

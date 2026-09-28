@@ -48,11 +48,9 @@ const seenBatches = new Map();
 /**
  * Which run counts as "yours" when the feed serves a run-scoped lesson.
  *
- * The activity feed is asked for the whole account and filtered by the client, so its request
- * carries no run id at all — but the lab still has to serve "a lesson your run wrote" in a
- * checkout whose run id it cannot know ahead of time (the id is derived from the project
- * path, so it differs per worktree). `env.sh` exports `LAB_RUN_ID` for exactly this. Failing
- * that, take the last run id any request named: every other route carries one.
+ * The lab has to serve "a lesson your run wrote" in a checkout whose run id it cannot know
+ * ahead of time: the id is a hash of the project path, so it differs per worktree. `env.sh`
+ * exports `LAB_RUN_ID` for exactly this. Failing that, take the last run id any request named.
  */
 let lastRunId = process.env.LAB_RUN_ID || 'cc-demo-app-00000000';
 const runIdPinned = !!process.env.LAB_RUN_ID;
@@ -144,8 +142,8 @@ function route(key, body, url) {
   }
 
   if (key === 'POST /v2/control/query') {
-    // Rung 1 is `direct_bypass` (0 LLM calls). An instance whose operator disabled the
-    // direct lane answers 403 — a policy verdict, not a fault.
+    // Rung 1 is `direct_bypass`. An instance whose operator disabled it answers 403 — a
+    // policy verdict, not a fault.
     if (scenario === 'deny-direct' && body?.mode === 'direct_bypass') {
       return { status: 403, json: { error: 'permission_denied', detail: 'direct_bypass disabled by policy' } };
     }
@@ -221,10 +219,8 @@ function route(key, body, url) {
  * Two things about this route are the whole reason the lab has it. First, `scope` is not a
  * column: it sits inside `metadata_json`, so a caller that asks for the compact projection
  * gets rows it cannot judge — this handler drops the field for anything but `projection:
- * "full"`, the same way the instance does. Second, the feed collects and sorts BEFORE it
- * pages, so a small `limit` costs you the oldest rows and never the newest. The lessons
- * route pages first, which is why a scoped read with a small limit there can answer zero on
- * an account that holds plenty.
+ * "full"`, the same way the instance does. Second, a small `limit` costs you the oldest rows
+ * and never the newest.
  *
  * `--scenario truncate` caps the page at two rows and pads the corpus past what a census will
  * page through, so the "every count is a floor" path is reachable. Both halves are needed: a
@@ -306,8 +302,8 @@ function realLessons() {
   });
 
   return [
-    // Another run wrote this one and never widened it. It is the row that must NOT appear in
-    // a default `mubit_lessons` read: run scope is the boundary, and this is the far side.
+    // Another run wrote this one and never widened it; a default `mubit_lessons` read shows
+    // only your own run's lessons, so it is left out.
     row('les_r2', '2026-01-05T00:00:00Z', other,
       'The staging cluster needs the VPN before the smoke test will connect.',
       { scope: 'run', lesson_type: 'lesson', importance: 'low' }),

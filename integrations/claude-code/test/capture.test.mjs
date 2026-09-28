@@ -12,9 +12,9 @@
  *     ever does is `spawnDetached('drain')`, and only when a trigger fires. That is what
  *     makes "detached" cheap — naively re-spawning yourself detached on every PostToolUse
  *     pays node's startup twice per tool call.
- *  2. **Every item carries an `intent`.** §1.5: the server classifies cheaply when an item
- *     arrives with an intent set, and otherwise falls back to an LLM round trip *per item*.
- *     An item without an intent is not a cosmetic problem, it is a bill.
+ *  2. **Every item carries an `intent`.** The plugin knows what each item is when it
+ *     captures it, so it always says so. An item without an intent is not a cosmetic
+ *     problem.
  *
  * Tests that need a known run directory pin `MUBIT_CC_RUN_STRATEGY=static`; the first two
  * use the default `per-directory` strategy so run-dir derivation is exercised too.
@@ -122,16 +122,16 @@ function soleItem(dataDir, runId) {
   return readJsonFile(files[0]);
 }
 
-/** §1.3 + §1.5: the fields no item may ever be missing. */
+/** The fields no item may ever be missing. */
 function assertRequiredItemFields(item) {
   assert.equal(typeof item.item_id, 'string');
   assert.ok(item.item_id.length > 0, 'item_id is REQUIRED — a missing one is a 422');
   assert.equal(item.content_type, 'text', 'content_type is REQUIRED');
   assert.equal(typeof item.intent, 'string');
   assert.ok(item.intent.length > 0,
-    'intent is ALWAYS set — omitting it costs one server-side LLM call per item');
+    'intent is ALWAYS set');
   assert.notEqual(item.intent, 'unclassified',
-    '"unclassified" is the LLM fallback trigger, not a classification');
+    '"unclassified" is not a classification');
   assert.equal(item.source, 'agent');
   assert.ok(['low', 'medium', 'high'].includes(item.importance), `bad importance ${item.importance}`);
   assert.equal(typeof item.text, 'string');
@@ -139,7 +139,7 @@ function assertRequiredItemFields(item) {
   assert.ok(Array.isArray(item.env_tags));
   assert.equal(typeof item.metadata_json, 'string', 'metadata_json goes on the wire as a string');
   JSON.parse(item.metadata_json);
-  // Seconds, as in the §5.4 example and the `spoolItem` fixture.
+  // Seconds, as the wire takes it and as the `spoolItem` fixture has it.
   assert.equal(typeof item.occurrence_time, 'number');
   assert.ok(Math.abs(item.occurrence_time - Date.now() / 1000) < 600,
     `occurrence_time ${item.occurrence_time} is not a recent unix timestamp in seconds`);
@@ -148,10 +148,9 @@ function assertRequiredItemFields(item) {
 /**
  * The standing guard for the dropped-tool-output defect.
  *
- * A tool item is `"<tool>(<params>) -> <output>"`. For a year every shipped item ended at
- * the arrow, because capture read `payload.tool_output` and the host sends `tool_response`:
- * the plugin recorded that a file had been read and never what was in it. Nothing caught it,
- * because the only payload the tests had ever seen was one the tests wrote themselves.
+ * A tool item is `"<tool>(<params>) -> <output>"`. The host sends the result as
+ * `tool_response`, not `tool_output`; reading the wrong key records that a file was read and
+ * never what was in it, and a test that only sees payloads it wrote itself cannot notice.
  *
  * So: any item whose text reaches the arrow must carry something after it. Call this
  * wherever a fixture supplies a tool result — an empty tail there is that defect, returned.
@@ -164,7 +163,7 @@ function assertNonEmptyTail(item) {
 // What `capture` may cost on top of starting node — `assertWithinBudget` measures that floor
 // rather than assuming it.
 //
-// The §5.4 target is 40 ms of work and the idle measurement is ~53 ms, so 800 is fifteen times
+// The target is 40 ms of work and the idle measurement is ~53 ms, so 800 is fifteen times
 // the real cost. It is set from the other end: with four suites running at once the figure was
 // seen at 456 ms, because parsing a bundle contends for CPU in a way subtracting the spawn
 // floor cannot fully remove. A budget under that measures the machine. This is a guard-rail
@@ -185,7 +184,7 @@ async function mubit(t, routes) {
 
 // ---------------------------------------------------------------------------
 
-// PostToolUse writes exactly one spool file, shaped as §5.4, and dials nothing.
+// PostToolUse writes exactly one spool file, in the wire shape, and dials nothing.
 test('capture: PostToolUse writes exactly one correctly shaped spool item and issues zero HTTP', async (t) => {
   const dataDir = makeDataDir();
   const projectDir = makeProjectDir({ files: { 'Cargo.toml': '[package]\nname = "x"\n' } });
@@ -283,11 +282,10 @@ test('capture: every recorded tool_response shape renders something after the ar
 
 // THE regression for `lib/actor.mjs`, and the reason that module exists in the shape it does.
 //
-// Server-side, `user_id` is not an attribution tag: on capture it is stamped into the entry's
-// metadata, and on query it is **enforced as a filter**, defaulting to `actor::<accountId>`
-// when a client sends nothing. `lib/recall.mjs` never sends one — so an actor written into
-// `user_id` would scope every newly captured entry into a bucket recall never looks in, and
-// the memory would go silently invisible the moment attribution started working.
+// `user_id` is not an attribution tag: an entry stored with one is only returned to a query
+// that sends the same one. `lib/recall.mjs` never sends one — so an actor written into
+// `user_id` would scope every newly captured entry where recall never looks, and the memory
+// would go silently invisible the moment attribution started working.
 //
 // Attribution therefore lives in `metadata_json`, which is free-form and rides on every
 // ingest item, and `cfg.userId` keeps the meaning it has always had.
@@ -316,7 +314,7 @@ test('capture: the actor rides in metadata_json.actor and never touches user_id'
 
 // The same claim with nothing to hide behind: no `userId` configured means no `user_id` on
 // the wire at all, actor or no actor. Sending one here would scope the entry out of the
-// `actor::<accountId>` default that every recall query runs under.
+// default every recall query runs under.
 test('capture: an actor alone never puts a user_id on the wire', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -394,7 +392,7 @@ test('capture: item_id is derived from tool_use_id and stable across invocations
   assert.equal(all.size, 2, 'a different tool call must yield a different item_id');
 });
 
-// §5.4 + §4.5 — a failed approach is the highest-value thing a coding agent can remember,
+// A failed approach is the highest-value thing a coding agent can remember,
 // so PostToolUseFailure is intent:"trace" at importance:"high".
 test('capture --failure: FAILED text, intent "trace", importance "high"', async (t) => {
   const dataDir = makeDataDir();
@@ -419,7 +417,7 @@ test('capture --failure: FAILED text, intent "trace", importance "high"', async 
 });
 
 // Stop carries `last_assistant_message` but NOT the prompt, so the Q&A pair is
-// assembled from the staged turn file; §4.5 classifies the pair as a `task_result`.
+// assembled from the staged turn file, and the pair is classified as a `task_result`.
 test('capture --stop: task_result carrying both the staged prompt and the assistant message', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
@@ -505,7 +503,7 @@ test('capture --stop: records which injected memory terms the reply echoed', asy
 });
 
 // "injected and ignored" is the case the whole finding is about, so it is recorded
-// positively rather than by absence. §4.4: it is recorded WITHOUT the reply — the turn file
+// positively rather than by absence. It is recorded WITHOUT the reply — the turn file
 // holds only terms that recall already staged and scrubbed, so nothing the assistant said
 // can land here.
 test('capture --stop: a reply that echoes nothing records the absence, and no fragment of the reply', async (t) => {
@@ -693,16 +691,15 @@ test('capture --subagent: writes no ledger row; the fan-out is joined from the s
  * error — a rate limit, an auth failure — ended the turn, and as fire-and-forget: its output
  * and its exit code are both ignored.
  *
- * "Instead of Stop" is the fact the whole ticket turns on. `capture --stop` is the only thing
+ * "Instead of Stop" is the fact the whole design turns on. `capture --stop` is the only thing
  * in this plugin that ever writes `ended_at` / `outcome_pending`, so on a rate-limited turn
  * nothing closed the turn file at all: it sat there holding `recalled` ids, half-written,
  * with no record anywhere that the turn had died or why. `--stop-failure` closes it and
  * stamps `api_error` — and `lib/outcome.mjs` reads that stamp and posts nothing.
  *
- * The mark has to be a key of its own rather than `outcome: "failure"`, which is what the
- * build guide's §5.5 originally called for ("On a StopFailure turn: outcome 'failure',
- * signal -0.3"). That row is exactly the one this ticket overturns: -0.3 against the
- * recalled ids says the *memory* was wrong, and a rate limit is not evidence about memory.
+ * The mark has to be a key of its own rather than `outcome: "failure"` with signal -0.3:
+ * -0.3 against the recalled ids says the *memory* was wrong, and a rate limit is not
+ * evidence about memory.
  */
 
 /** A turn as `stage-prompt` + `prompt-recall` leave it, with terms staged to match against. */
@@ -714,7 +711,7 @@ const seedTermedTurn = (dataDir, over = {}) => seedTurn(dataDir, {
   ...over,
 });
 
-// THE test for this ticket, on capture's side of the wire: the turn is closed, the error is
+// THE test for this, on capture's side of the wire: the turn is closed, the error is
 // on the record, and nothing that could attribute it was started.
 test('capture --stop-failure: closes the turn, stamps the API error, and starts no attribution', async (t) => {
   const dataDir = makeDataDir();
@@ -801,7 +798,7 @@ test('capture --stop-failure: records the error value the host sent, in or out o
   }
 });
 
-// §5.5's used-signal measures whether the reply carried the injected memory's vocabulary.
+// The used-signal measures whether the reply carried the injected memory's vocabulary.
 // A reply the API cut off mid-sentence has no denominator — `max_output_tokens` is literally
 // "the answer stopped early" — so measuring it would manufacture a `used: false` that
 // `decideOutcome` reads as "the model ignored the memory". Left unmeasured on purpose.
@@ -992,7 +989,7 @@ test('capture: every tool on the skip list is dropped, and its neighbours are no
 
   // `AskUserQuestion` is first on purpose: it is the closest call on the list and the one a
   // future tidy-up will reach for. Its result carries what the human chose and what they
-  // turned down's `feedback`, and the one fact no amount of reading the codebase
+  // turned down — `feedback`, and the one fact no amount of reading the codebase
   // reproduces.
   const kept = ['AskUserQuestion', 'ReportFindings', 'CronCreate', 'CronDelete',
     'EnterWorktree', 'ExitWorktree', 'LSP', 'Workflow',
@@ -1077,7 +1074,7 @@ test('capture: a self-referential BashOutput drops silently', async (t) => {
     'a background-task read of an unrelated shell is ordinary tool output');
 });
 
-// §4.4 stage 2 — a denied path is dropped entirely, not scrubbed.
+// A denied path is dropped entirely, not scrubbed.
 test('capture: a denylisted path drops silently', async (t) => {
   const dataDir = makeDataDir();
   const projectDir = makeProjectDir({ files: { '.env': `OPENAI_API_KEY=${SECRETS.openaiKey}\n` } });
@@ -1316,7 +1313,7 @@ test('capture: hostile tool_input drops the item rather than spooling it unredac
 });
 
 // ---------------------------------------------------------------------------
-// §4.1 env_tags — the directory the work happened in
+// env_tags — the directory the work happened in
 // ---------------------------------------------------------------------------
 
 /*

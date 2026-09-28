@@ -59,7 +59,7 @@ import {
 } from './helpers/harness.mjs';
 import { preToolUse, sessionStart, userPromptSubmit } from './helpers/fixtures.mjs';
 
-/** Pinned (§6.1 `static`) so a case can seed `runs/<run_id>/rules.json` before the hook runs. */
+/** Pinned (`static` run strategy) so a case can seed `runs/<run_id>/rules.json` before the hook runs. */
 const RUN_ID = 'cc-pre-tool-test';
 
 /**
@@ -216,7 +216,7 @@ const PATHS = [
   },
   {
     name: 'the data dir is a regular file, so every read fails',
-    why: '§12.1: an unwritable ${CLAUDE_PLUGIN_DATA} costs the memory, nothing else',
+    why: 'an unwritable ${CLAUDE_PLUGIN_DATA} costs the memory, nothing else',
     setup: () => {
       const f = join(tempDir('mubit-cc-notadir-'), 'data');
       writeFileSync(f, 'this is a file where a directory should be');
@@ -466,15 +466,15 @@ test('recordRules reads origin_entry_type ahead of entry_type, as assemble.mjs d
   const dataDir = makeDataDir();
   const cfg = { dataDir };
 
-  // "maps entry_type (or origin_entry_type when the entry came through an overlay)".
-  // The overlay's own type is bookkeeping; the origin is the type the user's rule actually has.
+  // `origin_entry_type` wins over `entry_type` when it is set: the origin is the type the
+  // user's rule actually has.
   rules.recordRules(cfg, RUN_ID, [
-    { reference_id: 'ref_overlay', entry_type: 'observation', origin_entry_type: 'rule',
+    { reference_id: 'ref_origin', entry_type: 'observation', origin_entry_type: 'rule',
       content: FORCE_PUSH_RULE },
   ]);
   assert.equal(rules.readRules(cfg, RUN_ID).length, 1,
-    'a rule that arrived through an overlay is still a rule; dropping it means the store is '
-    + 'empty on exactly the instances that use overlays');
+    'a rule reported through origin_entry_type is still a rule; dropping it empties the '
+    + 'rule store');
 });
 
 test('recordRules accepts the lessons wire shape as well as the evidence one', async () => {
@@ -576,7 +576,7 @@ test('rules.mjs never throws on an unwritable data dir', async () => {
 
   assert.doesNotThrow(() => rules.recordRules(cfg, RUN_ID, [
     { reference_id: 'ref_a', entry_type: 'rule', content: FORCE_PUSH_RULE },
-  ]), '§12.1: an unwritable ${CLAUDE_PLUGIN_DATA} costs the rule store, nothing else');
+  ]), 'an unwritable ${CLAUDE_PLUGIN_DATA} costs the rule store, nothing else');
   assert.deepEqual(rules.readRules(cfg, RUN_ID), []);
 });
 

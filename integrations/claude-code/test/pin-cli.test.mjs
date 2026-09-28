@@ -418,8 +418,8 @@ test('pin: a run left behind earlier today is not a rival', async (t) => {
   assert.equal(server.lastCall('POST', '/v2/control/variables/set').body.run_id, RUN_ID);
 });
 
-// §4.3 / F21 again, from the surface a person types at.
-test('pin: refuses to write into the shared "default" run', async (t) => {
+// The same refusal, from the surface a person types at.
+test('pin: refuses to write into the "default" run id', async (t) => {
   const server = await fakeMubit(routes());
   t.after(() => server.close());
 

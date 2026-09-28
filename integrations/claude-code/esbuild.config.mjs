@@ -53,21 +53,10 @@ const shared = {
 const HOOKS = ['session-start','cwd-changed','prompt-recall','stage-prompt','pre-tool','subagent-start','capture','checkpoint','session-end','drain','recall-refresh','session-resume'];
 
 /**
- * The bundled @mubit-ai/mcp server — the **in-repo** package, not the registry copy.
+ * The bundled @mubit-ai/mcp server, built from the sibling package rather than a registry
+ * copy, so the server and the plugin that launches it always come from the same release.
  *
- * This used to read `node_modules/@mubit-ai/mcp/dist/index.js`, which resolved to whatever
- * npm had installed for `"@mubit-ai/mcp": "^0.8.0"`. The §8.1 allowlist patch landed after
- * 0.8.0 and was never published, so the shipped server did not read `MUBIT_MCP_TOOLS` at
- * all: the launcher set the variable, nothing consumed it, and every session paid for all
- * 21 tool schemas where ten were configured. Two correct halves that never met.
- *
- * The sibling is the honest input: it is the source this repo publishes `@mubit-ai/mcp`
- * from, the two versions are held in lockstep at release time, and the
- * release guard already describes this plugin as built from the in-repo `@mubit-ai/mcp` it
- * dev-depends on. Building from the registry made that description false without anything
- * failing.
- *
- * It is TypeScript, so `dist/` here is `tsc` output rather than a tracked file, and must
+ * It is TypeScript, so `dist/` there is `tsc` output rather than a tracked file, and must
  * exist before this runs — see the guard below `targets`.
  */
 const MCP_SERVER_ENTRY = '../mcp/dist/index.js';
@@ -78,10 +67,10 @@ const MCP_SERVER_BUILD = 'npm --prefix ../mcp ci && npm --prefix ../mcp run buil
 /**
  * The version stamped into the launcher as `__MUBIT_MCP_VERSION__`.
  *
- * The sibling manifest is the authority: it is the package `mcp/dist/server.js` was bundled
- * from. In the generated `claude-plugins` mirror that sibling does not exist — the mirror
- * carries this one plugin and vendors the server bundle — and reading it there threw at
- * module scope, which made `npm run build` unusable for every other target too.
+ * The sibling manifest is the authority when it is present: it is the package
+ * `mcp/dist/server.js` was bundled from. A checkout without it vendors the server bundle, and
+ * reading it there would throw at module scope and make `npm run build` unusable for every
+ * other target too.
  *
  * This plugin's own version is the right fallback rather than a guess: the two ship in
  * lockstep (release tooling holds them together, and `manifests.test.mjs` enforces
@@ -94,7 +83,7 @@ const MCP_VERSION = has('../mcp/package.json')
   : readJson('package.json').version;
 
 // ---------------------------------------------------------------------------
-// The runtime floor guard (§11.1 engines)
+// The runtime floor guard (`engines`)
 // ---------------------------------------------------------------------------
 // The bundles target node20 and use `??` ~40x per file. On an older Node they do not fail —
 // they never load, and say nothing: no marker, no log line, no MCP activity, which reads
@@ -164,8 +153,8 @@ const targets = [
   // outExtension is load-bearing: with `outdir`, esbuild names output `<entry>.js` no matter
   // what the entry was called, so hooks/src/capture.mjs becomes hooks/dist/capture.js while
   // hooks.json points at capture.mjs. Every hook silently becomes a dead path — the plugin
-  // installs, registers ten hooks, and none of them exist. (Guide §11.2 omits this; the
-  // `outfile` targets below are unaffected because they name the extension outright.)
+  // installs, registers ten hooks, and none of them exist. (The `outfile` targets below
+  // are unaffected because they name the extension outright.)
   {
     entryPoints: HOOKS.map((n) => `hooks/src/${n}.mjs`),
     outdir: out('hooks/dist/impl'), outbase: 'hooks/src',
@@ -241,8 +230,9 @@ const targets = [
     // The one target that must not carry a sourcemap. `shared` pins `sourcemap: 'inline'`,
     // which embeds `sourcesContent` — the original source of everything the bundle consumed.
     // For every other target that is this repository's own tracked source and costs nothing.
-    // This one is built from the sibling TypeScript package, which is not published anywhere,
-    // so an inline map ships 67 KB of it in base64 on a single line where no diff will show it.
+    // This one is built from the sibling TypeScript package, whose source is not part of this
+    // repository, so an inline map would ship it in base64 on a single line where no diff
+    // would show it.
     sourcemap: false,
     banner: {
       js: `${shared.banner.js}\n`
@@ -261,11 +251,10 @@ const targets = [
 // signal that nobody has written it. Warning and skipping there leaves the committed
 // `mcp/dist/server.js` untouched, which means both CI gates that rebuild and then run
 // `git diff --exit-code` pass while never having rebuilt the server at all — a green build
-// that proves nothing, in precisely the place a stale server bundle already shipped once.
+// that proves nothing.
 //
 // The one exception is a checkout where the sibling is not merely uncompiled but absent:
-// the generated `claude-plugins` mirror vendors `mcp/dist/server.js` and has no `../mcp` to
-// build from, so the target is structurally unbuildable there and the refusal above blocks
+// it vendors `mcp/dist/server.js` and has no `../mcp` to build from, so the target is structurally unbuildable there and the refusal above blocks
 // every *other* target with it. `MUBIT_CC_BUILD_SKIP_SERVER=1` opts out explicitly — which
 // is the honest shape for this, where a silent skip would not be: the operator states that
 // they know the server bundle will not be rebuilt, and the target falls through to the skip
@@ -273,13 +262,13 @@ const targets = [
 if (!has(MCP_SERVER_ENTRY) && process.env.MUBIT_CC_BUILD_SKIP_SERVER !== '1') {
   console.error(
     `[esbuild] ${MCP_SERVER_ENTRY} does not exist.\n`
-    + '  mcp/dist/server.js is bundled from the in-repo @mubit-ai/mcp, which is TypeScript and\n'
+    + '  mcp/dist/server.js is bundled from the sibling @mubit-ai/mcp, which is TypeScript and\n'
     + '  must be compiled first:\n'
     + `      ${MCP_SERVER_BUILD}\n`
     + '  Refusing to continue: skipping this target would leave the committed server bundle in\n'
     + '  place and report success.\n'
-    + '  If this checkout has no ../mcp at all (the generated claude-plugins mirror vendors the\n'
-    + '  server bundle instead), say so: MUBIT_CC_BUILD_SKIP_SERVER=1.');
+    + '  If this checkout has no ../mcp at all (it vendors the server bundle instead), say so:\n'
+    + '  MUBIT_CC_BUILD_SKIP_SERVER=1.');
   process.exit(1);
 }
 

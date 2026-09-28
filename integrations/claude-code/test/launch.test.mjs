@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `mcp/src/launch.mjs` — the MCP entry point (and §8.1 for the upstream allowlist patch).
+ * `mcp/src/launch.mjs` — the MCP entry point (and the upstream tool allowlist patch).
  *
  * The launcher is bundled to `mcp/dist/index.js`, which is the `.mcp.json` entry point.
  * It exists for one reason: the MCP server reads its configuration from `process.env` at
@@ -26,7 +26,7 @@ import { join } from 'node:path';
 
 import { PLUGIN_ROOT, REPO_ROOT, makeDataDir, makeProjectDir, tempDir, baseEnv, lib, mod } from './helpers/harness.mjs';
 
-/** The curated set, in the guide's order. */
+/** The curated set, in its documented order. */
 const DEFAULT_ALLOWLIST = [
   'mubit_learned', 'mubit_recall', 'mubit_outcome', 'mubit_diagnose',
   'mubit_dereference', 'mubit_status', 'mubit_memory_health',
@@ -44,7 +44,7 @@ function launcherScript() {
   if (existsSync(dist)) return dist;
   return assert.fail(
     `mcp/src/launch.mjs does not exist yet (nor the bundled mcp/dist/index.js) under ${PLUGIN_ROOT}.\n` +
-    '  §8.3 defines it: loadConfig() → deriveRunId() → set env → await import("./server.js").');
+    '  It does: loadConfig() → deriveRunId() → set env → await import("./server.js").');
 }
 
 const STUB_SERVER = `
@@ -276,8 +276,7 @@ test('leaves the session map exactly as the hooks wrote it', async () => {
   assert.ok(r.importedServer, `the launcher never imported ./server.js. stderr:\n${r.stderr}`);
   assert.equal(readFileSync(file, 'utf8'), before,
     'the launcher rewrote the session map. Only the hooks see the source that decides what a '
-    + 'new run is; the launcher reading and then overwriting turns a `/clear` into a race '
-    + '');
+    + 'new run is; the launcher reading and then overwriting turns a `/clear` into a race');
 });
 
 // The server reads env at MODULE scope. Setting any of these after the
@@ -299,7 +298,7 @@ test('sets every server env var BEFORE importing the server', async () => {
   assert.equal(e.MUBIT_DEFAULT_USER_ID, 'eldar',
     'MUBIT_DEFAULT_USER_ID must carry cfg.userId into the server before the import');
   assert.ok((e.MUBIT_DEFAULT_SESSION_ID ?? '').length > 0, 'MUBIT_DEFAULT_SESSION_ID must be set before the import');
-  assert.ok((e.MUBIT_MCP_TOOLS ?? '').length > 0, 'MUBIT_MCP_TOOLS must be set before the import (§8.1 reads it at module scope)');
+  assert.ok((e.MUBIT_MCP_TOOLS ?? '').length > 0, 'MUBIT_MCP_TOOLS must be set before the import (the allowlist reads it at module scope)');
 });
 
 // ---------------------------------------------------------------------------
@@ -384,7 +383,7 @@ function realToolNames() {
   return names;
 }
 
-/** The §8.1 filter, exactly as the patch specifies it. */
+/** The allowlist filter, exactly as the patch specifies it. */
 function applyAllowlist(names, rawEnvValue) {
   const list = (rawEnvValue || '').split(',').map((s) => s.trim()).filter(Boolean);
   const allow = list.length > 0 ? new Set(list) : null;
@@ -472,26 +471,21 @@ test('the bundled server honours the allowlist, and context-cost.json says so', 
 // The egress guard, installed on the same schedule as the env
 // ---------------------------------------------------------------------------
 
-// The bundled server dials the endpoint itself: nothing in this repo sees the request, and
-// the SDK inside it hard-codes `lesson_scope: "session"` on the one write tool a default
-// install exposes — a scope the control plane reads across runs. The guard wraps
-// `globalThis.fetch` to clamp that, and it is subject to the same ordering rule as every
-// env var here: the server captures its transport at module scope, so a guard installed
+// The bundled server dials the endpoint itself: nothing in this repo sees the request. The
+// guard wraps `globalThis.fetch` to apply the configured lesson-scope ceiling, and it is
+// subject to the same ordering rule as every env var here: the server captures its transport at module scope, so a guard installed
 // after the import would never see a single request.
 test('installs the egress guard BEFORE importing the server', async () => {
   const r = await runLauncher();
   assert.ok(r.importedServer, `the launcher never imported ./server.js. stderr:\n${r.stderr}`);
 
   assert.ok(r.guardAtImport,
-    'globalThis.fetch carried no egress guard when the server was imported — every MCP write '
-    + 'then leaves this machine unexamined');
+    'globalThis.fetch carried no egress guard when the server was imported');
   assert.equal(r.guardAtImport.ceiling, 'session',
-    'the default ceiling is what `mubit_learned` tells the model it writes at, and the '
-    + 'narrowest scope from which a lesson has any path out of the run that wrote it');
+    'the default ceiling is what `mubit_learned` tells the model it writes at');
   assert.equal(r.guardAtImport.pinRun, true,
-    'a plugin-launched server must ignore a caller-supplied session_id — the launcher '
-    + 'already derived the run, and a write that follows the caller elsewhere breaks the '
-    + 'per-run boundary the run id exists to draw');
+    'a plugin-launched server writes to the run the launcher derived, whatever session_id '
+    + 'a caller supplies');
 });
 
 // The ceiling is a userConfig key, so it has to travel the same path as the rest of

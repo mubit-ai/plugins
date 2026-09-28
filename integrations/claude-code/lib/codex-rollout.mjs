@@ -129,7 +129,7 @@ export function toolCallRecord(transcriptPath, toolUseId, opts = {}) {
   // Backwards: a retried call appends a second record, and the last one is what happened.
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-    // § The cheap filter first. A rollout is mostly reasoning and message text, and parsing
+    // The cheap filter first. A rollout is mostly reasoning and message text, and parsing
     //   every line of it per tool call is the difference between ~1 ms and tens of ms.
     if (!line || line.indexOf(id) === -1) continue;
 
@@ -148,7 +148,7 @@ export function toolCallRecord(transcriptPath, toolUseId, opts = {}) {
     const exitCode = Number.isFinite(item.exit_code) ? Number(item.exit_code) : null;
     return {
       found: true,
-      // § `status` is the host's own verdict and is what to trust. `exit_code` is the
+      // `status` is the host's own verdict and is what to trust. `exit_code` is the
       //   fallback for a record shape that carries one without the other.
       failed: status ? status === 'failed' : exitCode !== null && exitCode !== 0,
       exitCode,

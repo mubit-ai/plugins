@@ -174,8 +174,8 @@ const DATA_DIR_PREFIX = 'mubit-memory';
  * The consequence was silent and complete. A Codex session derived the *same run id* as the
  * Claude Code session in the same directory — the sharing worked — and then wrote it into
  * `…/mubit-memory` while Claude Code read `…/mubit-memory-mubit`. Two memories of one project,
- * one of them missing the credentials, and nothing anywhere reporting it. Measured on a real
- * install: both directories held a run named `cc-mubit-plugin-testing-41703b8c`.
+ * one of them missing the credentials, and nothing anywhere reporting it. Seen on a real
+ * install: both directories held a run of the same name.
  *
  * ---------------------------------------------------------------------------
  * The preference order, and why each rung

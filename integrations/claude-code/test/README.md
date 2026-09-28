@@ -7,11 +7,6 @@ manifest key that drifted, and says what defines it.
 Each file is independently runnable and the whole suite finishes in well under ten seconds,
 so the red-green loop stays tight.
 
-The `§` references throughout are section numbers from the notes this suite was written
-against. Those notes are not part of this distribution and cannot be resolved from here; the
-references survive only as a marker that an assertion had a reason. The reason itself is
-spelled out in the comment above each test, and the assertions stand on their own.
-
 ## Running
 
 ```bash
@@ -113,10 +108,10 @@ reasonable person would "fix" them in the wrong direction:
   user can fix.
 - **`claimOnce` returns `true` when it fails.** Losing a batch is worse than sending it twice.
 - **One flush per session is two properties, not one.** `claimOnce` answers "already"; a
-  lease answers "right now". The second matters because reflect is not idempotent, and it has
-  to be a lease rather than a second marker so a killed flush blocks no later one.
-- **The recall hook must never call `/v2/control/context` by default.** That call costs two LLM
-  calls per prompt; the absence is asserted explicitly.
+  lease answers "right now", so a second flush cannot start while one is in flight. It has to
+  be a lease rather than a second marker so a killed flush blocks no later one.
+- **The recall hook must never call `/v2/control/context` by default.** That call is the slow
+  path on every prompt; the absence is asserted explicitly.
 - **The `PreToolUse` hook must never deny, and exit 2 is a deny.** The host blocks the tool call
   on exit code 2 and lets every *other* non-zero code through, so the dangerous value is the one
   a naive error handler picks. `pre-tool.test.mjs` enumerates paths — flag off, empty store,
@@ -131,7 +126,7 @@ assertion.
 
 `helpers/harness.mjs` — read it before writing a test.
 
-- `makeDataDir()` — a fresh `${CLAUDE_PLUGIN_DATA}` with the §7 skeleton.
+- `makeDataDir()` — a fresh `${CLAUDE_PLUGIN_DATA}` with the data-directory skeleton.
 - `makeProjectDir({git, branch, files})` — a real git repo when a run-id strategy needs one.
 - `baseEnv({dataDir, endpoint, apiKey, extra})` — a fully pinned environment, so no test
   depends on your shell.

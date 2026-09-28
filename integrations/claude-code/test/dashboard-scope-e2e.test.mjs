@@ -99,7 +99,7 @@ test('the live /api/lessons filters session and global independently', async (t)
   assert.deepEqual(global_.lessons.map((l) => l.id), ['les_global_1'],
     'scope=global must return exactly the global lesson');
 
-  // The filter runs over the collected rows, never on the wire (§ the census comment):
+  // The filter runs over the collected rows, never on the wire:
   // both scoped queries reached the same activity route with no scope parameter.
   for (const call of upstream.calls('POST', '/v2/control/activity')) {
     assert.ok(!('scope' in (call.body ?? {})),

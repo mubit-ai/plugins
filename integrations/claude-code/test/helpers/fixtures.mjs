@@ -71,8 +71,8 @@ export const preToolUse = (over = {}) => base({
  * The tool's result rides in **`tool_response`**, and the duration in **`duration_ms`**.
  * Those are the names the host emits, verbatim; they are not a guess. This fixture used to
  * say `tool_output` / `execution_time_ms`, `capture.mjs` read the same two invented names,
- * and the pair agreed with each other through 752 green tests while every memory the plugin
- * had ever shipped read `Read(file_path=X) -> ` with nothing after the arrow. A fixture
+ * and the pair agreed with each other while every captured memory read
+ * `Read(file_path=X) -> ` with nothing after the arrow. A fixture
  * written beside the implementation cannot falsify it — so treat these names as recorded
  * evidence and do not "tidy" them.
  *

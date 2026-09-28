@@ -42,7 +42,7 @@ import { alwaysLoadFor, INSTRUCTIONS, installInstructionsGuard } from './instruc
 import { installResultsGuard } from './results.mjs';
 
 /**
- * Seven of the server's twenty-one tools, in the guide's order.
+ * Seven of the server's twenty-one tools.
  *
  * A blank `mcpTools` means this curated set, never "none" and never all 21. The fourteen
  * left out are ones a hook already does better (`mubit_remember`, `mubit_context`), ones
@@ -80,7 +80,7 @@ export const DEFAULT_ALLOWLIST = [
 ];
 
 /**
- * §3.3 hands three values over under `MUBIT_CC_*` names that `lib/` reads under their host
+ * `.mcp.json` hands three values over under `MUBIT_CC_*` names that `lib/` reads under their host
  * names. Nothing else in the plugin reads the `MUBIT_CC_*` spellings, so without this
  * bridge `.mcp.json` passes the project directory to a launcher that then falls back to
  * `process.cwd()` — and a wrong project directory is a wrong run id, which is the exact
@@ -114,7 +114,7 @@ const UNEXPANDED = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 const SERVER_VERSION = typeof __MUBIT_MCP_VERSION__ === 'string' ? __MUBIT_MCP_VERSION__ : '';
 
 if (prepare(process.env)) {
-  // §8.3 step 4. Every module-scope read the server makes now sees a resolved value.
+  // Every module-scope read the server makes now sees a resolved value.
   await import('./server.js');
 }
 
@@ -148,8 +148,8 @@ function prepare(env) {
     runId = deriveRunId(runConfig(cfg), hostPayload(env), { persist: false });
   } catch (err) {
     // `lib/runid.mjs` throws rather than answer `"default"` — an unset `static` pin is the
-    // realistic case. Starting anyway would hand the server the poisoned literal and pool
-    // this project's memory with every other consumer's, which is worse than no server:
+    // realistic case. Starting anyway would write into a placeholder run that names no
+    // project, which is worse than no server:
     // the hooks in the same session fail the same derivation and capture nothing, so the
     // MCP writes would be the only thing landing, and landing in the wrong place.
     refuse(`could not derive a run id: ${describe(err)}`);
@@ -173,10 +173,9 @@ function prepare(env) {
   //
   // `pinRun: true` because this server was launched by the plugin, which already derived
   // the run — the same `runId` published on the line above, so the guard and the server
-  // cannot disagree about which run this session writes into. Without it, a caller-supplied
-  // `session_id` would decide that instead. It governs the read side too: a catalogue read
-  // that named no run is filled in with this same value rather than left as the empty string
-  // that asks for every run the key can see.
+  // cannot disagree about which run this session writes into: the guard pins every write to
+  // this run. It governs the read side too: a catalogue read
+  // that named no run is filled in with this same value.
   //
   // `cfg` is handed over so the guard can *assemble* that catalogue rather than only narrow
   // the request for it — one read of the activity feed, filtered here. Without it the read
@@ -296,7 +295,7 @@ function allowlist(cfg) {
 /**
  * Drop `MUBIT_*` / `CLAUDE_*` values that are still an unexpanded `${VAR}` placeholder.
  *
- * §3.3 passes values through unexpanded on purpose and leaves the defaulting to this file,
+ * `.mcp.json` passes values through unexpanded on purpose and leaves the defaulting to this file,
  * but expansion semantics for `.mcp.json` env values are not documented well enough to rely
  * on. An endpoint of the literal `"${MUBIT_ENDPOINT}"` is not a config value, it is a
  * failed substitution — and treating it as absent gets the documented default instead of a

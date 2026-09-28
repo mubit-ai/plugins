@@ -458,12 +458,8 @@ function familyParam(url) {
 /**
  * Why `/api/lessons` scans the activity feed rather than calling the lessons route.
  *
- * The instance's lessons route fetches `limit` facts of *any* entry type and only then filters to
- * `entry_type == "lesson"`. `limit=200` therefore means "take two hundred arbitrary facts and
- * keep whichever happen to be lessons" — measured against a hosted instance, the newest three
- * hundred entries out of seventeen thousand contained not a single one. The tab was near-empty
- * and it looked like an instance with nothing in it. The activity route has the opposite
- * order: it collects everything, filters by `entry_types`, sorts, and only then pages.
+ * The activity feed filters by `entry_types` before it pages, so a census built on it sees
+ * every lesson the instance returns for this key.
  *
  * The lessons route stays as the fallback, because it is what an instance with an unreadable
  * activity feed can still answer. Which of the two replied is *reported* rather than inferred:
@@ -471,10 +467,8 @@ function familyParam(url) {
  * scoped `source_run_id` where activity reports the unscoped one — and a page that cannot say
  * where a row came from cannot say what a missing row means.
  *
- * Scope is never sent upstream. `ListActivityRequest` has no scope field at all, and on the
- * lessons route the scope filter runs *after* `limit`, so asking for `scope=global` there
- * filters an already-truncated set and reliably answers with nothing. It is applied here,
- * after the census, which is what makes "show me the leaks" stop returning an empty list.
+ * Scope is never sent upstream: `ListActivityRequest` has no scope field at all. It is
+ * applied here, after the census, over the full set.
  */
 
 /**
@@ -839,8 +833,8 @@ async function getRoute(ctx, res, path, url) {
 
   if (path === '/api/lessons') {
     const payload = await lessonsPayload(cfg, {
-      // An empty `run` means every run, and that is the only spelling it gets. A second
-      // `allRuns` parameter would just be a second way to pin this tab back to one run, which
+      // An empty `run` is how this tab asks for lessons from all runs, and that is the only
+      // spelling it gets. A second `allRuns` parameter would just be a second way to pin this tab back to one run, which
       // is the bug that made a global lesson from another run structurally invisible.
       run: String(url.searchParams.get('run') ?? ''),
       // A rendering context, never a filter: it is what `fromOtherRun` is measured against.

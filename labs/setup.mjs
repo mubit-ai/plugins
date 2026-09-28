@@ -26,7 +26,7 @@ if (process.argv.includes('--reset')) {
   say(`removed ${WORK}`);
 }
 
-// §7's state layout. The plugin creates these itself; pre-creating them just means the
+// The plugin's state layout. The plugin creates these itself; pre-creating them just means the
 // first `ls` after lab 1 shows the shape rather than one lonely directory.
 for (const sub of ['sessions', 'runs', 'status', 'breaker', 'policy', 'logs', 'tmp']) {
   mkdirSync(join(DATA, sub), { recursive: true });

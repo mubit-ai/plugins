@@ -274,7 +274,7 @@ test('takeCarry: a corrupt carry file degrades to nothing carried rather than th
   assert.equal(C.takeCarry(cfg, RUN_ID), null);
 });
 
-// §5.6, the compaction reset. `clearSeen` exists because after a compaction the transcript
+// The compaction reset. `clearSeen` exists because after a compaction the transcript
 // the entries were injected into is gone, so a surviving pointer names a memory that exists
 // nowhere. A carried block assembled *before* the compaction has those pointers baked into
 // it already, so it has to go with the seen-set.
@@ -364,7 +364,7 @@ test('recall-refresh writes the carried block, and writes neither the turn nor t
   assert.ok(String(carry.block).includes('poll the job'), 'the refresh exists to produce a block');
   assert.deepEqual(carry.ref_ids, ['ref_rule_1']);
 
-  // The refresh runs the same ladder, so it must send the same fusion weights. The
+  // The refresh runs the same ladder, so it must send the same `rank_by`. The
   // fixture prompt is a diagnosis, so `auto` resolves it to `relevance` here too: a hook
   // that dials on a user's behalf and quietly ranks it differently from the one the user
   // waits on is two recall behaviours wearing one name.
@@ -417,15 +417,15 @@ test('recall-refresh ranks a handoff prompt by freshness, exactly as the blockin
   assertHookContract(r);
   const body = server.lastCall('POST', '/v2/control/query').body;
   assert.equal(body.rank_by, 'freshness',
-    'the detached half must not fall back to default fusion weights');
+    'the detached half must not fall back to the default rank_by');
   assert.equal(body.query, 'catch me up on where we left off');
 });
 
-// The whole point of moving recall off the prompt is that the expensive lane becomes
+// The whole point of moving recall off the prompt is that the slower, wider read becomes
 // affordable again. If the detached half inherited the blocking half's opt-out, `recallAsync`
-// would buy latency and quietly pay for it in coverage — the cross-run lessons would be gone
+// would buy latency and quietly pay for it in coverage — lessons from other runs would be gone
 // from every path at once and nothing would say so.
-test('recall-refresh keeps the cross-run lesson overlay the blocking path declines', async (t) => {
+test('recall-refresh keeps the cross-run lessons the blocking path declines', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/query': { json: ONE } });
   t.after(() => server.close());
 
@@ -434,7 +434,7 @@ test('recall-refresh keeps the cross-run lesson overlay the blocking path declin
   }));
 
   assert.equal(server.lastCall('POST', '/v2/control/query').body.prefer_current_run, undefined,
-    'a process no prompt is waiting on is exactly where a ~1.7s lane belongs');
+    'a process no prompt is waiting on is exactly where the slower read belongs');
 });
 
 // A failed refresh writes no block. The alternative — an empty carry file — would be read by
@@ -631,7 +631,7 @@ test('recallAsync: the hook\'s wall clock stops tracking the endpoint', async (t
   await waitFor(() => existsSync(carryPath(asyncDir)), 8000);
 });
 
-// §5.6 again, this time through the hook that owns the reset. A block assembled before a
+// The compaction reset again, this time through the hook that owns it. A block assembled before a
 // compaction carries pointers into a transcript that no longer exists.
 test('recallAsync: PostCompact drops the carried block along with the seen-set', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/query': { json: ONE } });
