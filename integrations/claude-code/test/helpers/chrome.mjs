@@ -168,12 +168,16 @@ class Cdp {
  * the endpoint is read off stderr, which is the only place Chrome publishes it before the
  * port file exists.
  *
- * @param {{bin?: string, width?: number, height?: number}} [opts]
+ * A launch that fails kills what it started. Otherwise the browser's stderr pipe keeps the
+ * test file's event loop alive, and `node --test` waits on the file forever.
+ *
+ * @param {{bin?: string, width?: number, height?: number, launchMs?: number}} [opts]
  * @returns {Promise<Chrome>}
  */
 export async function launchChrome(opts = {}) {
   const bin = opts.bin || findChrome();
   if (!bin) throw new Error('launchChrome: no Chrome found; see skipReason()');
+  const launchMs = opts.launchMs ?? LAUNCH_MS;
   const profile = mkdtempSync(join(tmpdir(), 'mubit-chrome-'));
   const args = [
     '--headless=new',
@@ -192,29 +196,51 @@ export async function launchChrome(opts = {}) {
   ];
   const child = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
-  const wsUrl = await new Promise((resolve, reject) => {
-    let err = '';
-    const timer = setTimeout(() => {
-      reject(new Error(`Chrome did not publish a DevTools endpoint within ${LAUNCH_MS} ms:\n${err}`));
-    }, LAUNCH_MS);
-    child.stderr.on('data', (c) => {
-      err += c.toString();
-      const m = /DevTools listening on (ws:\/\/\S+)/.exec(err);
-      if (m) { clearTimeout(timer); resolve(m[1]); }
-    });
-    child.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`Chrome exited with ${code} before publishing an endpoint:\n${err}`));
-    });
-  });
-  // Nothing after the endpoint is worth reading, and an unread pipe fills up.
-  child.stderr.resume();
+  /** @type {WebSocket|null} */
+  let ws = null;
+  // Our end of the pipe is destroyed as well as the browser killed: a helper Chrome started,
+  // such as its crash handler, can outlive it holding the other end.
+  const abandon = () => {
+    try { ws?.close(); } catch { /* never opened */ }
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    child.stderr.destroy();
+    try { rmSync(profile, { recursive: true, force: true }); } catch { /* best effort */ }
+  };
 
-  const ws = new WebSocket(wsUrl);
-  await new Promise((resolve, reject) => {
-    ws.addEventListener('open', () => resolve(undefined), { once: true });
-    ws.addEventListener('error', (e) => reject(new Error(`could not connect to ${wsUrl}: ${String(/** @type {any} */ (e).message ?? e)}`)), { once: true });
-  });
+  let wsUrl;
+  try {
+    wsUrl = await new Promise((resolve, reject) => {
+      let err = '';
+      const timer = setTimeout(() => {
+        reject(new Error(`Chrome did not publish a DevTools endpoint within ${launchMs} ms:\n${err}`));
+      }, launchMs);
+      child.stderr.on('data', (c) => {
+        err += c.toString();
+        const m = /DevTools listening on (ws:\/\/\S+)/.exec(err);
+        if (m) { clearTimeout(timer); resolve(m[1]); }
+      });
+      child.once('exit', (code) => {
+        clearTimeout(timer);
+        reject(new Error(`Chrome exited with ${code} before publishing an endpoint:\n${err}`));
+      });
+    });
+    // Nothing after the endpoint is worth reading, and an unread pipe fills up.
+    child.stderr.resume();
+
+    const socket = new WebSocket(wsUrl);
+    ws = socket;
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`could not connect to ${wsUrl} within ${launchMs} ms`)), launchMs);
+      socket.addEventListener('open', () => { clearTimeout(timer); resolve(undefined); }, { once: true });
+      socket.addEventListener('error', (e) => {
+        clearTimeout(timer);
+        reject(new Error(`could not connect to ${wsUrl}: ${String(/** @type {any} */ (e).message ?? e)}`));
+      }, { once: true });
+    });
+  } catch (err) {
+    abandon();
+    throw err;
+  }
   const cdp = new Cdp(ws);
 
   // A Chrome that dies mid-suite must fail the pending command loudly, not leave it hanging
