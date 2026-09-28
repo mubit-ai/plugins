@@ -247,6 +247,7 @@ const ENDPOINT_HASH_LEN = 12;
  * @property {number} pointers   entries degraded to a one-line pointer (`lib/seen.mjs`)
  * @property {string} emptyReason
  * @property {string[]} refIds
+ * @property {import('./assemble.mjs').AssembledEntry[]} entries  per-entry data; [] off rungs 1-2
  * @property {string} [state]   the §4.7 ConnState, on failure only
  * @property {string} [error]
  */
@@ -547,6 +548,7 @@ function fromContext(responseBody, rung) {
       ? b.empty_reason
       : (block ? '' : 'no_evidence'),
     refIds,
+    entries: [],
   };
 }
 
@@ -598,6 +600,7 @@ function fromEvidence(cfg, responseBody, rung, o) {
     // §4.10/§5.5: a degraded entry is still in here. Dropping a repeat would break
     // attribution for exactly the memories that are helping most.
     refIds: a.sourceRefIds,
+    entries: a.entries,
   };
 }
 
@@ -659,7 +662,7 @@ function crossRunOf(cfg, o) {
 function empty(rung, reason) {
   return {
     failed: false, rung, block: '', tokens: 0, sources: 0, dropped: 0, pointers: 0,
-    emptyReason: reason, refIds: [],
+    emptyReason: reason, refIds: [], entries: [],
   };
 }
 
@@ -667,7 +670,7 @@ function empty(rung, reason) {
 function failure(state, error, rung) {
   return {
     failed: true, rung, block: '', tokens: 0, sources: 0, dropped: 0, pointers: 0,
-    emptyReason: '', refIds: [],
+    emptyReason: '', refIds: [], entries: [],
     state: typeof state === 'string' ? state : 'server_error',
     error: typeof error === 'string' ? error : String(error ?? ''),
   };

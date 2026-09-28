@@ -301,8 +301,8 @@ test('a stale entry is rendered marked, and a fresh one is not', async () => {
 
   const r = assembleContext(ev, { tokenBudget: 4000 });
 
-  assert.match(r.block, /- \(stale\) old truth/);
-  assert.match(r.block, /- current truth/);
+  assert.match(r.block, /- \[m[a-z2-9]{4}\] \(stale\) old truth/);
+  assert.match(r.block, /- \[m[a-z2-9]{4}\] current truth/);
   assert.ok(!/\(stale\) current truth/.test(r.block), 'a fresh entry must not be marked');
 });
 
@@ -478,8 +478,10 @@ test('a seen entry renders as a pointer instead of its whole content', async () 
   assert.ok(first.block.includes('TAIL_RULE'), 'the first injection carries the whole entry');
   assert.ok(!repeat.block.includes('TAIL_RULE'),
     'the repeat must not re-send the body the model has already been given');
-  assert.ok(repeat.block.includes('ref_rule_1'),
-    'the pointer names the reference id, which is the handle mubit_dereference takes');
+  const { handleTag } = await lib('handles.mjs');
+  assert.ok(repeat.block.includes(handleTag('ref_rule_1')),
+    'the pointer names the entry by its handle, which mubit_dereference resolves');
+  assert.ok(!repeat.block.includes('ref_rule_1'), 'the full reference id is no longer printed');
   assert.ok(repeat.block.includes('RULE because'),
     'the first clause is what lets the model recognise which memory is being pointed at');
 });
@@ -674,4 +676,86 @@ test('degrading an entry does not move it out of its section or its order', asyn
   assert.deepEqual(r.sections.map((s) => s.section), ['active_rules', 'lessons', 'facts'],
     'a pointer occupies the same slot in the same section as the entry it replaces');
   assert.deepEqual(r.sourceRefIds, ['ref_rule_1', 'ref_lesson_1', 'ref_fact_1']);
+});
+
+// ---------------------------------------------------------------------------
+// Handles and per-entry data
+// ---------------------------------------------------------------------------
+
+/*
+ * Every rendered line carries its entry's handle so the model can credit it by id with
+ * mubit_outcome, and `entries` hands the caller what was rendered, entry by entry, so the
+ * Stop hook can tell which one the reply used.
+ */
+
+test('a full line starts with its handle, and a stale one keeps its mark after it', async () => {
+  const { assembleContext } = await load();
+  const { handleTag } = await lib('handles.mjs');
+  const r = assembleContext([
+    RULE(),
+    evidence({ id: 'e2', reference_id: 'ref_fact_1', entry_type: 'fact', is_stale: true, content: 'Port 47101 serves the fake API.' }),
+  ], { tokenBudget: 1500 });
+  assert.ok(r.block.includes(`- ${handleTag('ref_rule_1')} Ingest returns when queued`), r.block);
+  assert.ok(r.block.includes(`- ${handleTag('ref_fact_1')} (stale) Port 47101`), r.block);
+});
+
+test('an entry with no reference id renders with no handle', async () => {
+  const { assembleContext } = await load();
+  const r = assembleContext([evidence({ id: 'e1', reference_id: '', entry_type: 'rule', content: 'Poll the job.' })],
+    { tokenBudget: 1500 });
+  assert.ok(r.block.includes('\n- Poll the job.\n'), r.block);
+});
+
+test('a pointer line carries the handle where the reference id used to be', async () => {
+  const { assembleContext, POINTER_MARK } = await load();
+  const { handleTag } = await lib('handles.mjs');
+  const ev = [evidence({ id: 'e1', reference_id: 'ref_rule_1', entry_type: 'rule', is_stale: true, content: longContent('RULE', 'r') })];
+  const r = assembleContext(ev, { tokenBudget: 1500, seen: ['ref_rule_1'] });
+  assert.ok(r.block.includes(`- ${POINTER_MARK} (stale) ${handleTag('ref_rule_1')} — RULE because`), r.block);
+});
+
+test('entries lists every rendered item in render order with its type, handle and full text', async () => {
+  const { assembleContext } = await load();
+  const { handleFor } = await lib('handles.mjs');
+  const ev = [
+    evidence({ id: 'e3', reference_id: 'ref_fact_1', entry_type: 'fact', score: 0.9, content: 'Port 47101 serves the fake API.' }),
+    evidence({ id: 'e2', reference_id: 'ref_lesson_1', entry_type: 'lesson', score: 0.5, content: longContent('LESSON', 'l') }),
+    RULE(),
+    evidence({ id: 'e4', reference_id: 'ref_over_1', entry_type: 'trace', origin_entry_type: 'Lesson', score: 0.1, content: 'Overlay lesson text here.' }),
+  ];
+  const r = assembleContext(ev, { tokenBudget: 1500, seen: ['ref_lesson_1'] });
+  assert.deepEqual(r.entries.map((e) => e.ref), r.sourceRefIds);
+  assert.deepEqual(r.entries.map((e) => [e.ref, e.section, e.type]), [
+    ['ref_rule_1', 'active_rules', 'rule'],
+    ['ref_lesson_1', 'lessons', 'lesson'],
+    ['ref_over_1', 'lessons', 'lesson'],
+    ['ref_fact_1', 'facts', 'fact'],
+  ]);
+  const lesson = r.entries[1];
+  assert.equal(lesson.pointer, true);
+  assert.equal(lesson.handle, handleFor('ref_lesson_1'));
+  assert.ok(lesson.text.endsWith('TAIL_LESSON'), 'the full text survives even when the line was a pointer');
+  assert.ok(lesson.title.startsWith('LESSON because') && lesson.title.length < 80);
+  assert.equal(r.entries[0].pointer, false);
+  assert.equal(r.entries[0].stale, false);
+});
+
+test('entries is deduplicated by reference id, first wins, and keeps ref-less items', async () => {
+  const { assembleContext } = await load();
+  const ev = [
+    evidence({ id: 'a', reference_id: 'ref_dup', entry_type: 'rule', score: 0.9, content: 'First copy of the rule.' }),
+    evidence({ id: 'b', reference_id: 'ref_dup', entry_type: 'lesson', score: 0.9, content: 'Second lane, same entry.' }),
+    evidence({ id: 'c', reference_id: '', entry_type: 'fact', score: 0.9, content: 'A fact with no id.' }),
+  ];
+  const r = assembleContext(ev, { tokenBudget: 1500 });
+  assert.deepEqual(r.entries.map((e) => [e.ref, e.type]), [['ref_dup', 'rule'], ['', 'fact']]);
+});
+
+test('empty and budget-exhausted results carry no entries', async () => {
+  const { assembleContext } = await load();
+  assert.deepEqual(assembleContext([], {}).entries, []);
+  const r = assembleContext([evidence({ id: 'e1', reference_id: 'ref_rule_1', entry_type: 'rule', content: longContent('RULE', 'r') })],
+    { tokenBudget: 5 });
+  assert.equal(r.emptyReason, 'budget_exhausted');
+  assert.deepEqual(r.entries, []);
 });

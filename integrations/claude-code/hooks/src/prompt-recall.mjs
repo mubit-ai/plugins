@@ -112,7 +112,7 @@
 
 import { join } from 'node:path';
 
-import { isPointerLine, POINTER_MARK } from '../../lib/assemble.mjs';
+import { POINTER_MARK } from '../../lib/assemble.mjs';
 import { CONN_STATES, readBreaker } from '../../lib/breaker.mjs';
 import { takeCarry } from '../../lib/carry.mjs';
 import { isConfigured, loadConfig } from '../../lib/config.mjs';
@@ -126,7 +126,9 @@ import { recallBlock } from '../../lib/recall.mjs';
 import { redactText } from '../../lib/redact.mjs';
 import { deriveAgentId, deriveRunId, hostSessionId, resolveProjectDir, turnKey } from '../../lib/runid.mjs';
 import { markSeen, readSeen } from '../../lib/seen.mjs';
+import { appendScoreRow } from '../../lib/scorecard-log.mjs';
 import { readJson, resolveDataDir, safeSegment, writeJsonAtomic } from '../../lib/state.mjs';
+import { entryTerms, entryTitle, MAX_PROMPT_SCAN, memoryTerms, termSet } from '../../lib/terms.mjs';
 
 /** §5.2 step 0: "ok", "yes", "go on" carry no retrievable intent. */
 const MIN_PROMPT_CHARS = 8;
@@ -137,42 +139,8 @@ const MAX_QUERY_CHARS = 2000;
 /** U+00B7, the separator the status line and every systemMessage share. */
 const DOT = ' · ';
 
-/**
- * §5.5: how many of the injected block's own words the turn carries for the Stop-side
- * used-signal. The block is capped at ~1500 tokens, so 48 distinct terms covers the head of
- * every section that rendered; the cap exists so a pathological block cannot grow the turn
- * file without bound.
- */
-const MAX_RECALL_TERMS = 48;
-
-/**
- * A term: 4-24 characters, starting with a letter. The lower bound drops the function words
- * that carry no topic ("the", "job"); the upper bound is the first line of defence against a
- * credential becoming a term — most are longer, and `redactText` has already had the ones
- * that are not.
- */
-const TERM_RE = /[A-Za-z][A-Za-z0-9_]{3,23}/g;
-
-/** How much of the prompt is tokenised for subtraction. A 10 MB paste is a prompt too. */
-const MAX_PROMPT_SCAN = 16 * 1024;
-
-/**
- * Words that pass the shape test and mean nothing. Without them a reply that says "there
- * are three of these" would score as an echo of the memory. Deliberately short: the prompt
- * subtraction below removes far more, and every extra row here is a term the signal can no
- * longer see.
- */
-const TERM_STOPWORDS = new Set([
-  'about', 'after', 'again', 'against', 'also', 'always', 'another', 'because', 'been',
-  'before', 'being', 'between', 'both', 'called', 'does', 'doing', 'done', 'each', 'else',
-  'even', 'ever', 'every', 'from', 'have', 'here', 'html', 'http', 'https', 'into',
-  'just', 'like', 'made', 'make', 'many', 'more', 'most', 'much', 'must', 'need', 'never',
-  'next', 'once', 'only', 'other', 'over', 'part', 'same', 'says', 'send', 'sent', 'should',
-  'since', 'some', 'such', 'take', 'than', 'that', 'their', 'them', 'then', 'there', 'these',
-  'they', 'this', 'those', 'through', 'thing', 'time', 'under', 'until', 'very', 'want',
-  'well', 'were', 'what', 'when', 'where', 'which', 'while', 'will', 'with', 'without',
-  'would', 'your',
-]);
+/** A rendered memory line that carries a handle, full or pointer. */
+const HANDLE_LINE_RE = /^- (?:\(seen earlier\) )?(?:\(stale\) )?\[m[a-z2-9]{4}\]/m;
 
 /** `prompt_id` names a file, so it is untrusted input to a path. */
 const MAX_ID = 128;
@@ -203,7 +171,7 @@ const SUPPRESS = Object.freeze({ suppressOutput: true });
  */
 const NO_RECALL = Object.freeze({
   failed: false, rung: 0, block: '', tokens: 0, sources: 0, dropped: 0, pointers: 0,
-  emptyReason: '', refIds: Object.freeze([]),
+  emptyReason: '', refIds: Object.freeze([]), entries: Object.freeze([]),
 });
 
 await runHook('prompt-recall', {
@@ -296,7 +264,7 @@ await runHook('prompt-recall', {
       if (!resume) return pinsOnly(cfg, pins, runId);
       persistRecalled(cfg, runId, safeId(turnKey(payload)), payload, NO_RECALL, resume);
       if (pins.text) updateMarker(cfg, runId, { recall: { pin_tokens: pins.tokens } });
-      return injection(runId, NO_RECALL, resume, pins, Date.now() - started);
+      return injection(cfg, runId, NO_RECALL, resume, pins, Date.now() - started);
     }
 
     const query = prompt.slice(0, MAX_QUERY_CHARS);
@@ -330,7 +298,7 @@ await runHook('prompt-recall', {
       if (!resume) return pinsOnly(cfg, pins, runId);
       persistRecalled(cfg, runId, promptId, payload, NO_RECALL, resume);
       if (pins.text) updateMarker(cfg, runId, { recall: { pin_tokens: pins.tokens } });
-      return injection(runId, NO_RECALL, resume, pins, ms);
+      return injection(cfg, runId, NO_RECALL, resume, pins, ms);
     }
 
     // §5.2 step 6: what was rendered is what `Stop` attributes against (§5.5). Written even
@@ -367,7 +335,7 @@ await runHook('prompt-recall', {
     // before this prompt existed and is not an answer to it either.
     if (!outcome.block && !resume) return pinsOnly(cfg, pins, runId, true);
 
-    return injection(runId, outcome, resume, pins, ms);
+    return injection(cfg, runId, outcome, resume, pins, ms);
   },
 });
 
@@ -458,7 +426,7 @@ function carryForward(cfg, payload, runId, sessionId, started, pins, resume = nu
   // does a briefing, which a different process assembled before any of this ran.
   if (!rendered && !resume) return pinsOnly(cfg, pins, runId, true);
 
-  return injection(runId, rendered ? carry : NO_RECALL, resume, pins, ms, true);
+  return injection(cfg, runId, rendered ? carry : NO_RECALL, resume, pins, ms, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -612,7 +580,24 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
     if (typeof next.session_id !== 'string') next.session_id = str(payload?.session_id);
     if (!Number.isFinite(next.started_at)) next.started_at = Date.now();
 
+    // Per entry, for the Stop-side check that asks which entry the reply used.
+    const promptTerms = termSet(str(payload?.prompt).slice(0, MAX_PROMPT_SCAN));
+    const entries = (Array.isArray(outcome.entries) ? outcome.entries : [])
+      .filter((e) => e && typeof e.ref === 'string' && e.ref);
+    const shown = entries.map((e) => ({
+      ref: e.ref,
+      handle: str(e.handle),
+      type: str(e.type),
+      pointer: e.pointer === true,
+      terms: entryTerms(cfg, str(e.text), promptTerms),
+    }));
+    next.shown = shown;
+
     writeJsonAtomic(file, next);
+
+    if (cfg.capture !== false) {
+      appendShownRow(cfg, payload, promptId, entries, shown, outcome, resume);
+    }
   } catch (err) {
     // §4.9: the cost of an unwritable data dir is this turn's attribution, never the prompt.
     log(cfg, 'warn', `prompt-recall: could not stage recalled ids (${messageOf(err)})`, { run_id: runId });
@@ -620,66 +605,44 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
 }
 
 /**
- * The words the memory contributed and the prompt did not, in render order (so the sections
- * that fill first — mental models, then rules — are the ones that survive the cap).
- *
- * ---------------------------------------------------------------------------
- * Only the rendered entries, and only the ones sent in full
- * ---------------------------------------------------------------------------
- * Two kinds of line in the block are not memory vocabulary, and counting either of them
- * turns a working memory into a measured failure:
- *
- *   - **Section headings.** "Active rules", "Lessons", "Facts" are words this plugin prints,
- *     not words a memory contributed. A reply that happens to say "rules" would score as an
- *     echo of memory that was never read.
- *   - **Pointer lines.** A degraded repeat carries a `reference_id` and a clause, and the
- *     model has no reason to echo a reference id — so a pointer-only turn would stage a term
- *     set that is guaranteed to miss. `capture --stop` would then record `used: false`, and
- *     `lib/outcome.mjs` row 3 would file a `neutral` against every memory relevant enough to
- *     keep surfacing. With the pointers excluded the turn stages no terms at all, lands on
- *     `reason: 'no_distinct_terms'`, and is correctly read as **unmeasured** (row 4).
- *
- * A rung-3 block is the server's own rendering and has no bullets to trust, so there only
- * the headings are dropped. It cannot carry pointers: rung 3 assembles server-side.
- *
- * §4.4: the block is scrubbed before any of it is written down. Evidence content is not
- * necessarily this plugin's own redacted capture — another client, or `mubit_remember`, can
- * put anything in the store — and the turn file is a new place for a secret to land. The
- * `[REDACTED:…]` placeholders are then dropped rather than tokenised: "redacted" is not
- * memory vocabulary, and a reply that happened to contain the word would score as an echo.
+ * The session log's `shown` row: the lessons this turn rendered, every ref it rendered (so a
+ * handle resolves), and what the injection cost. Never throws.
  *
  * @param {Record<string, any>} cfg
- * @param {string} block
- * @param {string} prompt
- * @returns {string[]}
+ * @param {Record<string, any>} payload
+ * @param {string} promptId
+ * @param {Record<string, any>[]} entries
+ * @param {{ref: string, handle: string, type: string, pointer: boolean, terms: string[]}[]} shown
+ * @param {Outcome} outcome
+ * @param {import('../../lib/resume.mjs').Resumed|null} resume
  */
-function memoryTerms(cfg, blocks, prompt) {
+function appendShownRow(cfg, payload, promptId, entries, shown, outcome, resume) {
   try {
-    let text = blocks.filter(Boolean).map(vocabularyOf).filter(Boolean).join('\n');
-    if (!text) return [];
-    try {
-      text = str(redactText(text, cfg, 'output')?.text) || '';
-    } catch {
-      // A scrub that threw is not a licence to write the raw block's words down.
-      return [];
-    }
-    text = text.replace(/\[REDACTED:[^\]]*\]/gi, ' ');
-
-    const fromPrompt = termSet(prompt.slice(0, MAX_PROMPT_SCAN));
-    /** @type {string[]} */
-    const out = [];
-    const seen = new Set();
-    for (const m of text.matchAll(TERM_RE)) {
-      const t = m[0].toLowerCase();
-      if (seen.has(t) || fromPrompt.has(t) || TERM_STOPWORDS.has(t)) continue;
-      seen.add(t);
-      out.push(t);
-      if (out.length >= MAX_RECALL_TERMS) break;
-    }
-    return out;
+    /** @type {Record<string, any>} */
+    const lessons = {};
+    entries.forEach((e, i) => {
+      if (str(e.type) !== 'lesson') return;
+      lessons[e.ref] = {
+        title: entryTitle(cfg, str(e.text)),
+        terms: shown[i].terms,
+        handle: shown[i].handle,
+        pointer: shown[i].pointer,
+      };
+    });
+    const refs = [...new Set([
+      ...outcome.refIds,
+      ...entries.map((e) => e.ref),
+      ...(resume ? resume.refIds : []),
+    ].filter((r) => typeof r === 'string' && r))];
+    appendScoreRow(cfg, str(payload?.session_id), {
+      kind: 'shown',
+      prompt_id: promptId,
+      lessons,
+      refs,
+      tokens: outcome.tokens + (resume ? resume.tokens : 0),
+    });
   } catch {
-    // A turn with no terms is measured as "unmeasurable" downstream, never as "unused".
-    return [];
+    // The scorecard is worth a row, never a prompt.
   }
 }
 
@@ -714,31 +677,6 @@ function claimStandingLessons(cfg, runId) {
     // Attribution is worth a turn's ids, never a turn.
     return [];
   }
-}
-
-/**
- * The rendered entries' own text: bullets only, pointer lines excluded, and the leading
- * markers stripped so `(stale)` is not vocabulary either. See the note on `memoryTerms`.
- * @param {string} block
- * @returns {string}
- */
-function vocabularyOf(block) {
-  const lines = String(block ?? '').split('\n');
-  const bullets = lines.filter((l) => l.startsWith('- '));
-  // A block with no bullets was assembled somewhere else (rung 3). Drop the headings, which
-  // are structure in any rendering, and trust the rest.
-  if (bullets.length === 0) return lines.filter((l) => !l.startsWith('#')).join('\n');
-  return bullets
-    .filter((l) => !isPointerLine(l))
-    .map((l) => l.slice(2).replace(/^\(stale\)\s+/, ''))
-    .join('\n');
-}
-
-/** @param {string} s @returns {Set<string>} */
-function termSet(s) {
-  const set = new Set();
-  for (const m of String(s ?? '').matchAll(TERM_RE)) set.add(m[0].toLowerCase());
-  return set;
 }
 
 // ---------------------------------------------------------------------------
@@ -855,6 +793,7 @@ function breakerOpen(cfg) {
  * `· resume` and `· N pinned` suffixes say what else was in the message, once, and only on the
  * turns that carried one.
  *
+ * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {Outcome} outcome           this turn's recall; `NO_RECALL` when there was none
  * @param {import('../../lib/resume.mjs').Resumed|null} resume
@@ -863,7 +802,7 @@ function breakerOpen(cfg) {
  * @param {boolean} [carried]  the recall block came from the previous turn's refresh
  * @returns {Record<string, any>}
  */
-function injection(runId, outcome, resume, pins, ms, carried = false) {
+function injection(cfg, runId, outcome, resume, pins, ms, carried = false) {
   const recallSources = outcome.refIds.length || outcome.sources;
   const resumeSources = resume ? (resume.refIds.length || resume.sources) : 0;
   const sources = recallSources + resumeSources;
@@ -874,7 +813,7 @@ function injection(runId, outcome, resume, pins, ms, carried = false) {
   if (resume) parts.push(resumeWrap(runId, resumeSources, resume.tokens, resume.block));
   if (outcome.block || pinned) {
     parts.push(
-      wrap(runId, recallSources, outcome.tokens, outcome.block, outcome.pointers, carried, pinned));
+      wrap(cfg, runId, recallSources, outcome.tokens, outcome.block, outcome.pointers, carried, pinned));
   }
 
   return {
@@ -947,7 +886,7 @@ function pinsOnly(cfg, pins, runId, stamped = false) {
   return {
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',
-      additionalContext: wrap(runId, 0, 0, '', 0, false, pins),
+      additionalContext: wrap(cfg, runId, 0, 0, '', 0, false, pins),
     },
     systemMessage: `mubit: ${n} pinned${DOT}${formatTokens(pins.tokens)} tok`,
     suppressOutput: true,
@@ -1021,15 +960,18 @@ function pinsGate(cfg, payload) {
  * pins would silently vanish for those users. And inside it a pin would be subject to the
  * seen-set — a pin degraded to `(seen earlier)` is a pin that does nothing.
  *
+ * @param {Record<string, any>} cfg
  * @param {string} runId @param {number} sources @param {number} tokens @param {string} block
  * @param {number} [pointers]
  * @param {boolean} [carried]  the block came from the previous turn's refresh
  * @param {import('../../lib/pins.mjs').PinBlock|null} [pins]  the run's standing constraints
  * @returns {string}
  */
-function wrap(runId, sources, tokens, block, pointers = 0, carried = false, pins = null) {
+function wrap(cfg, runId, sources, tokens, block, pointers = 0, carried = false, pins = null) {
   const pinned = pins && pins.text ? pins : null;
   const recalled = typeof block === 'string' && block !== '';
+  // The nudge is worth its tokens only when there are ids on the lines to pass back.
+  const nudge = recalled && HANDLE_LINE_RE.test(block) && cfg?.outcomeReview !== 'off';
   return `<mubit-memory run="${runId}" sources="${sources}" tokens="${tokens}"`
     // Only when there are pins, so a user who has none gets the envelope they have always had.
     + `${pinned ? ` pins="${pinned.pins.length}"` : ''}>\n`
@@ -1043,13 +985,17 @@ function wrap(runId, sources, tokens, block, pointers = 0, carried = false, pins
       ? 'Recalled from memory of earlier work — it may be incomplete or out of date, so verify '
         + 'against the code before relying on it.\n'
       : '')
+    + (nudge
+      ? 'Each entry starts with its id in brackets. Before you finish, report the entries that '
+        + 'helped or misled you with mubit_outcome, passing those ids.\n'
+      : '')
     + (recalled && carried
       ? 'It was retrieved against the previous message in this conversation, not this one, '
         + 'so treat it as background rather than as an answer to what was just asked.\n'
       : '')
     + (recalled && pointers > 0
       ? `A line marked "${POINTER_MARK}" was injected in full earlier in this conversation `
-        + 'and is repeated here only as a reference; ask mubit_dereference for its text.\n'
+        + 'and is repeated here only as a reference; ask mubit_dereference with its id for the text.\n'
       : '')
     + (recalled ? `\n${block.replace(/\s+$/, '')}\n` : '')
     + '</mubit-memory>';

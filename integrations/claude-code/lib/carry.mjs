@@ -83,6 +83,7 @@ export const CARRY_TTL_MS = 15 * 60 * 1000;
  * @property {number} pointers
  * @property {string} emptyReason
  * @property {string[]} refIds
+ * @property {Record<string, any>[]} entries  `lib/assemble.mjs` AssembledEntry[]
  * @property {number} writtenAt
  * @property {string} forPromptId  the prompt this block was retrieved against
  * @property {number} fetchMs      what the refresh spent — the cost the prompt no longer pays
@@ -151,6 +152,7 @@ export function takeCarry(cfg, runId) {
       pointers: int(raw.pointers, 0),
       emptyReason: typeof raw.empty_reason === 'string' ? raw.empty_reason : '',
       refIds,
+      entries: entriesOf(raw.entries),
       writtenAt,
       forPromptId: typeof raw.for_prompt_id === 'string' ? raw.for_prompt_id : '',
       fetchMs: int(raw.fetch_ms, 0),
@@ -179,7 +181,7 @@ export function takeCarry(cfg, runId) {
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {{rung?: number, block?: string, tokens?: number, sources?: number, dropped?: number,
- *          pointers?: number, emptyReason?: string, refIds?: string[]}} outcome
+ *          pointers?: number, emptyReason?: string, refIds?: string[], entries?: any[]}} outcome
  * @param {{promptId?: string, fetchMs?: number}} [meta]
  * @returns {boolean} true when the block landed
  */
@@ -206,6 +208,7 @@ export function writeCarry(cfg, runId, outcome, meta = {}) {
       ref_ids: Array.isArray(outcome?.refIds)
         ? outcome.refIds.filter((v) => typeof v === 'string' && v.trim())
         : [],
+      entries: entriesOf(outcome?.entries),
     });
   } catch {
     return false;
@@ -245,6 +248,15 @@ export function clearCarry(cfg, runId) {
 // ---------------------------------------------------------------------------
 // Coercion
 // ---------------------------------------------------------------------------
+
+/** Per-entry data survives the hop only as objects with a string `ref`, and never unbounded. */
+const MAX_ENTRIES = 64;
+
+/** @param {any} v @returns {Record<string, any>[]} */
+function entriesOf(v) {
+  if (!Array.isArray(v)) return [];
+  return v.filter((e) => isObject(e) && typeof e.ref === 'string').slice(0, MAX_ENTRIES);
+}
 
 /** @param {any} v @returns {boolean} */
 function isObject(v) {

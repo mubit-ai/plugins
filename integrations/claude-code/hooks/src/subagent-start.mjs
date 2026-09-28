@@ -110,6 +110,7 @@ import { log } from '../../lib/log.mjs';
 import { MAX_SUBAGENT_PIN_TOKENS, readPins } from '../../lib/pins.mjs';
 import { rankForRecall } from '../../lib/rank.mjs';
 import { recallBlock } from '../../lib/recall.mjs';
+import { appendScoreRow } from '../../lib/scorecard-log.mjs';
 import { deriveAgentId, deriveRunId, deriveSubRunId, resolveProjectDir, turnKey } from '../../lib/runid.mjs';
 import { readJson, runDir, safeSegment, writeJsonAtomic } from '../../lib/state.mjs';
 
@@ -237,6 +238,15 @@ await runHook('subagent-start', {
     // and teaches the model to distrust the channel — but a pin is not a search result, and
     // an empty search is not a reason to drop one.
     if (!outcome.block) return pinsOnly(runId, agentId, pins);
+
+    // The parent session's log learns these refs so a handle the subagent passes back resolves.
+    if (cfg.capture !== false) {
+      try {
+        appendScoreRow(cfg, str(payload?.session_id), {
+          kind: 'refs', source: 'subagent', refs: [...outcome.refIds],
+        });
+      } catch { /* a scorecard row is never worth a spawn */ }
+    }
 
     return {
       hookSpecificOutput: {
