@@ -49,7 +49,7 @@
  * Every hook runs as a subprocess of the Codex entry point, against the fake endpoint, in the
  * environment Codex gives it: no `CLAUDE_*` names, which `lib/boot.mjs` fills in.
  * `MUBIT_CC_SESSION_SCORE=full` so the card prints, and `MUBIT_CC_OUTCOME_REVIEW=off` so Stop
- * never blocks; the Stop-hook review is #24's.
+ * never blocks; the Stop-hook review is `codex-review.test.mjs`'s.
  */
 
 import test from 'node:test';
@@ -109,7 +109,7 @@ const LEARNED_ARGS = ['tool_input.text'];
 /** Spec-derived: the MCP spec's `CallToolResult.isError`. Codex was never recorded sending it. */
 const SPEC_IS_ERROR = ['tool_response.isError'];
 
-/** Not recorded: no recorded session ran a subagent. The issue's premise, and Claude Code's. */
+/** Not recorded: no recorded session ran a subagent. `agent_id` is taken to mark one, as on Claude Code. */
 const IN_SUBAGENT = ['agent_id'];
 
 /**
@@ -283,7 +283,8 @@ function learned(s, text, o = {}) {
 async function finish(s, reply) {
   const r = await hook(s, 'capture', stop({ cwd: s.projectDir, last_assistant_message: reply }), { args: ['--stop'] });
   assert.equal(r.json?.decision, undefined,
-    'Stop blocked with MUBIT_CC_OUTCOME_REVIEW=off. The review is #24; this file must never reach it.');
+    'Stop blocked with MUBIT_CC_OUTCOME_REVIEW=off, so a user who switched the review off is still '
+    + 'stopped for it. The review is codex-review.test.mjs\'s; this file must never reach it.');
   return String(r.json?.systemMessage ?? '');
 }
 
@@ -510,8 +511,7 @@ test('inside a subagent, mubit_outcome records nothing and mubit_learned counts,
   // only (`noteOwnTool` in the shared capture hook), and a subagent's mubit_learned is counted,
   // which `../../claude-code/test/capture-scorecard.test.mjs` pins ("a successful mubit_learned
   // appends a learned row, from a subagent too"). The two hosts run this code and print one
-  // card, so the issue's "record nothing" is held to for the verdict, and the lesson count
-  // follows Claude Code.
+  // card, so a subagent's verdict records nothing, and its lesson count follows Claude Code.
   const s = await session(t);
   await outcome(s, { reference_id: 'global', outcome: 'failure', entry_ids: [`[${s.hA}]`] },
     { over: { agent_id: AGENT }, unrecorded: IN_SUBAGENT });
