@@ -315,7 +315,8 @@ test('outcomeReview=OFF: read as off, so the block does not explain the ids', as
 // `outcomeMode` decides whether the plugin posts outcomes of its own. It does not stop a
 // mubit_outcome call the model makes, and it does not silence the per-prompt nudge, which
 // `prompt-recall.mjs` gates on `outcomeReview` alone. The sentence is that nudge's standing
-// counterpart, so it follows the same rule: only `outcomeReview: off` (or capture off) drops it.
+// counterpart, so `outcomeMode` does not drop it either. Unlike the nudge, it is also dropped
+// with capture off, when no session log is written to resolve an id.
 test('outcomeMode=off, outcomeReview=nudge: the sentence is still there, as the per-prompt nudge is', async () => {
   const { ctx } = await start({ review: 'nudge', env: { MUBIT_CC_OUTCOME_MODE: 'off' } });
   assertActiveCodexBlock(ctx, 'outcomeMode=off');
