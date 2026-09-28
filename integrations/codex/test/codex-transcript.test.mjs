@@ -30,7 +30,7 @@ import { join } from 'node:path';
 
 import {
   preCompact, runHook, baseEnv, makeDataDir, makeProjectDir, fakeMubit, tempDir,
-  assertHookContract, rolloutJsonl,
+  assertHookContract, rolloutJsonl, HOOK_RUN_ID,
 } from './helpers/codex-fixtures.mjs';
 
 const RUN_ID = 'codex-transcript-test';
@@ -155,6 +155,100 @@ test('a Claude Code transcript still reads correctly', async (t) => {
   //   session share a data directory, so one run really can hold both kinds of checkpoint.
   assert.match(body, /user: cc-user-marker/, 'the Claude Code envelope stopped rendering.');
   assert.match(body, /assistant: cc-assistant-marker/, 'the Claude Code envelope stopped rendering.');
+});
+
+// ===========================================================================
+// Stop-hook feedback is not a user turn
+// ===========================================================================
+
+// When a Stop hook blocks, Codex (0.154.0) writes the reason as a `user` record wrapped in
+// `<hook_prompt hook_run_id="stop:…">…</hook_prompt>`. A snapshot that renders it as
+// `user: …` hands a later recall the outcome review as though the person had asked for it.
+
+const REVIEW = 'Before you finish: say which of the lessons in context helped.';
+
+/** The snapshot the hook posted, as text. */
+function snapshotOf(server) {
+  return String(server.lastCall('POST', '/v2/control/checkpoint')?.body?.context_snapshot ?? '');
+}
+
+/**
+ * The snapshot's entries that are rendered as the user's. An entry is `<role>: <text>`, and a
+ * text can run over several lines, so an entry ends where the next `<role>: ` begins.
+ */
+function userTurns(snapshot) {
+  return snapshot.split(/\n(?=[A-Za-z_]+: )/).filter((e) => e.startsWith('user:'));
+}
+
+test('Stop-hook feedback is never rendered as a user turn, and the conversation around it is', async (t) => {
+  const { server } = await checkpoint(t, [
+    { role: 'user', text: 'Port the plugin to Codex.' },
+    { role: 'assistant', text: 'Ported.' },
+    { hookPrompt: REVIEW },
+    { role: 'assistant', text: 'Reviewed: the drain lesson helped.' },
+  ]);
+  const snapshot = snapshotOf(server);
+  assert.ok(snapshot, `nothing was checkpointed; saw ${server.summary()}`);
+  for (const turn of userTurns(snapshot)) {
+    assert.ok(!turn.includes('hook_prompt') && !turn.includes(REVIEW),
+      `Stop-hook feedback was rendered as the user's: ${JSON.stringify(turn.slice(0, 160))}. The `
+      + 'snapshot is what a later session is briefed from, and it would read the review as a request.');
+  }
+  assert.match(snapshot, /^user: Port the plugin to Codex\.$/m, 'the real user turn is missing.');
+  assert.match(snapshot, /^assistant: Ported\.$/m, 'the answer before the feedback is missing.');
+  assert.match(snapshot, /^assistant: Reviewed: the drain lesson helped\.$/m,
+    'the answer after the feedback is missing. Only the feedback is the host\'s; what the '
+    + 'assistant said next is still the conversation.');
+});
+
+test('several in a row, whitespace before the tag, another attribute order: none is a user turn', async (t) => {
+  const { server } = await checkpoint(t, [
+    { role: 'user', text: 'real-user-marker' },
+    { role: 'assistant', text: 'first answer' },
+    { hookPrompt: 'reason-one', lead: '\n' },
+    { hookPrompt: 'reason-two', attrs: `source="stop" hook_run_id="${HOOK_RUN_ID}"` },
+    { hookPrompt: 'reason-three', lead: '  ' },
+    { role: 'assistant', text: 'second answer' },
+  ]);
+  const snapshot = snapshotOf(server);
+  const users = userTurns(snapshot);
+  assert.deepEqual(users, ['user: real-user-marker'],
+    'every user entry but the typed one is Stop-hook feedback rendered in the user\'s voice: '
+    + JSON.stringify(users.map((u) => u.slice(0, 80))));
+  assert.match(snapshot, /^assistant: second answer$/m, 'the assistant turn after the feedback is missing.');
+});
+
+test('a user who mentions hook_prompt mid-message is still the user', async (t) => {
+  // No run id in the mention: the snapshot is redacted, and a path in one reads as high-entropy.
+  const said = 'why does my rollout show a <hook_prompt hook_run_id="stop:0"> line after every turn?';
+  const { server } = await checkpoint(t, [
+    { role: 'user', text: said },
+    { role: 'assistant', text: 'That is how Codex stores Stop-hook feedback.' },
+  ]);
+  assert.deepEqual(userTurns(snapshotOf(server)), [`user: ${said}`],
+    'a person asking about the wrapper lost their turn. Only a block that opens with the tag is the host\'s.');
+});
+
+test('a Claude Code transcript that mentions hook_prompt still renders as before', async (t) => {
+  const path = join(tempDir('cc-transcript-'), 'transcript.jsonl');
+  const said = 'why does <hook_prompt> appear in the Codex rollout but not here?';
+  writeFileSync(path, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: said }] } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'cc-assistant-marker' }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'cc-user-marker' } }),
+  ].join('\n') + '\n');
+
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  await runHook('checkpoint', preCompact({ transcript_path: path }), {
+    args: ['--pre'], env: env(makeDataDir(), makeProjectDir({ git: true }), server.url),
+  });
+  const snapshot = snapshotOf(server);
+  // Claude Code never writes the wrapper, and a Codex session and a Claude Code session can share
+  // one data directory — so the Codex filter has to leave this envelope exactly as it was.
+  assert.deepEqual(userTurns(snapshot), [`user: ${said}`, 'user: cc-user-marker'],
+    'the Claude Code envelope stopped rendering its user turns.');
+  assert.match(snapshot, /^assistant: cc-assistant-marker$/m, 'the Claude Code envelope stopped rendering.');
 });
 
 // ===========================================================================

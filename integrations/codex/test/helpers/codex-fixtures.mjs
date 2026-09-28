@@ -698,7 +698,10 @@ export const BUILDERS = Object.freeze({
  * are included because they are most of a real rollout and a reader that renders them would
  * spend its window on machinery.
  *
- * @param {Array<{role: string, text: string}>} [messages]
+ * An entry of `{hookPrompt: reason}` writes what a blocked Stop hook leaves instead — see
+ * `rolloutHookPrompt`.
+ *
+ * @param {Array<{role: string, text: string} | HookPromptEntry>} [messages]
  * @returns {string}
  */
 export function rolloutJsonl(messages = []) {
@@ -707,6 +710,10 @@ export function rolloutJsonl(messages = []) {
     JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: TURN_ID } }),
   ];
   for (const m of messages) {
+    if ('hookPrompt' in m) {
+      lines.push(...rolloutHookPrompt(m.hookPrompt, { lead: m.lead, attrs: m.attrs, id: m.id ?? `msg_${lines.length}` }));
+      continue;
+    }
     lines.push(JSON.stringify({
       type: 'response_item',
       payload: {
@@ -723,4 +730,88 @@ export function rolloutJsonl(messages = []) {
   lines.push(JSON.stringify({ type: 'response_item', payload: { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'gAAAA…' } }));
   lines.push(JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: TURN_ID } }));
   return `${lines.join('\n')}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Stop-hook feedback, as the rollout stores it
+// ---------------------------------------------------------------------------
+
+/**
+ * @typedef {object} HookPromptEntry
+ * @property {string} hookPrompt  the reason the Stop hook blocked with
+ * @property {string} [lead]      text before the tag, for the whitespace cases
+ * @property {string} [attrs]     the tag's attribute list, replacing the observed one
+ * @property {string} [id]        the message id both lines share
+ */
+
+/**
+ * A hook run id in the observed shape, `stop:<n>:<the hooks.json that registered the hook>`.
+ * The path is a placeholder; the real one is wherever the host found the plugin.
+ */
+export const HOOK_RUN_ID = 'stop:0:/tmp/codex/plugins/mubit-memory/hooks.json';
+
+/**
+ * The text Codex puts on a `role: "user"` record when a Stop hook blocks with a reason.
+ *
+ * Observed on codex-cli 0.154.0: the reason is not stored as hook output but as a message in
+ * the user's voice, wrapped whole in one `input_text` block —
+ *
+ *     <hook_prompt hook_run_id="stop:<n>:<path>">REASON</hook_prompt>
+ *
+ * — and no person typed it. A reader that takes every `user` record at its word reads the
+ * outcome review as something the user asked.
+ *
+ * @param {string} reason
+ * @param {{lead?: string, attrs?: string}} [o]
+ * @returns {string}
+ */
+export function hookPromptText(reason, o = {}) {
+  const attrs = o.attrs ?? `hook_run_id="${HOOK_RUN_ID}"`;
+  return `${o.lead ?? ''}<hook_prompt ${attrs}>${reason}</hook_prompt>`;
+}
+
+/**
+ * The two rollout lines a blocked Stop leaves, in the order and shape observed on 0.154.0:
+ *
+ *   1. `response_item/message` with `role: "user"` and the wrapper as its one `input_text`
+ *      block, plus the `internal_chat_message_metadata_passthrough` the host adds;
+ *   2. `event_msg/item_completed` carrying a `HookPrompt` item — the UI's copy, sharing the
+ *      message id, with the bare reason under `fragments` and no wrapper.
+ *
+ * The real `UserMessage` item a typed prompt gets is a different `item.type`, so the second
+ * line is what tells the two apart on the `event_msg` side.
+ *
+ * @param {string} reason
+ * @param {{lead?: string, attrs?: string, id?: string}} [o]
+ * @returns {string[]} two JSONL lines, no trailing newline
+ */
+export function rolloutHookPrompt(reason, o = {}) {
+  const id = o.id ?? 'msg_0a0a0a0a-0000-4000-8000-000000000000';
+  return [
+    JSON.stringify({
+      timestamp: '2026-08-21T16:32:11.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        id,
+        role: 'user',
+        content: [{ type: 'input_text', text: hookPromptText(reason, o) }],
+        internal_chat_message_metadata_passthrough: {
+          turn_id: TURN_ID, create_time: 1787329931.0, content_item_kinds: ['unknown'],
+        },
+      },
+    }),
+    JSON.stringify({
+      timestamp: '2026-08-21T16:32:11.001Z',
+      type: 'event_msg',
+      payload: {
+        type: 'item_completed',
+        thread_id: SESSION_ID,
+        turn_id: TURN_ID,
+        item: { type: 'HookPrompt', id, fragments: [{ text: reason, hookRunId: HOOK_RUN_ID }] },
+        started_at_ms: 1787329931001,
+        completed_at_ms: 1787329931001,
+      },
+    }),
+  ];
 }

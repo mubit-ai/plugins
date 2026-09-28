@@ -327,6 +327,119 @@ describe('a 0.153 rollout', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Stop-hook feedback (0.154): a `user` record nobody typed
+// ---------------------------------------------------------------------------
+
+/** The observed hook run id shape, `stop:<n>:<hooks.json>`, with a placeholder path. */
+const HOOK_RUN_ID = 'stop:0:/tmp/codex/plugins/mubit-memory/hooks.json';
+const HOOK_MSG_ID = 'msg_0a0a0a0a-0000-4000-8000-000000000000';
+
+/**
+ * The two lines a blocked Stop leaves: the reason wrapped in `<hook_prompt>` on a `user`
+ * record, and the UI's `HookPrompt` copy of it on `item_completed`. `lead` is whatever
+ * precedes the tag.
+ */
+const hookPrompt = (reason, lead = '') => [
+  {
+    type: 'response_item',
+    payload: {
+      type: 'message', id: HOOK_MSG_ID, role: 'user',
+      content: [{ type: 'input_text', text: `${lead}<hook_prompt hook_run_id="${HOOK_RUN_ID}">${reason}</hook_prompt>` }],
+      internal_chat_message_metadata_passthrough: { turn_id: 't1', create_time: 1790000000.5, content_item_kinds: ['unknown'] },
+    },
+  },
+  completed({ type: 'HookPrompt', id: HOOK_MSG_ID, fragments: [{ text: reason, hookRunId: HOOK_RUN_ID }] }),
+];
+
+const REVIEW = 'Before you finish: say which of the lessons in context helped.';
+
+describe('Stop-hook feedback in a 0.154 rollout', () => {
+  async function read(records) {
+    const { rolloutItems } = await C();
+    const { cfg } = await setup();
+    const root = sessionsRoot({ [FILE]: records });
+    return rolloutItems(cfg, join(root, FILE), { roots: ['/r/app'], projectDir: '/r/app' });
+  }
+
+  /** The `Q:` line of every turn item, in order. */
+  const prompts = (r) => turns(r).map((i) => (/^Q: (.*)$/m.exec(i.item.text) ?? [])[1]);
+
+  it('imports no item for the feedback, and keeps the answer before it on the user\'s turn', async () => {
+    const r = await read([
+      meta({ version: '0.154.0' }), turnContext('/r/app'),
+      user(...PREAMBLE),
+      user('why does the drain stop on a 500?'),
+      assistant('It leaves the spool in place and stops.'),
+      ...hookPrompt(REVIEW),
+      assistant('Reviewed: the drain lesson helped.'),
+    ]);
+    assert.deepEqual(prompts(r), ['why does the drain stop on a 500?'],
+      'the feedback opened a turn of its own. The review would be stored as a question the user asked.');
+    assert.match(turns(r)[0].item.text, /^Q: why does the drain stop on a 500\?\n\nA: It leaves the spool in place and stops\./,
+      'the answer given before the review is the answer to the user\'s prompt and has to stay on it');
+    assert.equal(tools(r).length, 0, 'a HookPrompt item is not a tool call');
+    for (const i of r.items) {
+      assert.ok(!i.item.text.includes('hook_prompt') && !i.item.text.includes(REVIEW),
+        `an item carries the Stop-hook feedback as if the user had said it: ${i.item.text.slice(0, 160)}`);
+    }
+  });
+
+  it('feedback between two prompts neither splits a turn nor adds one', async () => {
+    const r = await read([
+      meta({ version: '0.154.0' }), turnContext('/r/app'),
+      user('one'), assistant('first answer'),
+      ...hookPrompt(REVIEW), assistant('Reviewed.'),
+      user('two'), assistant('second answer'),
+    ]);
+    assert.deepEqual(prompts(r), ['one', 'two'],
+      'one turn per thing the user typed. The feedback in between is the host\'s, not a third prompt.');
+  });
+
+  it('several in a row, with whitespace before the tag, are all skipped', async () => {
+    const r = await read([
+      meta({ version: '0.154.0' }), turnContext('/r/app'),
+      user('one'), assistant('first answer'),
+      ...hookPrompt('first reason', '\n'), ...hookPrompt('second reason'), ...hookPrompt('third reason', '  '),
+      assistant('Done.'),
+    ]);
+    assert.deepEqual(prompts(r), ['one'], 'every one of a run of Stop-hook blocks is the host talking');
+    const all = JSON.stringify(r.items.map((i) => i.item.text));
+    for (const reason of ['first reason', 'second reason', 'third reason']) {
+      assert.ok(!all.includes(reason), `"${reason}" was imported as something the user said`);
+    }
+  });
+
+  it('feedback that is the first user record a resumed read sees opens no turn', async () => {
+    const { rolloutItems } = await C();
+    const { cfg } = await setup();
+    const root = sessionsRoot({ [FILE]: [
+      meta({ version: '0.154.0' }), turnContext('/r/app'), user('one'), assistant('first answer'),
+    ] });
+    const p = join(root, FILE);
+    const first = rolloutItems(cfg, p, { roots: ['/r/app'], projectDir: '/r/app' });
+    assert.equal(turns(first).length, 1);
+
+    // The cursor is past the prompt, so the feedback is the first `user` record this read meets.
+    appendFileSync(p, jsonl([...hookPrompt(REVIEW), assistant('Reviewed.')]));
+    const second = rolloutItems(cfg, p, { from: first.offset, roots: ['/r/app'], projectDir: '/r/app' });
+    assert.equal(second.items.length, 0,
+      'the resumed read imported the feedback as a prompt with the review as its answer: '
+      + `${second.items.map((i) => i.item.text.slice(0, 120)).join(' | ')}`);
+  });
+
+  it('a prompt that mentions the wrapper mid-sentence is still the user\'s', async () => {
+    // No run id in the mention: the importer redacts, and the path in one reads as high-entropy.
+    const said = 'why does my rollout show a <hook_prompt hook_run_id="stop:0"> line after every turn?';
+    const r = await read([
+      meta({ version: '0.154.0' }), turnContext('/r/app'),
+      user(said), assistant('That is how Codex stores Stop-hook feedback.'),
+    ]);
+    assert.deepEqual(prompts(r), [said],
+      'a user asking about the wrapper was dropped. Only a block that opens with the tag is the host\'s.');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Before 0.149
 // ---------------------------------------------------------------------------
 

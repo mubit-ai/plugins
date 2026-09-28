@@ -8,6 +8,11 @@
  * capture, so without the filter every subagent since that version has been stored as an
  * answer to a plugin listing. The outcome reader in this module is covered by the Codex
  * suite (`integrations/codex/test/codex-outcome.test.mjs`); this file is about the filter.
+ *
+ * The same holds for Stop-hook feedback. When a Stop hook blocks with a reason, Codex (seen on
+ * 0.154.0) stores the reason as a `user` record wrapped in
+ * `<hook_prompt hook_run_id="stop:…">REASON</hook_prompt>`. Nobody typed it, and once the
+ * outcome review runs on Codex every review would read as the user's own words.
  */
 
 import { describe, it } from 'node:test';
@@ -117,5 +122,153 @@ describe('firstUserText', () => {
       user('Summarise the failing tests.'),
     ]);
     assert.equal(firstUserText(path), 'Summarise the failing tests.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stop-hook feedback: `<hook_prompt>` on a `user` record
+// ---------------------------------------------------------------------------
+
+/** The observed hook run id shape, `stop:<n>:<hooks.json>`, with a placeholder path. */
+const HOOK_RUN_ID = 'stop:0:/tmp/codex/plugins/mubit-memory/hooks.json';
+
+/** The text Codex writes for a blocked Stop's reason. `lead` is whatever precedes the tag. */
+const hookPromptText = (reason, lead = '') =>
+  `${lead}<hook_prompt hook_run_id="${HOOK_RUN_ID}">${reason}</hook_prompt>`;
+
+/** The whole `user` record, with the metadata the host adds to it. */
+const hookPrompt = (reason, lead = '') => ({
+  type: 'response_item',
+  payload: {
+    type: 'message',
+    id: 'msg_0a0a0a0a-0000-4000-8000-000000000000',
+    role: 'user',
+    content: [{ type: 'input_text', text: hookPromptText(reason, lead) }],
+    internal_chat_message_metadata_passthrough: {
+      turn_id: '0a0a0a0a-0000-4000-8000-000000000001', create_time: 1790000000.5, content_item_kinds: ['unknown'],
+    },
+  },
+});
+
+const assistant = (text) => ({
+  type: 'response_item',
+  payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
+});
+
+const REVIEW = 'Before you finish: say which of the lessons in context helped.';
+
+describe('Stop-hook feedback is the host talking, not the user', () => {
+  it('isInjectedUserText recognises the wrapper, whatever precedes the tag or orders its attributes', async () => {
+    const { isInjectedUserText } = await R();
+    for (const text of [
+      hookPromptText(REVIEW),
+      hookPromptText(REVIEW, '\n'),
+      hookPromptText(REVIEW, '  \n\t'),
+      `<hook_prompt source="stop" hook_run_id="${HOOK_RUN_ID}">${REVIEW}</hook_prompt>`,
+      `<hook_prompt\n  hook_run_id="${HOOK_RUN_ID}">${REVIEW}</hook_prompt>`,
+      `<hook_prompt>${REVIEW}</hook_prompt>`,
+      hookPromptText('Line one of the reason.\nLine two of the reason.'),
+    ]) {
+      assert.equal(isInjectedUserText(text), true,
+        `Stop-hook feedback read as typed text: ${JSON.stringify(text.slice(0, 60))}. Every `
+        + 'reader that walks user messages would take the review for something the user asked.');
+    }
+  });
+
+  it('isInjectedUserText leaves a person who mentions the wrapper alone', async () => {
+    const { isInjectedUserText } = await R();
+    for (const text of [
+      `why does <hook_prompt hook_run_id="${HOOK_RUN_ID}"> show up in my rollout?`,
+      'the `<hook_prompt>` wrapper is how Codex stores Stop feedback',
+      '`<hook_prompt>` is what Codex writes, right?',
+      'hook_prompt records should be skipped by the importer',
+      '<hook_prompts>a different tag is a different thing</hook_prompts>',
+    ]) {
+      assert.equal(isInjectedUserText(text), false,
+        `a person's message was filtered as host text: ${JSON.stringify(text)}. The match is `
+        + 'anchored at the start of a block on the exact tag; a user quoting it is still a user.');
+    }
+  });
+
+  it('stripInjectedBlocks drops the feedback block and keeps what the user said beside it', async () => {
+    const { stripInjectedBlocks } = await R();
+    const content = [
+      { type: 'input_text', text: hookPromptText(REVIEW) },
+      { type: 'input_text', text: 'and also fix the flaky test' },
+    ];
+    assert.deepEqual(stripInjectedBlocks(content), [content[1]],
+      'a block is filtered whole and only when it is the host\'s; the user\'s block beside it stays');
+    assert.equal(stripInjectedBlocks(hookPromptText(REVIEW)), '', 'a string is one block');
+  });
+
+  it('firstUserText returns the real prompt when only feedback follows it', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([
+      META, user(...PREAMBLE), user('Find every call site of drain() and list them.'),
+      assistant('Three call sites.'), hookPrompt(REVIEW), assistant('Reviewed.'), hookPrompt(REVIEW),
+    ]);
+    assert.equal(firstUserText(path), 'Find every call site of drain() and list them.');
+  });
+
+  it('firstUserText skips feedback that is the first user record', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([META, hookPrompt(REVIEW), user('Summarise the failing tests.')]);
+    assert.equal(firstUserText(path), 'Summarise the failing tests.',
+      'the feedback was returned as the task. A subagent captured from this rollout would be '
+      + 'stored as having been asked to review its lessons.');
+  });
+
+  it('firstUserText skips feedback between the preamble and the task', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([META, user(...PREAMBLE), hookPrompt(REVIEW), user('Summarise the failing tests.')]);
+    assert.equal(firstUserText(path), 'Summarise the failing tests.',
+      'the feedback was returned as the task, in place of what the user actually asked');
+  });
+
+  it('firstUserText skips several in a row, with or without whitespace before the tag', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([
+      META, hookPrompt('first reason', '\n'), hookPrompt('second reason', '  '), hookPrompt('third reason'),
+      user('Summarise the failing tests.'),
+    ]);
+    assert.equal(firstUserText(path), 'Summarise the failing tests.',
+      'a run of Stop-hook blocks is still the host talking, each one of them');
+  });
+
+  it('firstUserText answers nothing when the only user text is feedback', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([META, user(...PREAMBLE), hookPrompt(REVIEW), assistant('Reviewed.'), hookPrompt(REVIEW)]);
+    assert.equal(firstUserText(path), '',
+      'with no typed text the caller falls back to the parent\'s staged prompt; returning the '
+      + 'feedback instead stores the review as the task');
+  });
+
+  it('firstUserText keeps a task that shares its record with feedback', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([META, user(hookPromptText(REVIEW), 'Summarise the failing tests.')]);
+    assert.equal(firstUserText(path), 'Summarise the failing tests.',
+      'the feedback block must be dropped and the user\'s block beside it kept, not the two joined');
+  });
+
+  it('firstUserText keeps a prompt that mentions the wrapper mid-sentence', async () => {
+    const { firstUserText } = await R();
+    const said = `why does <hook_prompt hook_run_id="${HOOK_RUN_ID}"> show up after every turn?`;
+    const path = rollout([META, user(...PREAMBLE), user(said)]);
+    assert.equal(firstUserText(path), said,
+      'a user asking about the wrapper was skipped. Only a block that opens with the tag is the host\'s.');
+  });
+
+  it('firstUserText still reads a Claude Code transcript\'s first user text, unchanged', async () => {
+    const { firstUserText } = await R();
+    const said = 'why does <hook_prompt> appear in the Codex rollout but not here?';
+    const path = rollout([
+      { type: 'user', uuid: 'u-1', sessionId: '0a0a0a0a-0000-4000-8000-000000000002',
+        message: { role: 'user', content: [{ type: 'text', text: said }] } },
+      { type: 'assistant', uuid: 'u-2', sessionId: '0a0a0a0a-0000-4000-8000-000000000002',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Codex wraps Stop feedback; Claude Code does not.' }] } },
+    ]);
+    assert.equal(firstUserText(path), said,
+      'the Claude Code envelope stopped answering. Its transcripts never carry the wrapper, and '
+      + 'the fix for Codex must leave them reading exactly as before.');
   });
 });
