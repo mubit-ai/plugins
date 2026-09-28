@@ -44,6 +44,11 @@
  *   - **Crediting in the continuation.** `mubit_outcome` calls there settle those lessons: the
  *     implicit outcome does not credit them a second time.
  *   - **A message typed during the continuation** joins the turn and starts no second review.
+ *   - **Messages queued after the review.** Each answer is stored as an item of its own, under an
+ *     id no other answer shares, and never with its "Memory review:" line. The implicit outcome
+ *     is fixed at the Stop that closes the review: an answer given at a later Stop is on the
+ *     card, and no second outcome credits it. A message queued before a continuation that held
+ *     only its review line is answered at the Stop after, and that answer is stored and measured.
  *   - **A new turn** after a reviewed one is reviewed again, once.
  *
  * `MUBIT_CC_OUTCOME_REVIEW` and `MUBIT_CC_SESSION_SCORE` are set in every case. Both have
@@ -814,6 +819,134 @@ test('a message typed during the continuation joins the turn and starts no secon
   assert.ok(queued, `the queued Q/A was not stored:\n${items.map((i) => `${i.item_id}: ${i.text}`).join('\n')}`);
   assert.match(String(queued.text), /5433/);
   assertFirstAnswerStored(s, TURN, ANSWER_A);
+});
+
+/** A message queued into the turn whose answer uses C, and nothing of A or B. */
+const Q_PORT = 'Also: which port does the database use?';
+/** A second queued message, whose answer uses B, and nothing of A or C. */
+const Q_ORDER = 'And what order do the setup steps go in?';
+/** Uses B, and nothing of A or C. */
+const BODY_B = 'Apply the migrations first and seed afterwards; seeding fails on missing tables otherwise.';
+/** The closing line a model repeats after answering a queued message. It names only A. */
+const CREDIT_A = `Memory review: credited [${hA}].`;
+
+/**
+ * A later Stop of the reviewed turn that no hook blocked: the model answering a message queued
+ * into the running turn, after the continuation's Stop has already returned.
+ *
+ * @param {Session} s @param {string} turnId @param {string} text
+ */
+function laterStop(s, turnId, text) {
+  const payload = recordedContinuation(s, turnId, text);
+  payload.stop_hook_active = false;
+  return sendStop(s, payload);
+}
+
+/**
+ * What ingest ends up holding for one turn: the last text sent under each item id, since a
+ * second item under an id replaces the first.
+ *
+ * @param {Session} s @param {string} turnId
+ * @returns {Map<string, string>}
+ */
+function heldFor(s, turnId) {
+  const held = new Map();
+  for (const i of turnItems(s, turnId)) held.set(String(i.item_id), String(i.text));
+  return held;
+}
+
+/** The card's "N used" row, or '' when it has none. @param {any} r */
+function usedRow(r) {
+  return (String(r.json?.systemMessage ?? '').match(/^ {2}[├└] (\d+ used)\b/m) ?? [])[1] ?? '';
+}
+
+// Decision: the implicit outcome is fixed at the Stop that closes the review; a message queued after that is on the card, never in a second outcome.
+test('two messages queued after a review: each answer is stored under its own id, and the outcome stays the one the review closed', async (t) => {
+  const s = await codexSession(t, { review: 'stop', score: 'full' });
+  await typePrompt(s, TURN);
+  assert.equal((await firstStop(s, TURN, ANSWER_A)).json.decision, 'block');
+
+  // The first message is queued during the review and answered by the continuation.
+  await typePrompt(s, TURN, { queued: true, text: Q_PORT });
+  const closing = await continuationStop(s, TURN, `${BODY_C}\n\n${CREDIT_A}`);
+  assert.equal(closing.json.decision, undefined, `the continuation was blocked again:\n${JSON.stringify(closing.json)}`);
+  const closed = await settledOutcomes(s, TURN);
+  assert.equal(closed.length, 1, `the Stop that closed the review posted no outcome; saw: ${s.server.summary()}`);
+  assert.deepEqual(sorted(closed[0].body.entry_ids ?? []), sorted([REF_A, REF_C]),
+    'the outcome that closed the review should credit the first answer\'s A and the queued '
+    + `answer's C. Posted: ${JSON.stringify(closed[0].body.entry_ids)}`);
+
+  // The second is queued after the review closed, and a Stop of its own answers it.
+  await typePrompt(s, TURN, { queued: true, text: Q_ORDER });
+  const r = await laterStop(s, TURN, `${BODY_B}\n\n${CREDIT_A}`);
+  assert.equal(r.json.decision, undefined,
+    `a Stop after the review was closed started another one:\n${JSON.stringify(r.json)}`);
+  assert.match(String(r.json.systemMessage ?? ''), /lessons on 1 of 1 prompt/,
+    `the second queued message was counted as a prompt of its own:\n${r.json.systemMessage}`);
+  assert.equal(usedRow(r), '3 used',
+    'the answer to the second queued message used the migrations lesson, and the card under it '
+    + `does not show that use:\n${r.json.systemMessage}`);
+
+  await drainsIdle(s);
+  const outcomes = outcomesFor(s, TURN);
+  assert.equal(outcomes.length, 1,
+    'a second implicit outcome went out for a turn whose outcome closed with its review; the '
+    + `lessons the first one credited are reinforced twice for one turn. Saw: ${s.server.summary()}`);
+  assert.ok(!(outcomes[0].body.entry_ids ?? []).includes(REF_B),
+    'the migrations lesson, used only after the review closed, was credited by the outcome the '
+    + `review had already fixed. Posted: ${JSON.stringify(outcomes[0].body.entry_ids)}`);
+
+  assertFirstAnswerStored(s, TURN, ANSWER_A);
+  const listing = () => turnItems(s, TURN).map((i) => `${i.item_id}: ${i.text}`).join('\n---\n');
+  const sentC = turnItems(s, TURN).filter((i) => String(i.text).includes('5433'));
+  const sentB = turnItems(s, TURN).filter((i) => String(i.text).includes('missing tables'));
+  assert.equal(sentC.length, 1, `the answer to the first queued message was not stored once:\n${listing()}`);
+  assert.equal(sentB.length, 1, `the answer to the second queued message was not stored once:\n${listing()}`);
+  assert.match(String(sentC[0].text), /which port/, 'the first queued answer was stored under the wrong question');
+  assert.match(String(sentB[0].text), /what order/, 'the second queued answer was stored under the wrong question');
+  assert.notEqual(sentB[0].item_id, sentC[0].item_id,
+    'both queued answers were stored under one item id, so ingest keeps only the second and the '
+    + `answer about the database port is lost from memory:\n${listing()}`);
+  const held = [...heldFor(s, TURN).values()];
+  assert.ok(held.some((text) => text.includes('5433')) && held.some((text) => text.includes('missing tables')),
+    `one queued answer shadows the other in what ingest holds for the turn:\n${listing()}`);
+});
+
+test('a message queued before a continuation that holds only the review line is answered at the next Stop: stored and measured', async (t) => {
+  const s = await codexSession(t, { review: 'stop', score: 'full' });
+  await typePrompt(s, TURN);
+  assert.equal((await firstStop(s, TURN, ANSWER_A)).json.decision, 'block');
+
+  // Typed during the review, but the continuation gives only its review line; the answer comes
+  // at the Stop after.
+  await typePrompt(s, TURN, { queued: true, text: Q_PORT });
+  const review = await continuationStop(s, TURN, REVIEW_LINE);
+  assert.equal(review.json.decision, undefined, `the continuation was blocked again:\n${JSON.stringify(review.json)}`);
+  await drainsIdle(s);
+
+  const r = await laterStop(s, TURN, BODY_C);
+  assert.equal(r.json.decision, undefined,
+    `the Stop answering the queued message started another review:\n${JSON.stringify(r.json)}`);
+  assert.equal(usedRow(r), '2 used',
+    'the answer to the queued message used the postgres lesson and the card does not count it '
+    + '(or it counts the migrations lesson, which only the review line named): a message typed '
+    + `during the review is answered and measured like any other:\n${r.json.systemMessage}`);
+  assert.equal(turnFile(s, TURN)?.used_evidence?.entries?.[REF_C]?.used, true,
+    'the answer to the queued message was never measured, so its use of C is recorded nowhere');
+
+  await drainsIdle(s);
+  const items = turnItems(s, TURN);
+  const queued = items.filter((i) => String(i.text).includes('5433'));
+  assert.equal(queued.length, 1,
+    'the answer to a message queued before the continuation was dropped because the continuation '
+    + 'closed the review first; the user\'s question and its answer never reach memory:\n'
+    + `${items.map((i) => `${i.item_id}: ${i.text}`).join('\n---\n')}`);
+  assert.match(String(queued[0].text), /which port/, 'the queued answer was stored under the wrong question');
+  assertFirstAnswerStored(s, TURN, ANSWER_A);
+
+  const outcomes = outcomesFor(s, TURN);
+  assert.equal(outcomes.length, 1,
+    `the turn's implicit outcome must go out exactly once, however many Stops follow; saw: ${s.server.summary()}`);
 });
 
 // ===========================================================================
