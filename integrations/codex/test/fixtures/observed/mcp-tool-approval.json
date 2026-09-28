@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "The config.toml form codex-cli takes for auto-approving ONE tool of ONE MCP server,",
+    "observed by running the host and writing down what it did. Nothing here was read out of it.",
+    "",
+    "Codex asks the user to approve every call to an MCP tool by default. A",
+    "`[mcp_servers.<server>.tools.<tool>]` table carrying `approval_mode = \"approve\"` lets",
+    "that one tool run without the ask, and every other tool of the same server keeps asking.",
+    "",
+    "`scripts/setup.mjs` writes this form for the two tools in `tools`, and for no other. They",
+    "are the two the outcome review asks the model to call, so without them a turn that showed",
+    "a lesson would raise an approval prompt every time the review ran.",
+    "",
+    "`toml` is exactly what setup is expected to leave under the `mubit` server's own table.",
+    "`codex-setup.test.mjs` feeds it to the host (`codex mcp get`) to show the host reads the",
+    "key: the same table with a value the host does not know fails to load the config at all,",
+    "naming the key's path, so the key is validated rather than ignored.",
+    "",
+    "Not written by setup: `default_tools_approval_mode` on the server's own table. It is the",
+    "server-wide key, and approving every Mubit tool is not what the user is asked to accept."
+  ],
+  "_provenance": {
+    "codex_version": "codex-cli 0.154.0",
+    "recorded": "2026-09-28",
+    "how": [
+      "Two `codex exec` sessions in a throwaway CODEX_HOME holding only a copy of the credential,",
+      "with recorder hooks on PreToolUse, PermissionRequest and PostToolUse (trust granted the way",
+      "setup grants it), and a stdio MCP server named `mubit` exposing two tools, `mubit_outcome`",
+      "and `mubit_recall`. The prompt called each tool once.",
+      "With `[mcp_servers.mubit.tools.mubit_outcome] approval_mode = \"approve\"`: mubit_outcome ran",
+      "with no PermissionRequest; mubit_recall raised one. Without it: both raised one.",
+      "Config load checked with `codex mcp get mubit --json` against the same table."
+    ]
+  },
+  "server": "mubit",
+  "tools": ["mubit_outcome", "mubit_learned"],
+  "table": "mcp_servers.<server>.tools.<tool>",
+  "key": "approval_mode",
+  "value": "approve",
+  "serverWideKey": "default_tools_approval_mode",
+  "toml": "[mcp_servers.mubit.tools.mubit_outcome]\napproval_mode = \"approve\"\n\n[mcp_servers.mubit.tools.mubit_learned]\napproval_mode = \"approve\"\n",
+  "observed": [
+    {
+      "config": "[mcp_servers.mubit.tools.mubit_outcome] approval_mode = \"approve\"",
+      "mubit_outcome": "ran with no PermissionRequest",
+      "mubit_recall": "raised a PermissionRequest"
+    },
+    {
+      "config": "no tools table",
+      "mubit_outcome": "raised a PermissionRequest",
+      "mubit_recall": "raised a PermissionRequest"
+    }
+  ]
+}

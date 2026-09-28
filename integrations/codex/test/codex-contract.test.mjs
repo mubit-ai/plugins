@@ -21,14 +21,15 @@
  */
 
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
   assert, assertOutputAccepted, assertValid, assertWithinBudget, baseEnv, CODEX_ROOT,
-  CODEX_EVENTS, fakeMubit, makeDataDir, makeProjectDir, outputCapabilities, runHook, schemaSlug,
-  postToolUse, preToolUse, permissionRequest, sessionStart, sessionEnd, stop, subagentStart,
-  subagentStop, userPromptSubmit, preCompact, postCompact,
+  CODEX_EVENTS, evidence, fakeMubit, makeDataDir, makeProjectDir, mcpPostToolUse,
+  outputAcceptance, outputCapabilities, queryResponse, runHook, schemaSlug,
+  postToolUse, preToolUse, permissionRequest, sessionStart, sessionEnd, stop, stopContinuation,
+  subagentStart, subagentStop, userPromptSubmit, preCompact, postCompact,
 } from './helpers/codex-fixtures.mjs';
 import { recordedAnswer } from './helpers/codex-oracle.mjs';
 
@@ -143,6 +144,111 @@ test('a hook that fails still writes nothing but JSON', async (t) => {
       assert.fail(`${what} leaked non-JSON to stdout:\n---\n${r.stdout}\n---\n(${e.message})`);
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// 1b. The same contract with the shipped defaults, on a turn that shows lessons
+// ---------------------------------------------------------------------------
+
+/**
+ * The key set of an output, sorted and joined, so two outputs can be compared by shape.
+ * @param {any} out
+ */
+const shapeOf = (out) => Object.keys(out ?? {}).sort().join(',');
+
+/**
+ * Whether the host was recorded taking an output of this exact key set on this event
+ * (`observed/output-acceptance.json`). The rule table says what may not be sent; this says
+ * what a real session was seen taking, and the two outputs below are new to Codex users.
+ *
+ * @param {string} event
+ * @param {any} out
+ */
+function recordedAccepting(event, out) {
+  return (outputAcceptance().probes ?? []).filter((p) => shapeOf(p.output) === shapeOf(out)
+    && p.verdict?.[event] === 'accepted');
+}
+
+test('with the shipped defaults, a turn that showed lessons gets the review, then the card, and the host takes both', async (t) => {
+  // `sessionScore` and `outcomeReview` are deliberately absent from the environment: this is
+  // what a Codex user who never set them gets. The other contract tests run on payloads that
+  // show no lesson, where neither the review nor the card has anything to say, so they cannot
+  // see the two outputs the new defaults add to Stop.
+  const server = await fakeMubit({
+    'POST /v2/control/query': {
+      json: queryResponse({
+        evidence: [evidence({
+          id: 'e1', reference_id: 'c0de0001-0000-4000-8000-000000000001', entry_type: 'lesson', score: 0.9,
+          content: 'Run vitest with --pool=forks; the threads pool hangs on the native module.',
+        })],
+      }),
+    },
+  });
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  // Held, so the Stop hook's detached drain does not dial the fake server mid-test.
+  mkdirSync(join(dataDir, 'runs', RUN_ID), { recursive: true });
+  writeFileSync(join(dataDir, 'runs', RUN_ID, 'drain.lock'), JSON.stringify({ pid: process.pid, ts: Date.now() }));
+  const env = contractEnv(dataDir, makeProjectDir({ git: true }), server.url);
+  for (const k of ['MUBIT_CC_SESSION_SCORE', 'MUBIT_CC_OUTCOME_REVIEW']) {
+    assert.ok(!(k in env), `${k} is set in the test environment, so this is not the shipped default.`);
+  }
+
+  /** Run one hook, hold its stdout to the contract, and return the parsed object. */
+  async function step(script, payload, event, args = []) {
+    const what = `${event} -> ${script}${args.length ? ` ${args.join(' ')}` : ''}, shipped defaults`;
+    const r = await runHook(script, payload, { env, args });
+    assert.equal(r.code, 0, `${what} exited ${r.code}. stderr:\n${r.stderr}`);
+    if (!r.stdout.trim()) return {};
+    let parsed;
+    try {
+      parsed = JSON.parse(r.stdout);
+    } catch (e) {
+      assert.fail(`${what} wrote stdout that is not one JSON value, and Codex pastes non-JSON `
+        + `stdout into the model's context:\n---\n${r.stdout}\n---\n(${e.message})`);
+    }
+    assertOutputAccepted(event, parsed, what);
+    assertValid(parsed, `${schemaSlug(event)}.command.output`, what);
+    return parsed;
+  }
+
+  await step('session-start', sessionStart(), 'SessionStart');
+  const prompt = userPromptSubmit({ prompt: 'why does the test runner hang on CI?' });
+  await step('stage-prompt', prompt, 'UserPromptSubmit');
+  const recalled = await step('prompt-recall', prompt, 'UserPromptSubmit');
+  const handle = /\[(m[a-z0-9]{4})\]/.exec(String(recalled.hookSpecificOutput?.additionalContext ?? ''))?.[1];
+  assert.ok(handle, 'prompt-recall injected no lesson with an id, so the turn below shows nothing '
+    + `and neither the review nor the card has anything to say:\n${JSON.stringify(recalled)}`);
+
+  // The first Stop: the review, as a block with a reason.
+  const first = await step('capture', stop({
+    last_assistant_message: 'Use vitest with --pool=forks: the threads pool hangs on the native module.',
+  }), 'Stop', ['--stop']);
+  assert.equal(first.decision, 'block',
+    'under the shipped defaults the first Stop of a turn that showed a lesson must ask for the '
+    + 'review (`outcomeReview: stop`). It did not, so a Codex user who never touched the setting '
+    + `gets no review:\n${JSON.stringify(first)}`);
+  assert.ok(recordedAccepting('Stop', first).length > 0,
+    `no recorded session took a Stop output shaped {${shapeOf(first)}}, so nothing says the host `
+    + 'continues a turn on it. Record one with `codex-record.mjs --update --probe block-once`.');
+
+  // The model credits the lesson through the tool setup approves, then ends the continuation.
+  await step('capture', mcpPostToolUse({
+    tool_input: { reference_id: 'global', outcome: 'success', entry_ids: [handle] },
+  }), 'PostToolUse');
+  const second = await step('capture', stopContinuation({
+    last_assistant_message: `Memory review: credited [${handle}].`,
+  }), 'Stop', ['--stop']);
+  assert.deepEqual(Object.keys(second).sort(), ['suppressOutput', 'systemMessage'],
+    'under the shipped defaults the Stop that closes the review must carry the scorecard '
+    + '(`sessionScore: full`) as {systemMessage, suppressOutput} and nothing else. Without it a '
+    + `Codex user never sees the card:\n${JSON.stringify(second)}`);
+  assert.equal(second.suppressOutput, true, 'the card must be sent with suppressOutput: true.');
+  assert.match(second.systemMessage, /\n/, 'the card is several lines; a one-line systemMessage is not the card.');
+  assert.ok(recordedAccepting('Stop', second).length > 0,
+    'no recorded session took a Stop output of exactly {systemMessage, suppressOutput}, the '
+    + 'pair the card is sent as, so nothing says Codex shows it rather than marking the hook '
+    + 'failed on every turn. Record it with `codex-record.mjs --update --probe card`.');
 });
 
 // ===========================================================================

@@ -15,15 +15,25 @@
  * Two of them need `codex` on PATH — the trust write goes through `codex app-server`, and the
  * MCP registration through `codex mcp add`. They skip **by name** when it is absent, because
  * the alternative is a green run that checked neither.
+ *
+ * The last section is the approval step. Codex asks the user to approve every MCP tool call,
+ * so the outcome review would raise a prompt on every turn that showed a lesson. Setup
+ * approves the two tools the review asks for, `mubit_outcome` and `mubit_learned`, in the
+ * per-tool form recorded in `fixtures/observed/mcp-tool-approval.json`, and nothing else:
+ * `mubit_recall` and every other tool keep asking, another server's settings and the user's
+ * own lines are left as they were, and `--no-trust` — the flag that already means "the
+ * approving is mine" — leaves every approval as it found it. Those tests need `codex` too:
+ * the tables sit under the server `codex mcp add` registers, and the host's own
+ * `codex mcp remove` is what a re-run has to survive.
  */
 
 import test from 'node:test';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { assert, CODEX_ROOT } from './helpers/codex-fixtures.mjs';
+import { assert, CODEX_ROOT, lib } from './helpers/codex-fixtures.mjs';
 import { codexVersion } from './helpers/codex-oracle.mjs';
 
 const CODEX = codexVersion();
@@ -382,6 +392,310 @@ test('a trust write that does not add up restores the file it found', needsCodex
       + 'that is neither what they had nor what they asked for.');
   }
   assert.ok(existsSync(join(home, 'config.toml.before-mubit')), 'no config.toml backup was taken');
+});
+
+// ===========================================================================
+// The two approvals
+// ===========================================================================
+
+/** The per-tool approval form, as the host was observed taking it. */
+const APPROVAL = JSON.parse(readFileSync(
+  join(CODEX_ROOT, 'test', 'fixtures', 'observed', 'mcp-tool-approval.json'), 'utf8'));
+
+/** The approvals setup writes: `{mubit_outcome: 'approve', mubit_learned: 'approve'}`. */
+const OURS = Object.fromEntries(APPROVAL.tools.map((t) => [t, APPROVAL.value]));
+
+const unquote = (k) => (k.startsWith('"') ? JSON.parse(k) : k);
+
+/**
+ * Every table header in a config.toml, with the key/value lines under it, in file order.
+ * Line-based on purpose: the tests have to see a table defined twice, which is exactly what a
+ * TOML parser refuses to hand back.
+ *
+ * @param {string} toml
+ * @returns {{header: string, body: string[]}[]}
+ */
+function tables(toml) {
+  const out = [];
+  let cur = null;
+  for (const raw of toml.split('\n')) {
+    const line = raw.trim();
+    if (/^\[[^[]/.test(line)) { cur = { header: line.replace(/\s*#.*$/, ''), body: [] }; out.push(cur); continue; }
+    if (cur && line && !line.startsWith('#')) cur.body.push(line);
+  }
+  return out;
+}
+
+/** A `[mcp_servers.<server>.tools.<tool>]` header, bare or quoted keys. */
+const TOOL_HEADER = /^\[\s*mcp_servers\.("[^"]+"|[\w-]+)\.tools\.("[^"]+"|[\w-]+)\s*\]$/;
+
+/**
+ * `{<tool>: <approval_mode>}` for one server, one entry per `[mcp_servers.<server>.tools.<tool>]`
+ * table. A table with no `approval_mode` maps to `null`.
+ *
+ * @param {string} toml
+ * @param {string} [server]
+ */
+function approvals(toml, server = APPROVAL.server) {
+  /** @type {Record<string, string|null>} */
+  const out = {};
+  for (const t of tables(toml)) {
+    const m = TOOL_HEADER.exec(t.header);
+    if (!m || unquote(m[1]) !== server) continue;
+    const mode = t.body.map((l) => /^approval_mode\s*=\s*"([^"]*)"/.exec(l)).find(Boolean);
+    out[unquote(m[2])] = mode ? mode[1] : null;
+  }
+  return out;
+}
+
+/** Every per-tool table header of one server, duplicates kept. */
+const toolHeaders = (toml, server = APPROVAL.server) => tables(toml)
+  .map((t) => TOOL_HEADER.exec(t.header)).filter((m) => m && unquote(m[1]) === server)
+  .map((m) => unquote(m[2]));
+
+/** The key/value lines of `[mcp_servers.<server>]` itself. */
+const serverBody = (toml, server = APPROVAL.server) => tables(toml)
+  .filter((t) => t.header === `[mcp_servers.${server}]`).flatMap((t) => t.body);
+
+/**
+ * Does the host load this `$CODEX_HOME/config.toml` at all? A table defined twice, or a value
+ * the host does not know, fails the whole file, and then Codex does not start.
+ *
+ * @param {string} home
+ * @param {string} [server]
+ */
+function hostLoads(home, server = APPROVAL.server) {
+  const r = spawnSync('codex', ['mcp', 'get', server, '--json'], {
+    encoding: 'utf8', env: { ...process.env, CODEX_HOME: home }, timeout: 30000,
+  });
+  return { ok: r.status === 0, said: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
+}
+
+/** A registration of `mubit` as an earlier install at another path would have left it. */
+const OLD_REGISTRATION = [
+  '[mcp_servers.mubit]',
+  'command = "node"',
+  'args = ["/opt/old-install/mcp/dist/index.js"]',
+  '',
+].join('\n');
+
+test('the two approved tools are the two the outcome review asks the model to call', async () => {
+  // The approval exists so the review does not raise a prompt on every turn that showed a
+  // lesson. If the review ever asks for a third tool, that one prompts; if the approval ever
+  // covers a tool the review does not call, it runs unasked for no reason the user was given.
+  const { reviewReason } = await lib('review.mjs');
+  const reason = reviewReason([{ ref: 'r1', handle: 'mabcd', title: 'A lesson' }]);
+  const asked = [...new Set(reason.match(/\bmubit_[a-z_]+\b/g) ?? [])].sort();
+  assert.deepEqual([...APPROVAL.tools].sort(), asked,
+    `the review asks the model to call ${asked.join(', ')}, and setup approves `
+    + `${APPROVAL.tools.join(', ')}. The two lists have to be the same list.`);
+});
+
+test('the recorded approval form is one the host reads, and validates', needsCodex, () => {
+  // The fixture says what the host takes. This holds the fixture to the host that is on PATH
+  // now: the recorded tables load, and the same table carrying a value the host does not know
+  // refuses to load, naming the key. That refusal is what shows the key is read at all; a key
+  // the host ignored would load either way and approve nothing.
+  assert.deepEqual(APPROVAL.tools, ['mubit_outcome', 'mubit_learned'],
+    'the fixture must name exactly the two tools the outcome review asks the model to call.');
+  assert.equal(APPROVAL.key, 'approval_mode');
+  assert.equal(APPROVAL.value, 'approve');
+
+  const good = makeHome({ 'config.toml': `${OLD_REGISTRATION}\n${APPROVAL.toml}` });
+  const loaded = hostLoads(good);
+  assert.ok(loaded.ok,
+    `the host on PATH (${CODEX.version}) refused the recorded approval form, so setup would `
+    + `write a config.toml Codex cannot start with. Re-verify the form and re-record the fixture:\n${loaded.said}`);
+  assert.deepEqual(approvals(readToml(good)), OURS, 'the fixture`s own toml does not say what its fields say.');
+
+  const bad = makeHome({
+    'config.toml': `${OLD_REGISTRATION}\n${APPROVAL.toml.split(`"${APPROVAL.value}"`).join('"not-a-mode"')}`,
+  });
+  const refused = hostLoads(bad);
+  assert.ok(!refused.ok,
+    'the host loaded a per-tool approval_mode it cannot know, so it does not validate that key '
+    + `and may not read it at all. The recorded form would approve nothing:\n${refused.said}`);
+  assert.match(refused.said, /mcp_servers\.mubit\.tools\.mubit_outcome\.approval_mode/,
+    `the host refused the file for some other reason than the approval key:\n${refused.said}`);
+});
+
+test('setup approves mubit_outcome and mubit_learned, and no other tool', needsCodex, async () => {
+  const home = makeHome();
+  const r = await runSetup(home);
+  assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+
+  const toml = readToml(home);
+  assert.match(toml, /^\[mcp_servers\.mubit\]$/m, 'the MCP server was not registered, so there is nothing to approve under');
+  assert.deepEqual(approvals(toml), OURS,
+    'setup must leave exactly the two credit tools approved, in the recorded per-tool form '
+    + '(`[mcp_servers.mubit.tools.<tool>]` with `approval_mode = "approve"`). Without them Codex '
+    + 'raises an approval prompt every time the outcome review runs; with any other tool in the '
+    + `list, a call the user never agreed to runs unasked.\n${toml}`);
+  assert.deepEqual(serverBody(toml).filter((l) => l.startsWith(`${APPROVAL.serverWideKey}`)), [],
+    `setup set ${APPROVAL.serverWideKey} on the mubit server, which approves every Mubit tool — `
+    + `mubit_recall included — not the two the user was told about:\n${toml}`);
+  const loaded = hostLoads(home);
+  assert.ok(loaded.ok, `Codex cannot load the config.toml setup left, so it will not start:\n${loaded.said}`);
+});
+
+test('setup says which two tools it approved', needsCodex, async () => {
+  // Approving on the user's behalf is the same kind of decision as trusting a hook, and setup
+  // lists every hook it trusts. A tool approved without a word is one the user finds out about
+  // when it runs unasked.
+  const r = await runSetup(makeHome());
+  assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+  for (const tool of APPROVAL.tools) {
+    assert.match(r.stdout, new RegExp(`\\b${tool}\\b`),
+      `setup approved ${tool} without naming it in what it printed:\n${r.stdout}`);
+  }
+});
+
+test('re-running setup leaves each approval defined once, and the file unchanged', needsCodex, async () => {
+  // `codex mcp remove` drops the mubit tables on every run, and setup writes them back. A
+  // write that appended instead of replacing would define a table twice, which TOML forbids:
+  // the file stops parsing and Codex refuses to start.
+  const home = makeHome({ 'config.toml': 'model = "gpt-5.6-sol"\n' });
+  const seen = [];
+  for (let i = 0; i < 3; i++) {
+    const r = await runSetup(home);
+    assert.equal(r.code, 0, `run ${i + 1} exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+    seen.push(readToml(home));
+  }
+  const headers = toolHeaders(seen[2]);
+  assert.equal(new Set(headers).size, headers.length,
+    `a mubit tool table is defined more than once after three runs, so config.toml no longer parses:\n  ${headers.join('\n  ')}`);
+  assert.deepEqual(approvals(seen[2]), OURS, `three runs did not leave exactly the two approvals:\n${seen[2]}`);
+  assert.equal(seen[2], seen[1], 'run 3 changed config.toml after run 2 had settled it, so every re-run churns the file.');
+  const loaded = hostLoads(home);
+  assert.ok(loaded.ok, `Codex cannot load config.toml after three runs:\n${loaded.said}`);
+});
+
+test('another server`s tools, and the user`s own setting for a Mubit tool, are left alone', needsCodex, async () => {
+  // Two things that are not setup's to decide. Another server's per-tool approvals are the
+  // user's settings for someone else's tools. And a user who told Codex how to treat
+  // mubit_recall made a decision about a tool setup does not approve: the host's own
+  // `codex mcp remove` drops it along with the registration, so setup has to put it back.
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    '[mcp_servers.other]',
+    'command = "other-mcp"',
+    '',
+    '[mcp_servers.other.tools.search]',
+    'approval_mode = "approve"',
+    '',
+    '[mcp_servers.other.tools.write_file]',
+    'approval_mode = "prompt"',
+    '',
+    OLD_REGISTRATION,
+    '[mcp_servers.mubit.tools.mubit_recall]',
+    'approval_mode = "prompt"',
+    '',
+  ].join('\n');
+  const home = makeHome({ 'config.toml': before });
+  const r = await runSetup(home);
+  assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+
+  const after = readToml(home);
+  assert.deepEqual(approvals(after, 'other'), { search: 'approve', write_file: 'prompt' },
+    `setup changed another server's per-tool approvals, which are the user's settings for `
+    + `someone else's tools:\n${after}`);
+  assert.ok(serverBody(after, 'other').includes('command = "other-mcp"'),
+    `setup changed another server's registration:\n${after}`);
+  assert.deepEqual(approvals(after), { ...OURS, mubit_recall: 'prompt' },
+    'the user`s own setting for mubit_recall is gone or changed. Setup approves two tools; the '
+    + `rest of the Mubit tools are the user's to decide, and they had decided:\n${after}`);
+  const loaded = hostLoads(home);
+  assert.ok(loaded.ok, `Codex cannot load the config.toml setup left:\n${loaded.said}`);
+});
+
+test('the user`s own config.toml lines and comments survive, in order', needsCodex, async () => {
+  // The file carries the user's model choice, their project trust and the comments they wrote
+  // about both. Setup adds tables to it; reading it into a TOML library and writing it back out
+  // would drop every comment and reorder the rest, all to add four lines.
+  const mine = [
+    '# my Codex settings, kept by hand',
+    'model = "gpt-5.6-sol"   # the fast one',
+    'model_reasoning_effort = "low"',
+    '',
+    '# projects I trust',
+    '[projects."/Users/you/work"]',
+    '# the main checkout',
+    'trust_level = "trusted"',
+    '',
+    '# keep the warning off',
+    '[notice]',
+    'hide_full_access_warning = true',
+    '',
+  ];
+  const home = makeHome({ 'config.toml': mine.join('\n') });
+  for (let i = 0; i < 2; i++) {
+    const r = await runSetup(home);
+    assert.equal(r.code, 0, `run ${i + 1} exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+  }
+  const after = readToml(home).split('\n');
+  let at = 0;
+  for (const line of mine.filter((l) => l.trim())) {
+    const found = after.indexOf(line, at);
+    assert.ok(found !== -1,
+      `the user's line \`${line}\` is missing or out of order after two runs. Setup adds tables to `
+      + `this file and must rewrite none of the user's:\n${after.join('\n')}`);
+    at = found + 1;
+  }
+  assert.deepEqual(approvals(after.join('\n')), OURS, 'the approvals were not written alongside the user`s lines.');
+});
+
+test('config.toml is backed up before the approvals are written', needsCodex, async () => {
+  // `config.toml.before-mubit` is what a user restores when they want setup undone. A backup
+  // taken after the approval write already holds the approvals, so restoring it undoes nothing.
+  const home = makeHome({ 'config.toml': 'model = "gpt-5.6-sol"\n' });
+  const r = await runSetup(home);
+  assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+
+  const backup = join(home, 'config.toml.before-mubit');
+  assert.ok(existsSync(backup), 'no config.toml.before-mubit was written');
+  const held = readFileSync(backup, 'utf8');
+  assert.match(held, /^model = "gpt-5\.6-sol"$/m, 'the backup does not hold the user`s file.');
+  assert.deepEqual(approvals(held), {},
+    `the backup already carries the approvals, so it was taken after they were written:\n${held}`);
+});
+
+test('--no-trust writes no approval', needsCodex, async () => {
+  // `--no-trust` is the flag that already means "I will approve things myself". An approval
+  // is the same decision about a tool that trust is about a hook.
+  const home = makeHome();
+  const r = await runSetup(home, ['--no-trust']);
+  assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+  const toml = readToml(home);
+  assert.match(toml, /^\[mcp_servers\.mubit\]$/m, 'the MCP server was not registered, so the absence below proves nothing');
+  assert.deepEqual(approvals(toml), {},
+    `--no-trust approved Mubit tools on the user's behalf, which is what the flag exists to prevent:\n${toml}`);
+});
+
+test('--no-trust leaves existing approvals exactly as it found them', needsCodex, async () => {
+  // A re-run with `--no-trust`, after an earlier run approved the two tools and the user set a
+  // third by hand. Leaving approvals alone means neither adding nor removing: the host's
+  // `codex mcp remove` takes the mubit tables with the registration, so leaving them alone
+  // takes putting them back.
+  const prior = { ...OURS, mubit_recall: 'prompt' };
+  const before = [
+    OLD_REGISTRATION,
+    ...Object.entries(prior).flatMap(([tool, mode]) => [
+      `[mcp_servers.mubit.tools.${tool}]`, `approval_mode = "${mode}"`, '',
+    ]),
+  ].join('\n');
+  const home = makeHome({ 'config.toml': before });
+  const r = await runSetup(home, ['--no-trust']);
+  assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+
+  const after = readToml(home);
+  assert.ok(after.includes(join(CODEX_ROOT, 'mcp/dist/index.js')),
+    `the MCP server was not re-registered at this install's path:\n${after}`);
+  assert.deepEqual(approvals(after), prior,
+    '--no-trust changed the Mubit tool approvals. It must leave them as it found them — the '
+    + `user's earlier yes to the two tools and their own setting for mubit_recall alike:\n${after}`);
+  const loaded = hostLoads(home);
+  assert.ok(loaded.ok, `Codex cannot load the config.toml setup left:\n${loaded.said}`);
 });
 
 // ===========================================================================

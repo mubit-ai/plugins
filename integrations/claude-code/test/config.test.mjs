@@ -815,33 +815,82 @@ test('loadConfig(): mcpLessonScope accepts run, session and global — and nothi
 });
 
 // ===========================================================================
-// Host-dependent defaults: sessionScore and outcomeReview
+// sessionScore and outcomeReview: one default on both hosts
 // ===========================================================================
 
-test('loadConfig(): under Codex the scorecard is off and the outcome review only nudges', async () => {
+// Both used to default lower under Codex (`off` and `nudge`), because neither the card nor a
+// Stop-hook continuation had been seen working there. Both have now been recorded on the host
+// (`integrations/codex/test/fixtures/observed/output-acceptance.json`), so Codex gets the
+// Claude Code defaults, and every rung above the default still overrides them.
+const BOTH_HOSTS = /** @type {const} */ ([
+  ['Claude Code', {}],
+  ['Codex', { MUBIT_CC_HOST: 'codex' }],
+]);
+
+test('loadConfig(): the scorecard defaults to full and the outcome review to stop, on both hosts', async () => {
   const config = await lib('config.mjs');
-  const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), { MUBIT_CC_HOST: 'codex' }));
-  assert.equal(cfg.sessionScore, 'off');
-  // A Stop-hook continuation has never been observed on Codex, so the default stays a nudge.
-  assert.equal(cfg.outcomeReview, 'nudge');
+  for (const [name, hostEnv] of BOTH_HOSTS) {
+    const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), { ...hostEnv }));
+    assert.equal(cfg.sessionScore, 'full',
+      `${name}: sessionScore defaulted to ${JSON.stringify(cfg.sessionScore)}. A user who never `
+      + 'set it sees no scorecard under the reply, on a host where the card is known to work.');
+    assert.equal(cfg.outcomeReview, 'stop',
+      `${name}: outcomeReview defaulted to ${JSON.stringify(cfg.outcomeReview)}. Without \`stop\` `
+      + 'the Stop hook never asks for the review, so the lessons a turn showed are never '
+      + 'credited or faulted by id unless the model happens to do it unprompted.');
+  }
 });
 
 test('loadConfig(): an explicit sessionScore / outcomeReview still wins under Codex', async () => {
   const config = await lib('config.mjs');
-  const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
-    MUBIT_CC_HOST: 'codex', MUBIT_CC_SESSION_SCORE: 'full', MUBIT_CC_OUTCOME_REVIEW: 'stop',
-  }));
-  assert.equal(cfg.sessionScore, 'full');
-  assert.equal(cfg.outcomeReview, 'stop');
+  // Values other than the defaults, or this could not tell an override from the default.
+  for (const [score, review] of [['off', 'nudge'], ['compact', 'off']]) {
+    const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
+      MUBIT_CC_HOST: 'codex', MUBIT_CC_SESSION_SCORE: score, MUBIT_CC_OUTCOME_REVIEW: review,
+    }));
+    assert.equal(cfg.sessionScore, score,
+      `MUBIT_CC_SESSION_SCORE=${score} was ignored under Codex, so the only way to turn the card `
+      + 'off is gone.');
+    assert.equal(cfg.outcomeReview, review,
+      `MUBIT_CC_OUTCOME_REVIEW=${review} was ignored under Codex, so a user cannot stop the Stop `
+      + 'hook asking for the review.');
+  }
 });
 
-test('loadConfig(): an unknown sessionScore / outcomeReview falls back to the host default', async () => {
+test('loadConfig(): the config files still override the defaults under Codex', async () => {
   const config = await lib('config.mjs');
-  const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
-    MUBIT_CC_SESSION_SCORE: 'loud', MUBIT_CC_OUTCOME_REVIEW: 'always',
-  }));
-  assert.equal(cfg.sessionScore, 'full');
-  assert.equal(cfg.outcomeReview, 'stop');
+
+  // `.mubit-cc.json`, the lowest rung above the default.
+  const projectDir = makeProjectDir();
+  writeProjectConfig(projectDir, { sessionScore: 'off', outcomeReview: 'nudge' });
+  const fromProject = load(config, envOf(makeDataDir(), projectDir, { MUBIT_CC_HOST: 'codex' }));
+  assert.equal(fromProject.sessionScore, 'off',
+    '.mubit-cc.json set sessionScore off and Codex showed the card anyway.');
+  assert.equal(fromProject.outcomeReview, 'nudge',
+    '.mubit-cc.json set outcomeReview to nudge and Codex asked for the review anyway.');
+
+  // `credentials.json`, the rung between the environment and `.mubit-cc.json`.
+  const dataDir = makeDataDir();
+  writeFileSync(join(dataDir, 'credentials.json'),
+    JSON.stringify({ endpoint: 'https://mubit.example.com', sessionScore: 'compact', outcomeReview: 'off' }));
+  const fromCreds = load(config, envOf(dataDir, makeProjectDir(), { MUBIT_CC_HOST: 'codex' }));
+  assert.equal(fromCreds.sessionScore, 'compact',
+    'credentials.json set sessionScore to compact and Codex used the default instead.');
+  assert.equal(fromCreds.outcomeReview, 'off',
+    'credentials.json turned the review off and Codex used the default instead.');
+});
+
+test('loadConfig(): an unknown sessionScore / outcomeReview falls back to the default, on both hosts', async () => {
+  const config = await lib('config.mjs');
+  for (const [name, hostEnv] of BOTH_HOSTS) {
+    const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
+      ...hostEnv, MUBIT_CC_SESSION_SCORE: 'loud', MUBIT_CC_OUTCOME_REVIEW: 'always',
+    }));
+    assert.equal(cfg.sessionScore, 'full',
+      `${name}: an unrecognised sessionScore must take the default, full.`);
+    assert.equal(cfg.outcomeReview, 'stop',
+      `${name}: an unrecognised outcomeReview must take the default, stop.`);
+  }
 });
 
 test('loadConfig(): sessionScore / outcomeReview are read case-insensitively from .mubit-cc.json', async () => {

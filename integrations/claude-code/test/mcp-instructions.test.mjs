@@ -33,7 +33,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { mcpDrive, mod, PLUGIN_ROOT } from './helpers/harness.mjs';
+import { makeDataDir, mcpDrive, mod, PLUGIN_ROOT } from './helpers/harness.mjs';
 
 /** The remedy every failure over the shipped frame shares. Stated once. */
 const REMEDY = '\n  `instructions` is filled in by mcp/src/instructions.mjs, installed from\n'
@@ -403,6 +403,33 @@ test('alwaysLoadFor names the loop\'s write tools unless the review is off or th
   assert.deepEqual(alwaysLoadFor({ outcomeReview: 'off' }), []);
   assert.deepEqual(alwaysLoadFor({ host: 'codex' }), []);
   assert.deepEqual(alwaysLoadFor(undefined), ['mubit_outcome', 'mubit_learned']);
+});
+
+// Codex has no tool deferral, so the key has nothing to act on there. Now that the review
+// defaults to `stop` on Codex too, the host check is the only thing keeping the list empty,
+// and the review setting must not reach past it.
+test('alwaysLoadFor stays empty on Codex whatever the review is set to, the Codex default included', async () => {
+  const { alwaysLoadFor } = await mod('mcp/src/instructions.mjs');
+  for (const outcomeReview of ['stop', 'nudge', 'off', undefined]) {
+    assert.deepEqual(alwaysLoadFor({ host: 'codex', outcomeReview }), [],
+      `outcomeReview=${outcomeReview} marked tools always-loaded on Codex, which has no tool `
+      + 'deferral: the key is sent to a host that does nothing with it.');
+  }
+
+  // The config a Codex session actually resolves, so the host and the new default arrive the
+  // way the launcher reads them rather than as a literal this test chose.
+  const { loadConfig } = await mod('lib/config.mjs');
+  const dir = makeDataDir();
+  const cfg = loadConfig({
+    PATH: process.env.PATH ?? '', HOME: dir, CLAUDE_PLUGIN_DATA: dir, MUBIT_CC_DATA_DIR: dir,
+    CLAUDE_PROJECT_DIR: dir, MUBIT_CC_HOST: 'codex',
+  });
+  assert.equal(cfg.host, 'codex', 'the resolved config does not know it is running under Codex.');
+  assert.equal(cfg.outcomeReview, 'stop',
+    'under Codex the review defaults to stop, the case this test exists for; with any other '
+    + 'default the empty list below is not the claim.');
+  assert.deepEqual(alwaysLoadFor(cfg), [],
+    'the resolved Codex config marks tools always-loaded, a key Codex has nothing to do with.');
 });
 
 /** A stand-in for `process.stdout` that records what the guard forwards. */

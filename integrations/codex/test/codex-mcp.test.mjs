@@ -113,6 +113,25 @@ test('every advertised tool has a description the model can route on', async () 
   }
 });
 
+test('no advertised tool is marked always-loaded, with the review at its Codex default', async () => {
+  // Codex has no tool deferral, so `anthropic/alwaysLoad` has nothing to act on there. The
+  // review now defaults to `stop` on Codex as it does on Claude Code, where it does mark the
+  // two credit tools; the committed bundle has to keep that marking to the host that reads it.
+  //
+  // Asserted on the frame the host receives, launched the way the Codex registration launches
+  // it: no review setting, and no `MUBIT_CC_HOST` in the environment, because nothing puts one
+  // there. `alwaysLoadFor()` reads the host from the resolved config, so a server that cannot
+  // tell it is running under Codex takes the Claude Code branch whatever the unit tests say.
+  const { tools } = await mcpListTools();
+  assert.ok(tools.length > 0, 'tools/list came back empty, so the absence below would prove nothing.');
+  const marked = tools.filter((t) => t?._meta?.['anthropic/alwaysLoad'] !== undefined).map((t) => t.name);
+  assert.deepEqual(marked, [],
+    `the Codex server marks ${marked.join(', ')} always-loaded. Codex has no tool deferral, so `
+    + 'the key is dead weight on every tools/list. The server resolved the Claude Code host: '
+    + 'the Codex mcp/dist/index.js has to know it is the Codex build without being told by its '
+    + 'environment, the way every hook and bin entry point does through lib/boot.mjs.');
+});
+
 test('the allowlist is configurable, and a user list passes through verbatim', async () => {
   const { names } = await mcpListTools({ extra: { MUBIT_MCP_TOOLS: 'mubit_recall,mubit_learned' } });
   // § "Restore mubit_handoff" and "give me only mubit_recall" are both legitimate, and only a

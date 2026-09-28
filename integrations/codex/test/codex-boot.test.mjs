@@ -340,7 +340,7 @@ test('an explicit statusLine still wins under Codex, and the Claude Code default
     + 'and this change was supposed to be additive.');
 });
 
-test('under the Codex host, the session scorecard is off and the outcome review only nudges', async () => {
+test('under the Codex host, the scorecard and the outcome review take the Claude Code defaults', async () => {
   const dataDir = makeDataDir();
   const projectDir = makeProjectDir();
   const { loadConfig } = await lib('config.mjs');
@@ -348,18 +348,28 @@ test('under the Codex host, the session scorecard is off and the outcome review 
     CLAUDE_PLUGIN_DATA: dataDir, MUBIT_CC_DATA_DIR: dataDir, CLAUDE_PROJECT_DIR: projectDir,
     MUBIT_ENDPOINT: 'https://mubit.example.com', HOME: dataDir,
   };
+  // The card's `{systemMessage, suppressOutput}` and the review's block-and-continue have both
+  // been recorded on the host (`test/fixtures/observed/output-acceptance.json`), so the reason
+  // Codex once defaulted lower is gone, and the two hosts share one default.
   const underCodex = loadConfig({ ...shared, MUBIT_CC_HOST: 'codex' });
-  // § A Stop-hook continuation has never been observed on Codex, so `stop` is not its default.
-  assert.equal(underCodex.sessionScore, 'off');
-  assert.equal(underCodex.outcomeReview, 'nudge');
-  const optedIn = loadConfig({
-    ...shared, MUBIT_CC_HOST: 'codex', MUBIT_CC_SESSION_SCORE: 'compact', MUBIT_CC_OUTCOME_REVIEW: 'stop',
+  assert.equal(underCodex.sessionScore, 'full',
+    'sessionScore must default to full under Codex: off, a Codex user never sees the scorecard '
+    + 'the TUI shows under the reply unless they find the setting first.');
+  assert.equal(underCodex.outcomeReview, 'stop',
+    'outcomeReview must default to stop under Codex: below that the Stop hook never asks for '
+    + 'the review, and the lessons a turn showed go uncredited.');
+
+  // Opting out is still one variable each, and the values are not the defaults, so an override
+  // that was ignored cannot pass as one.
+  const optedOut = loadConfig({
+    ...shared, MUBIT_CC_HOST: 'codex', MUBIT_CC_SESSION_SCORE: 'off', MUBIT_CC_OUTCOME_REVIEW: 'nudge',
   });
-  assert.equal(optedIn.sessionScore, 'compact');
-  assert.equal(optedIn.outcomeReview, 'stop');
+  assert.equal(optedOut.sessionScore, 'off', 'MUBIT_CC_SESSION_SCORE=off no longer turns the card off under Codex.');
+  assert.equal(optedOut.outcomeReview, 'nudge', 'MUBIT_CC_OUTCOME_REVIEW=nudge no longer stops the review under Codex.');
+
   const claude = loadConfig({ ...shared, MUBIT_CC_HOST: undefined });
-  assert.equal(claude.sessionScore, 'full');
-  assert.equal(claude.outcomeReview, 'stop');
+  assert.equal(claude.sessionScore, 'full', 'the Claude Code default moved; it was supposed to stay full.');
+  assert.equal(claude.outcomeReview, 'stop', 'the Claude Code default moved; it was supposed to stay stop.');
 });
 
 // ===========================================================================
