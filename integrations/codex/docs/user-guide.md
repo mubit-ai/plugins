@@ -75,7 +75,7 @@ merged 11 handler(s) across 10 events into ~/.codex/hooks.json
   (PreToolUse omitted: the warnings it exists for are off by default)
 Added global MCP server 'mubit'.
 
-no tools approved (--no-trust); Mubit tool settings already in config.toml were kept.
+no tools approved (--no-trust).
 To stop Codex asking before mubit_outcome and mubit_learned, set approval_mode = "approve"
 under [mcp_servers.mubit.tools.<tool>] in config.toml.
 

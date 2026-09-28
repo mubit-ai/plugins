@@ -31,12 +31,15 @@
  * 3. **It backs up both files** it touches, to `<name>.before-mubit`, before touching them.
  *    The first run's copy is the one kept: a later run never overwrites it.
  * 4. **It never leaves a `config.toml` Codex cannot load.** A failed `codex mcp add` puts
- *    back the file as it was. After each of its own writes it asks the host to load the file,
- *    and if the host refuses, it restores the text from before that write and exits 1.
+ *    back the file as it was before setup ran. After each of its own writes it asks the host
+ *    to load the file. If the host refuses the tool settings, the file as it was before setup
+ *    ran goes back; if it refuses the hook trust, the text from before that write. Either way
+ *    the run exits 1.
  *
  * `codex mcp remove` deletes all of `[mcp_servers.mubit]`, and `codex mcp add` writes back
- * only `command`, `args` and `env`. Every other setting on it (`startup_timeout_sec`, the
- * tools tables, a `tools` key inline or dotted) is read first and put back after the add.
+ * only `command`, `args` and the `env` it is given. Every other setting on it
+ * (`startup_timeout_sec`, the tools tables, a `tools` key inline or dotted) is read first and
+ * put back after the add, and the user's own `env` entries are passed to the add.
  *
  * It also approves the two tools the outcome review asks the model to call, `mubit_outcome`
  * and `mubit_learned`, with `approval_mode = "approve"` on each one's
@@ -54,7 +57,7 @@
  * Node >= 20 built-ins only, and it shells out to `codex` for the two things Codex owns.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -163,12 +166,27 @@ const KEY_LINE = new RegExp(String.raw`^\s*(${TOML_KEY})\s*(?:\.\s*(${TOML_KEY})
 const APPROVAL_LINE = /^\s*(?:approval_mode|"approval_mode"|'approval_mode')\s*=\s*(?:"([^"]*)"|'([^']*)')?/;
 /** The `[mcp_servers.mubit]` keys `codex mcp add` writes itself. */
 const ADD_WRITES = new Set(['command', 'args', 'env']);
+/** `[mcp_servers.mubit.env]` itself. */
+const ENV_HEADER = new RegExp(String.raw`^\s*${MUBIT}\.\s*(?:env|"env"|'env')\s*\]\s*(?:#.*)?$`);
+/** A one-line TOML string, basic or literal. */
+const TOML_STRING = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*')`;
+const ENV_VALUE = new RegExp(String.raw`^\s*(${TOML_STRING})\s*(?:#.*)?$`);
+const ENV_INLINE = new RegExp(String.raw`^\s*\{(\s*(?:${TOML_KEY}\s*=\s*${TOML_STRING}\s*(?:,\s*${TOML_KEY}\s*=\s*${TOML_STRING}\s*)*,?\s*)?)\}\s*(?:#.*)?$`);
+const ENV_PAIR = new RegExp(String.raw`(${TOML_KEY})\s*=\s*(${TOML_STRING})`, 'g');
+/** The env keys setup writes itself, with this run's values. */
+const SETUP_ENV = new Set(['MUBIT_CC_DATA_DIR', 'MUBIT_CC_PLUGIN_ROOT']);
 
 /** @param {string} k */
 function unquoteKey(k) {
   if (k.startsWith("'")) return k.slice(1, -1);
   if (k.startsWith('"')) { try { return JSON.parse(k); } catch { return k.slice(1, -1); } }
   return k;
+}
+
+/** @param {string} s  a TOML string; `null` for an escape JSON does not share */
+function tomlString(s) {
+  if (s.startsWith("'")) return s.slice(1, -1);
+  try { return JSON.parse(s); } catch { return null; }
 }
 
 /** Is this line the header of a `[mcp_servers.mubit.*]` subtable `codex mcp add` does not write? */
@@ -189,38 +207,59 @@ const isSavedSub = (line) => {
  * file order, comments dropped. Line-based over LF text, so a value line opening with `[` reads
  * as a header; the load check after the write catches what that gets wrong.
  *
+ * `env` is the server's environment, from `[mcp_servers.mubit.env]`, an inline `env = {…}` or
+ * dotted `env.<key>`; `envLost` names the keys whose value is not a one-line string.
+ *
  * @param {string} text
- * @returns {{entries: Entry[], tables: Table[]}}
+ * @returns {{entries: Entry[], tables: Table[], env: Map<string, string>, envLost: string[]}}
  */
 function readServer(text) {
   /** @type {Entry[]} */
   const entries = [];
   /** @type {Table[]} */
   const tables = [];
-  /** @type {'server'|Table|null} */
+  const env = new Map();
+  /** @type {string[]} */
+  const envLost = [];
+  /** @param {string} key @param {string} raw */
+  const setEnv = (key, raw) => {
+    const m = ENV_VALUE.exec(raw);
+    const v = m ? tomlString(m[1]) : null;
+    if (v === null || key.includes('=')) envLost.push(key); else env.set(key, v);
+  };
+  /** @type {'server'|'env'|Table|null} */
   let cur = null;
   let skip = false;
   for (const line of text.split('\n')) {
     if (/^\s*\[/.test(line)) {
       const tools = TOOLS_HEADER.exec(line);
       cur = SERVER_HEADER.test(line) ? 'server'
-        : isSavedSub(line) ? { header: line.trim(), tool: tools ? unquoteKey(tools[1] ?? '') : null, body: [] }
-          : null;
-      if (cur && cur !== 'server') tables.push(cur);
+        : ENV_HEADER.test(line) ? 'env'
+          : isSavedSub(line) ? { header: line.trim(), tool: tools ? unquoteKey(tools[1] ?? '') : null, body: [] }
+            : null;
+      if (cur && typeof cur === 'object') tables.push(cur);
       continue;
     }
     const kept = line.replace(/\s+$/, '');
     if (!cur || !kept.trim() || kept.trim().startsWith('#')) continue;
-    if (cur !== 'server') { cur.body.push(kept); continue; }
     // A line with no key continues the entry above it, e.g. a multi-line array.
     const k = KEY_LINE.exec(kept);
+    if (cur === 'env') { if (k) setEnv(unquoteKey(k[1]), kept.slice(k[0].length)); continue; }
+    if (cur !== 'server') { cur.body.push(kept); continue; }
     if (k) {
       skip = ADD_WRITES.has(unquoteKey(k[1]));
       if (!skip) entries.push({ key: unquoteKey(k[1]), sub: k[2] ? unquoteKey(k[2]) : null, lines: [] });
+      else if (unquoteKey(k[1]) === 'env') {
+        const rest = kept.slice(k[0].length);
+        const inline = ENV_INLINE.exec(rest);
+        if (k[2]) setEnv(unquoteKey(k[2]), rest);
+        else if (inline) for (const p of inline[1].matchAll(ENV_PAIR)) setEnv(unquoteKey(p[1]), p[2]);
+        else envLost.push('env');
+      }
     }
     if (!skip && entries.length) entries[entries.length - 1].lines.push(kept);
   }
-  return { entries, tables };
+  return { entries, tables, env, envLost };
 }
 
 /**
@@ -417,6 +456,8 @@ const lf = (s) => s.replace(/\r\n/g, '\n');
 const withEol = (s) => (eol === '\n' ? s : s.replace(/\n/g, eol));
 backUp(cfg);
 const saved = readServer(lf(original ?? ''));
+/** Put config.toml back as it was before setup ran. */
+const restore = () => { if (original === null) rmSync(cfg, { force: true }); else writeFileSync(cfg, original); };
 spawnSync('codex', ['mcp', 'remove', 'mubit'], { stdio: 'ignore' });
 // `--env` matters as much here as the pin in the hook commands does. Codex registers the
 // server itself, so whatever is not passed here is simply absent — there is no host putting
@@ -441,8 +482,12 @@ spawnSync('codex', ['mcp', 'remove', 'mubit'], { stdio: 'ignore' });
 //   was taken in. Falling back to the launch cwd is the correct answer, and the run id is
 //   unaffected either way because `directoryRunId` resolves through
 //   `git rev-parse --show-toplevel` before it hashes.
+//
+// The user's own entries (MUBIT_MCP_TOOLS and the like) ride too, or the remove loses them.
+const userEnv = [...saved.env].filter(([k]) => !SETUP_ENV.has(k));
 const add = spawnSync('codex', [
   'mcp', 'add', 'mubit',
+  ...userEnv.flatMap(([k, v]) => ['--env', `${k}=${v}`]),
   '--env', `MUBIT_CC_DATA_DIR=${dataDir}`,
   '--env', `MUBIT_CC_PLUGIN_ROOT=${root}`,
   '--', 'node', join(root, 'mcp/dist/index.js'),
@@ -454,7 +499,7 @@ console.log((add.stdout || add.stderr || '').trim());
 // the whole config load, and Codex does not start.
 if (add.status !== 0) {
   // Setup's own `codex mcp remove` has already taken the registration and every setting on it.
-  if (original !== null) writeFileSync(cfg, original);
+  restore();
   console.log('\nthe MCP registration failed, so it was left unchanged: config.toml is as it was '
     + 'before setup ran, and no tool settings were written.');
 } else {
@@ -464,12 +509,19 @@ if (add.status !== 0) {
   const next = withEol(plan.text ? `${text.trim() ? `${text.replace(/\s+$/, '')}\n\n` : ''}${plan.text}` : text);
   if (next !== post) {
     writeFileSync(cfg, next);
-    keepLoadable(post, 'the Mubit tool settings');
+    // `post` has already lost what the remove took and setup could not carry; `original` has not.
+    keepLoadable(restore, 'config.toml was restored to what it was before setup ran, so the MCP '
+      + 'registration was not updated and no tool settings were written.');
   }
   const keys = (/** @type {Entry[]} */ es) => [...new Set(es.map((e) => e.key))].join(', ');
   const carried = saved.entries.filter((e) => !lost.includes(e));
   if (carried.length) console.log(`\ncarried over your ${keys(carried)} on [mcp_servers.mubit].`);
+  if (userEnv.length) console.log(`\ncarried over your ${userEnv.map(([k]) => k).join(', ')} in [mcp_servers.mubit.env].`);
   if (lost.length) console.log(`\nwarning: ${keys(lost)} on [mcp_servers.mubit] could not be put back; ${cfg}.before-mubit has them.`);
+  if (saved.envLost.length) {
+    console.log(`\nwarning: ${saved.envLost.join(', ')} in [mcp_servers.mubit.env] could not be put back; `
+      + `${cfg}.before-mubit has them.`);
+  }
   if (noTrust) {
     const keptTools = saved.tables.some((t) => t.tool !== null) || carried.some((e) => e.key === 'tools');
     console.log(`\nno tools approved (--no-trust)${keptTools ? '; the Mubit tool settings already in config.toml were kept' : ''}.`);
@@ -498,20 +550,17 @@ if (add.status !== 0) {
 /**
  * The last-resort guard. Setup edits config.toml line by line, and some valid TOML defeats that;
  * a file the host refuses stops Codex starting at all. So after each write the host loads it,
- * and if it will not, `was` (the text before that write) goes back and the run exits 1.
+ * and if it will not, `undo` puts back a file it loads and the run exits 1. The host's reason is
+ * not quoted: its lines and columns are in the text `undo` just threw away.
  *
- * @param {string} was
- * @param {string} what  what the write carried, for the message
+ * @param {() => void} undo
+ * @param {string} undone  what `undo` put back, for the message
  */
-function keepLoadable(was, what) {
+function keepLoadable(undo, undone) {
   const r = spawnSync('codex', ['mcp', 'list', '--json'], { cwd: HOME, encoding: 'utf8', timeout: 30000 });
   if (r.status === 0) return;
-  writeFileSync(cfg, was);
-  const why = String(r.stderr || r.stdout || r.error || 'no answer').split('\n').filter((l) => l.trim()).slice(0, 5)
-    .map((l) => `  ${l.trim()}`).join('\n');
-  console.error(`\nCodex could not load ${cfg} once setup wrote ${what} to it:\n${why}\n`
-    + `config.toml was restored to the text it had before that write, so it does not hold ${what}.`
-    + `${existsSync(`${cfg}.before-mubit`) ? ` ${cfg}.before-mubit holds the file as it was before setup first ran.` : ''}`);
+  undo();
+  console.error(`\nCodex refused to load ${cfg} as setup wrote it.\n${undone}`);
   process.exit(1);
 }
 
@@ -594,7 +643,9 @@ setTimeout(() => {
     writeFileSync(cfg, beforeRaw);
     process.exit(1);
   }
-  keepLoadable(beforeRaw, 'the hook trust');
+  keepLoadable(() => writeFileSync(cfg, beforeRaw),
+    'config.toml was restored to the text it had before that write, so it holds no hook trust.'
+    + `${existsSync(`${cfg}.before-mubit`) ? ` ${cfg}.before-mubit holds the file as it was before setup first ran.` : ''}`);
   console.log(`\nrecorded ${hooks.length}.${preserved.length ? ` Left ${preserved.length} other trust entr`
     + `${preserved.length === 1 ? 'y' : 'ies'} alone.` : ''}`
     + ' Start a NEW Codex session — hooks and MCP servers are read at session start.');
