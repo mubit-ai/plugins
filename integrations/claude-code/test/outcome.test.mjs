@@ -540,6 +540,12 @@ describe('decideOutcome — per-entry credit', () => {
       'attempts_exhausted');
   });
 
+  it('the none-used rationale is a whole sentence', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({ used_evidence: entryEvidence({ ref_rule_1: USE(false), ref_lesson_1: USE(false) }) }));
+    assert.match(d.rationale ?? '', /^Claude Code turn completed; the reply used 0 of 2 injected memories/);
+  });
+
   it('the rationale names the per-entry method and the counts', async () => {
     const { decideOutcome } = await O();
     const d = decideOutcome(turn({
@@ -557,6 +563,36 @@ describe('decideOutcome — per-entry credit', () => {
     assert.equal(d.outcome, 'success');
     assert.equal(d.rationale, decideOutcome({ ...t }).rationale);
     assert.doesNotMatch(d.rationale ?? '', /v2-entry/);
+  });
+
+  it('every entry unmeasurable → the recalled ids minus the ones Claude judged itself', async () => {
+    const { decideOutcome } = await O();
+    const unmeasured = entryEvidence({ ref_rule_1: USE(null), ref_lesson_1: USE(null) },
+      { used: undefined, reason: 'no_distinct_terms' });
+    const d = decideOutcome(turn({ explicit_ids: ['ref_lesson_1'], used_evidence: unmeasured }));
+    assert.equal(d.post, true);
+    assert.deepEqual(d.entryIds, RECALLED.filter((r) => r !== 'ref_lesson_1'));
+    assert.deepEqual(decideOutcome(turn({ explicit_ids: RECALLED, used_evidence: unmeasured })),
+      { post: false, reason: 'explicit_only' });
+  });
+
+  it('without entries the recalled ids still leave out the explicit ones; an unused record defers to them', async () => {
+    const { decideOutcome } = await O();
+    assert.deepEqual(decideOutcome(turn({ explicit_ids: ['ref_lesson_1'], used_evidence: evidence(true) })).entryIds,
+      RECALLED.filter((r) => r !== 'ref_lesson_1'));
+    assert.deepEqual(decideOutcome(turn({ explicit_ids: ['ref_lesson_1'] })).entryIds,
+      RECALLED.filter((r) => r !== 'ref_lesson_1'));
+    assert.deepEqual(decideOutcome(turn({ explicit_ids: ['ref_lesson_1'], used_evidence: evidence(false) })),
+      { post: false, reason: 'explicit_only' });
+  });
+
+  it('a turn the user already corrected posts no credit after the correction', async () => {
+    const { decideOutcome } = await O();
+    const d = decideOutcome(turn({
+      correction_sent_at: 1,
+      used_evidence: entryEvidence({ ref_lesson_1: USE(true) }),
+    }));
+    assert.deepEqual(d, { post: false, reason: 'corrected' });
   });
 
   it('a tool failure without per-entry data says so in the rationale', async () => {
@@ -594,6 +630,15 @@ describe('decideCorrection', () => {
     assert.equal(decideCorrection(turn({ used_evidence: ev, correction_sent_at: 1 })).post, false);
     assert.equal(decideCorrection(turn({ used_evidence: ev, api_error: 'overloaded' })).post, false);
     assert.equal(decideCorrection(turn({ used_evidence: ev, explicit_ids: ['ref_lesson_1'] })).post, false);
+  });
+
+  it('a turn that already failed on its own is not failed a second time by the correction', async () => {
+    const { decideCorrection } = await O();
+    const d = decideCorrection(turn({
+      outcome: 'failure', failure_reason: 'tool_failure',
+      used_evidence: entryEvidence({ ref_lesson_1: USE(true) }),
+    }));
+    assert.deepEqual(d, { post: false, reason: 'already_failed' });
   });
 
   it('the correction key is its own, so it never collides with the Stop outcome', async () => {

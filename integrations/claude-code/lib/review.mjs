@@ -96,6 +96,20 @@ export function reviewReason(candidates) {
   return lines.join('\n');
 }
 
+/** A line that is the review's closing "Memory review: …", markdown emphasis or a bullet allowed. */
+const REVIEW_LINE = /^[ \t]*(?:[-*>][ \t]+)?[*_]{0,2}memory review[*_]{0,2}:.*$/gim;
+
+/**
+ * The reply without its closing review line, so an answer given in the review continuation
+ * is stored and measured on its own words.
+ *
+ * @param {any} text
+ * @returns {string}
+ */
+export function stripReviewLine(text) {
+  return typeof text === 'string' ? text.replace(REVIEW_LINE, '').replace(/\n{3,}/g, '\n\n').trim() : '';
+}
+
 /** @param {any} v @returns {string} */
 function str(v) {
   return typeof v === 'string' ? v.trim() : '';

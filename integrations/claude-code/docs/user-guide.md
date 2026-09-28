@@ -300,10 +300,13 @@ exactly one row, so the rows always add up to the total.
 A used lesson gets a verdict for the turn it was used in. The first rule that applies wins:
 
 1. **Claude's own verdict** through `mubit_outcome`: success or partial means worked, failure
-   means failed.
+   means failed. A `neutral` verdict counts the lesson as used and leaves the verdict to the
+   rules below.
 2. **Your next prompt corrects Claude** — "no, that's wrong", "still failing", "revert
-   that" — means failed. A correction never counts across `/clear` or for a slash command, and
-   a bare "no" answering a question Claude asked is an answer, not a correction.
+   that" — means failed. A correction applies to your last prompt before it that was not a
+   slash command; if you interrupted that turn, nothing is failed. It never counts across
+   `/clear` or for a slash command, and a bare "no" answering a question Claude asked is an
+   answer, not a correction.
 3. **The turn's last tool call that changed something failed** means failed. Reads and
    searches do not count, so a `grep` that matched nothing is not a failure.
 4. **You sent another prompt** means worked.
@@ -350,6 +353,10 @@ continuation a Stop hook asks for as **"Stop hook error occurred"**, even though
 it. With `outcomeMode: off` there is no review at all. Codex defaults to `nudge` because a Stop
 continuation has not been verified there.
 
+A message you send while the review is running is answered in the same continuation; that
+answer is stored and measured like any other. If the review itself hits an API error, the
+answer it followed still gets its credit.
+
 What reaches the server:
 
 - The automatic outcome now reinforces only the entries the reply actually used, instead of
@@ -357,7 +364,9 @@ What reaches the server:
 - An entry Claude credited or blamed itself is left to its verdict, so it is never counted
   twice for one turn.
 - When your next prompt corrects Claude, a failure (−0.3) is posted against the entries the
-  previous reply used.
+  previous reply used, unless that turn already failed on a tool call. A correction that could
+  not be sent right away is retried when the session ends, and a turn that was corrected before
+  its automatic outcome went out gets no credit afterwards.
 
 ---
 

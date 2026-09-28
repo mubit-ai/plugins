@@ -5,7 +5,8 @@
  *
  * Units: a turn is one non-slash prompt and Claude's reply; lessons are distinct
  * `entry_type: lesson` entries. Per lesson and turn the state is used, not used or unknown;
- * a used lesson's verdict is, first match wins: Claude's explicit `mubit_outcome` verdict,
+ * a used lesson's verdict is, first match wins: Claude's explicit `mubit_outcome` verdict
+ * (success/partial worked, failure failed; neutral only marks it used),
  * a correction in the next prompt, a failed last non-read-only tool call, a next prompt
  * existing (worked), otherwise waiting. Counts always add up:
  * shown = used + notUsed + unknown and used = worked + failed + waiting.
@@ -50,7 +51,7 @@ export function foldScorecard(rows, currentPromptId) {
 
   /** @type {string[]} */
   const order = [];
-  /** @type {Map<string, {slash: boolean, correction: boolean, pos: number, standing: Record<string, any>|null}>} */
+  /** @type {Map<string, PromptMark & {standing: Record<string, any>|null}>} */
   const prompts = new Map();
   /** @type {Map<string, Record<string, any>>} */
   const shown = new Map();
@@ -69,7 +70,7 @@ export function foldScorecard(rows, currentPromptId) {
 
   const seePrompt = (/** @type {string} */ id, /** @type {number} */ pos) => {
     if (!prompts.has(id)) {
-      prompts.set(id, { slash: false, correction: false, pos, standing: null });
+      prompts.set(id, { ...markOf(pos), standing: null });
       order.push(id);
     }
     return /** @type {any} */ (prompts.get(id));
@@ -85,12 +86,8 @@ export function foldScorecard(rows, currentPromptId) {
         break;
       case 'prompt': {
         if (!id) break;
-        const fresh = !prompts.has(id);
         const p = seePrompt(id, pos);
-        if (fresh) {
-          p.slash = row.slash === true;
-          p.correction = row.correction === true;
-        }
+        flagPrompt(p, row);
         if (!p.slash && pendingStanding) {
           p.standing = pendingStanding;
           pendingStanding = null;
@@ -160,7 +157,8 @@ export function foldScorecard(rows, currentPromptId) {
       let verdict = '';
       if (ex === 'success' || ex === 'partial') { state = 'used'; verdict = 'worked'; }
       else if (ex === 'failure') { state = 'used'; verdict = 'failed'; }
-      else if (ex === 'neutral') state = 'not';
+      // Naming a lesson counts as using it; a neutral verdict leaves the outcome to rules 2–5.
+      else if (ex === 'neutral') state = 'used';
       if (state === 'used' && !verdict) verdict = settle(id, next);
 
       const entry = byLesson.get(ref) ?? { title: '', times: 0, states: [], verdicts: [] };
@@ -229,6 +227,100 @@ export function foldScorecard(rows, currentPromptId) {
     if (acting.length && acting[acting.length - 1].failed) return 'failed';
     return nextPrompt ? 'worked' : 'waiting';
   }
+}
+
+/**
+ * The turn a new prompt follows, by the fold's own rule: the latest non-slash prompt before
+ * it, its latest `turn` row (null when it never closed, e.g. interrupted) and whether a
+ * `/clear` start lies between. `stage-prompt` corrects exactly this turn, so the server and
+ * the card fail the same lessons.
+ *
+ * @param {any[]} rows  the session log (or its tail), in file order
+ * @param {string} currentPromptId
+ * @returns {{promptId: string, turn: Record<string, any>|null, afterClear: boolean}|null}
+ */
+export function previousTurn(rows, currentPromptId) {
+  const list = Array.isArray(rows) ? rows.filter(isObject) : [];
+  const current = str(currentPromptId);
+  /** @type {Map<string, PromptMark>} */
+  const prompts = new Map();
+  /** @type {string[]} */
+  const order = [];
+  /** @type {Map<string, Record<string, any>>} */
+  const turns = new Map();
+  /** @type {number[]} */
+  const clears = [];
+  list.forEach((row, pos) => {
+    if (row.kind === 'start' && str(row.source) === 'clear') clears.push(pos);
+    const id = str(row.prompt_id);
+    if (!id || !PROMPT_KINDS.has(row.kind)) return;
+    if (!prompts.has(id)) {
+      prompts.set(id, markOf(pos));
+      order.push(id);
+    }
+    const p = /** @type {PromptMark} */ (prompts.get(id));
+    if (row.kind === 'prompt') flagPrompt(p, row);
+    if (row.kind === 'turn') turns.set(id, row);
+  });
+  const at = order.indexOf(current);
+  const before = (at >= 0 ? order.slice(0, at) : order).filter((id) => !prompts.get(id)?.slash);
+  const id = before[before.length - 1];
+  if (!id) return null;
+  const from = num(prompts.get(id)?.pos);
+  const to = at >= 0 ? num(prompts.get(current)?.pos) : Infinity;
+  return { promptId: id, turn: turns.get(id) ?? null, afterClear: clears.some((c) => c > from && c < to) };
+}
+
+/**
+ * Every turn this session's corrections name, by `previousTurn` at each correcting prompt:
+ * those whose reply used memory, never across a `/clear`. SessionEnd re-posts any whose
+ * correction was never delivered.
+ *
+ * @param {any[]} rows
+ * @returns {{runId: string, promptId: string}[]}
+ */
+export function correctionTargets(rows) {
+  const list = Array.isArray(rows) ? rows.filter(isObject) : [];
+  /** @type {{runId: string, promptId: string}[]} */
+  const out = [];
+  const seen = new Set();
+  list.forEach((row, i) => {
+    if (row.kind !== 'prompt' || row.correction !== true || row.slash === true) return;
+    const prev = previousTurn(list.slice(0, i), str(row.prompt_id));
+    const turn = prev?.turn;
+    if (!prev || !turn || prev.afterClear) return;
+    const used = Array.isArray(turn.used_refs) && turn.used_refs.some((r) => typeof r === 'string' && r);
+    const runId = str(turn.run_id);
+    const key = `${runId}\n${prev.promptId}`;
+    if (!used || !runId || seen.has(key)) return;
+    seen.add(key);
+    out.push({ runId, promptId: prev.promptId });
+  });
+  return out;
+}
+
+/**
+ * @typedef {{slash: boolean, correction: boolean, pos: number, flagged: boolean}} PromptMark
+ */
+
+/** The row kinds that name a prompt, in the order the fold first sees it. */
+const PROMPT_KINDS = new Set(['prompt', 'shown', 'turn']);
+
+/** @param {number} pos @returns {PromptMark} */
+function markOf(pos) {
+  return { slash: false, correction: false, pos, flagged: false };
+}
+
+/**
+ * The prompt row's flags, from the first prompt row for the id — even when its `shown` row
+ * landed first (prompt-recall can beat stage-prompt).
+ * @param {PromptMark} p @param {Record<string, any>} row
+ */
+function flagPrompt(p, row) {
+  if (p.flagged) return;
+  p.flagged = true;
+  p.slash = row.slash === true;
+  p.correction = row.correction === true;
 }
 
 /**

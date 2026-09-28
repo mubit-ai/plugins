@@ -99,8 +99,12 @@ import { ROUTES, heartbeat, postIngest, postOutcome, request } from '../../lib/h
 import { runHook, spawnDetached, stashPayload } from '../../lib/hook.mjs';
 import { log } from '../../lib/log.mjs';
 import { readMarker, updateMarker } from '../../lib/markers.mjs';
-import { decideOutcome, implicitOutcomesEnabled, outcomeRequest } from '../../lib/outcome.mjs';
+import {
+  correctionRequest, decideCorrection, decideOutcome, implicitOutcomesEnabled, outcomeRequest,
+} from '../../lib/outcome.mjs';
 import { deriveAgentId, deriveRunId } from '../../lib/runid.mjs';
+import { readScoreRows } from '../../lib/scorecard-log.mjs';
+import { correctionTargets } from '../../lib/scorecard.mjs';
 import {
   acquireDrainLock, acquireFlushLease, batchIdempotencyKey, claimHeld, claimOnce, commitBatch,
   readBatch, releaseDrainLock, releaseFlushLease, spoolStats,
@@ -265,6 +269,8 @@ await runHook('session-end', {
       // reflection sees the outcome signals it folds in.
       const flushed = await flushOutcomes(cfg, {
         runId, agentId, budget: () => budgetFor(OUTCOME_MS, REFLECT_MS / 2),
+      }) + await flushCorrections(cfg, {
+        sessionId, agentId, budget: () => budgetFor(OUTCOME_MS, REFLECT_MS / 2),
       });
 
       // §5.7 step 4 — REQUIRED (§1.4), and skipped only on the documented conditions.
@@ -614,6 +620,55 @@ async function flushOutcomes(cfg, o) {
     log(cfg, 'warn', `session-end: outcome flush skipped — ${messageOf(err)}`, { run_id: o.runId });
   }
   return flushed;
+}
+
+/**
+ * The corrections this session's prompts made that `drain --correct` never delivered — it
+ * stood down on the lock, or the endpoint was down. The session log names each corrected turn
+ * (`correctionTargets`); `decideCorrection` skips the ones already sent.
+ *
+ * @param {Record<string, any>} cfg
+ * @param {{sessionId: string, agentId: string, budget: () => number}} o
+ * @returns {Promise<number>} how many corrections were accepted
+ */
+async function flushCorrections(cfg, o) {
+  if (!implicitOutcomesEnabled(cfg)) return 0;
+  let sent = 0;
+  try {
+    const targets = correctionTargets(readScoreRows(cfg, o.sessionId)).slice(-MAX_TURN_FLUSH);
+    for (const { runId, promptId } of targets) {
+      const budget = o.budget();
+      if (budget <= 0) break;
+      const p = join(runDir(cfg, runId), 'turns', `${safeSegment(promptId)}.json`);
+      const turn = readJson(p, null);
+      const decision = decideCorrection(turn);
+      if (!decision.post) continue;
+      const res = await postOutcome(cfg,
+        correctionRequest({ runId, agentId: o.agentId, promptId, decision }), { timeoutMs: budget });
+      if (!res.ok) {
+        log(cfg, 'info', `session-end: correction flush failed (${res.state})`, { run_id: runId, prompt_id: promptId });
+        continue;
+      }
+      sent++;
+      const fresh = readJson(p, turn);
+      writeJsonAtomic(p, { ...(isObject(fresh) ? fresh : turn), correction_sent_at: Date.now() });
+      appendLedger(resolveDataDir(cfg), runId, {
+        v: 1,
+        kind: 'outcome',
+        at: Date.now(),
+        run_id: runId,
+        prompt_id: promptId,
+        outcome: String(decision.outcome ?? ''),
+        signal: numOr(decision.signal, 0),
+        entry_ids_n: Array.isArray(decision.entryIds) ? decision.entryIds.length : 0,
+        attempts: 1,
+        correction: true,
+      });
+    }
+  } catch (err) {
+    log(cfg, 'warn', `session-end: correction flush skipped — ${messageOf(err)}`, { session_id: o.sessionId });
+  }
+  return sent;
 }
 
 // ---------------------------------------------------------------------------

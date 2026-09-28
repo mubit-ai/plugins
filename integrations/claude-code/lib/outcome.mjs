@@ -147,10 +147,11 @@ export function implicitOutcomesEnabled(cfg) {
  * | the API killed the turn (`api_error`) | nothing |
  * | injected, the reply carried the memory's vocabulary | `success` +0.2 / `failure` -0.3, with `entry_ids` |
  * | injected, the reply carried none of it | `neutral` 0.0, with an empty `entry_ids` |
- * | injected, but the signal could not be computed | as before: `success` +0.2 / `failure` -0.3 |
+ * | injected, but the signal could not be computed | as before: `success` +0.2 / `failure` -0.3, minus `explicit_ids` |
  * | per-entry data, some entries used | `success`/`failure` naming only those, minus `explicit_ids` |
  * | per-entry data, none used but some measured | `neutral` 0.0, with an empty `entry_ids` |
- * | per-entry data, every used entry judged by Claude | nothing (`explicit_only`) |
+ * | every id it would name already judged by Claude | nothing (`explicit_only`) |
+ * | the user's next prompt already corrected it (`correction_sent_at`) | nothing (`corrected`) |
  *
  * **Row 1 is what makes row 4 legible.** A turn that recalled nothing is never sent with an
  * empty `recalled[]`: an outcome attributed to nothing is a wasted round trip that also
@@ -197,6 +198,10 @@ export function decideOutcome(turn) {
   // Already attributed by an earlier drain or flush. The stable key below makes a re-post a
   // server-side no-op anyway, but there is no reason to spend the round trip.
   if (numOr(turn.outcome_sent_at, 0) > 0) return { post: false, reason: 'already_sent' };
+
+  // The user's next prompt already posted a failure against the entries this would credit;
+  // crediting the same entries afterwards would contradict it.
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: 'corrected' };
 
   // Row 2 — the turn ended on an API error. `capture --stop-failure` is the only writer of
   // this key, and it writes it because `StopFailure` fires *instead of* `Stop`: without it
@@ -259,6 +264,11 @@ export function decideOutcome(turn) {
 
   // Strictly a boolean, never truthiness — see the docblock above.
   const unused = ev.used === false;
+  // Claude's own verdicts stand here too: the turn-level credit never re-judges those ids.
+  const explicit = new Set(explicitIdsOf(turn));
+  if (unused && explicit.size > 0) return { post: false, reason: 'explicit_only' };
+  const ids = recalled.filter((r) => !explicit.has(r));
+  if (!unused && ids.length === 0) return { post: false, reason: 'explicit_only' };
 
   return {
     post: true,
@@ -269,7 +279,7 @@ export function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : recalled,
+    entryIds: unused ? [] : ids,
     rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure),
   };
 }
@@ -285,6 +295,8 @@ export function decideCorrection(turn) {
   if (!isObject(turn)) return { post: false, reason: 'not_a_turn' };
   if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: 'already_sent' };
   if (str(turn[API_ERROR_KEY])) return { post: false, reason: 'api_failed' };
+  // The turn's own outcome is already a failure on these entries (a failed tool call).
+  if (str(turn.outcome).toLowerCase() === 'failure') return { post: false, reason: 'already_failed' };
   const ev = isObject(turn.used_evidence) ? turn.used_evidence : {};
   const entries = entriesOf(ev);
   if (!entries) return { post: false, reason: 'nothing_used' };
@@ -401,7 +413,7 @@ function entryRationale(ev, used, of, failed, toolFailure) {
   const method = str(ev.entry_method) || 'memory-term-echo/v2-entry';
   const counts = `the reply used ${used} of ${of} injected ${of === 1 ? 'memory' : 'memories'} (${method})`;
   if (used === 0) {
-    return `Claude Code ${counts}. Recorded, not penalised: this method cannot see memory the `
+    return `Claude Code turn completed; ${counts}. Recorded, not penalised: this method cannot see memory the `
       + 'model followed without quoting it.';
   }
   if (!failed) return `Claude Code turn completed; ${counts}.`;

@@ -39,9 +39,14 @@ import { readActor } from '../../lib/actor.mjs';
 import { envTags, host } from '../../lib/config.mjs';
 import { firstUserText, toolCallRecord } from '../../lib/codex-rollout.mjs';
 import { runHook, spawnDetached, stashPayload } from '../../lib/hook.mjs';
-import { classifyTool, classifyTurn } from '../../lib/classify.mjs';
+import { classifyTool, classifyTurn, toolIntent } from '../../lib/classify.mjs';
 import { appendLedger, turnLedgerRow } from '../../lib/ledger.mjs';
 import { fileChanges, recordFileChanges } from '../../lib/filechange.mjs';
+import { knownRefsFromRows, resolveHandles } from '../../lib/handles.mjs';
+import { reviewCandidates, reviewReason, shouldReview, stripReviewLine } from '../../lib/review.mjs';
+import { foldScorecard, renderScorecard } from '../../lib/scorecard.mjs';
+import { appendScoreRow, readScoreRows } from '../../lib/scorecard-log.mjs';
+import { evaluateUse, matchTerms, termSet } from '../../lib/terms.mjs';
 import { isDeniedPath, isSelfReference, redactParams, redactText } from '../../lib/redact.mjs';
 import { deriveAgentId, deriveRunId, resolveProjectDir, turnKey, turnNumber } from '../../lib/runid.mjs';
 import { appendItem, spoolStats } from '../../lib/spool.mjs';
@@ -143,6 +148,18 @@ const MAX_ID_CHARS = 160;
  */
 const USED_SIGNAL_METHOD = 'memory-term-echo/v1';
 
+/** The per-entry signal (`lib/terms.mjs` `evaluateUse`), recorded beside the turn-level one. */
+const ENTRY_SIGNAL_METHOD = 'memory-term-echo/v2-entry';
+
+/** The plugin's own MCP tool names, under Claude Code and under Codex. */
+const OWN_MCP_PREFIXES = ['mcp__plugin_mubit-memory_mubit__', 'mcp__mubit__'];
+
+/** The outcomes `mubit_outcome` accepts; anything else is not a verdict. */
+const VERDICTS = new Set(['success', 'failure', 'partial', 'neutral']);
+
+/** Tool intents that never decide a turn's tool failure: a grep that matched nothing is not one. */
+const READ_ONLY_INTENTS = new Set(['read', 'search']);
+
 /** How many matched terms are kept as evidence. Enough to read; not a copy of the block. */
 const MAX_EVIDENCE_TERMS = 12;
 
@@ -190,10 +207,9 @@ const MODE = pickMode(process.argv.slice(2));
 await runHook('capture', {
   budgetMs: BUDGET_MS,
   body: (payload, cfg) => {
-    capture(payload, cfg, MODE);
-    // §5.4: `{"suppressOutput": true}` in every mode, including every mode that dropped
-    // the item. What capture decided is never the user's business mid-turn.
-    return { suppressOutput: true };
+    // `{"suppressOutput": true}` in every mode that has nothing to say. `--stop` is the
+    // one exception: the session scorecard, or the once-per-turn outcome review.
+    return capture(payload, cfg, MODE) ?? { suppressOutput: true };
   },
 });
 
@@ -216,18 +232,19 @@ function pickMode(argv) {
 }
 
 /**
- * The §5.4 pipeline. Returns nothing: every outcome — spooled, dropped, or failed — is the
- * same `{"suppressOutput": true}` to the host.
+ * The capture pipeline. Returns the hook output for `--stop` (the scorecard or the review
+ * request) and null otherwise, which the caller turns into `{"suppressOutput": true}`.
  *
  * @param {Record<string, any>} rawPayload
  * @param {Record<string, any>} cfg
  * @param {Mode} mode
+ * @returns {Record<string, any>|null}
  */
 function capture(rawPayload, cfg, mode) {
   const payload = isObject(rawPayload) ? rawPayload : {};
 
   // 1. capture disabled -> nothing to do.
-  if (cfg && cfg.capture === false) return;
+  if (cfg && cfg.capture === false) return null;
 
   // 2a. §3.2: the matcher lets every tool through, so the bookkeeping tools are dropped
   //     here. See `SKIP_TOOLS` for why an allowlist in the manifest could not do this job.
@@ -235,7 +252,10 @@ function capture(rawPayload, cfg, mode) {
   //     `--permission` is dropped by the same list: a permission request for `TodoWrite` is
   //     as much bookkeeping as the write would have been.
   if ((mode === 'tool' || mode === 'permission')
-      && SKIP_TOOLS.has(str(payload.tool_name).trim())) return;
+      && SKIP_TOOLS.has(str(payload.tool_name).trim())) return null;
+
+  // The plugin's own mubit_outcome / mubit_learned feed the scorecard before step 2 drops them.
+  if (mode === 'tool') attempt(() => noteOwnTool(cfg, payload));
 
   // 2. §4.4 self-reference suppression. Without it the plugin records its own traffic,
   //    recalls it, then records the recall.
@@ -251,17 +271,32 @@ function capture(rawPayload, cfg, mode) {
   //    every `mubit_recall` approval would be recorded as an episode by the thing being
   //    approved.
   if (mode === 'tool' || mode === 'permission') {
-    if (attempt(() => isSelfReference(payload.tool_name, payload.tool_input, cfg), false)) return;
+    if (attempt(() => isSelfReference(payload.tool_name, payload.tool_input, cfg), false)) return null;
   }
 
   // 3. §4.4 stage 2: a denylisted subject is DROPPED, never scrubbed. A scrubbed `.env` is
   //    still a map of which secrets the project holds.
   if (mode === 'tool' || mode === 'failure' || mode === 'permission') {
-    if (attempt(() => hasDeniedSubject(payload, cfg), false)) return;
+    if (attempt(() => hasDeniedSubject(payload, cfg), false)) return null;
   }
 
   const runId = attempt(() => deriveRunId(cfg, payload), '');
-  if (!runId) return;
+  if (!runId) return null;
+
+  // The outcome review this hook asked for on this turn, while it is still open.
+  const pending = mode === 'stop' || mode === 'stop-failure'
+    ? attempt(() => {
+      const t = readTurn(cfg, runId, turnKey(payload));
+      return reviewPending(t) ? t : null;
+    }, null)
+    : null;
+  // A Stop that follows the review: its reply is the one-line review, not an answer, so it is
+  // neither stored as the turn's Q/A nor re-measured — unless a message queued during the
+  // review was answered in the same continuation (stage-prompt stamps `queued_at`).
+  const followUp = mode === 'stop' && payload.stop_hook_active === true && !!pending;
+  const afterReview = followUp ? stripReviewLine(str(payload.last_assistant_message) || str(payload.message)) : '';
+  const answered = followUp && !!afterReview
+    && Number(pending?.queued_at) > Number(pending?.review_requested_at);
 
   // 4-6. classify, build the text, redact.
   //
@@ -271,8 +306,11 @@ function capture(rawPayload, cfg, mode) {
   // also be recalled later as though it were what the assistant had to say on the subject.
   const item = attempt(
     () => {
-      if (mode === 'stop-failure') return null;
+      if (mode === 'stop-failure' || (followUp && !answered)) return null;
       if (mode === 'permission') return buildPermissionItem(payload, cfg);
+      if (answered) {
+        return buildTurnItem({ ...payload, last_assistant_message: afterReview }, cfg, runId, mode, 'queued');
+      }
       return mode === 'stop' || mode === 'subagent'
         ? buildTurnItem(payload, cfg, runId, mode)
         : buildToolItem(payload, cfg, mode, runId);
@@ -287,9 +325,18 @@ function capture(rawPayload, cfg, mode) {
   //    moment its attribution can be recorded. Every other mode drains only on a trigger,
   //    because one detached node process per tool call is the cost this design avoids.
   if (mode === 'stop') {
-    attempt(() => closeTurn(cfg, runId, payload));
+    const closed = attempt(() => closeTurn(cfg, runId, payload, { followUp, answered }), null);
+    const summary = closed ? attempt(() => foldScorecard(closed.rows, closed.promptId), null) : null;
+    const review = attempt(() => reviewFor(cfg, payload, closed, summary), null);
+    if (review) {
+      // The outcome waits for Claude's verdicts so an entry is never credited twice; the
+      // follow-up Stop posts it. Only a batch trigger drains now.
+      attempt(() => markReview(cfg, runId, payload, closed, review.ids));
+      if (attempt(() => drainTriggerFired(cfg, runId), false)) attempt(() => fireDrain(cfg, runId, payload, []));
+      return { decision: 'block', reason: review.reason };
+    }
     attempt(() => fireDrain(cfg, runId, payload, outcomeArgs(payload)));
-    return;
+    return attempt(() => cardFor(cfg, summary), null);
   }
 
   // 8b. `--stop-failure` closes the turn too — and it is the ONLY thing that ever will.
@@ -310,13 +357,23 @@ function capture(rawPayload, cfg, mode) {
   //     `--with-outcome`; there is no outcome to carry here, so this falls through to the
   //     ordinary batch trigger below — the turn's captured tool calls were real work, and
   //     the model's API falling over says nothing about Mubit's.
+  //
+  //     Except after the outcome review: the answer was complete when the review was asked
+  //     for and only the review's round trip failed, so the first reply's measurement stands
+  //     and the outcome it was waiting on is posted now.
+  if (mode === 'stop-failure' && pending) {
+    attempt(() => closeTurn(cfg, runId, payload, { followUp: true, reviewError: apiErrorOf(payload) }));
+    attempt(() => fireDrain(cfg, runId, payload, outcomeArgs(payload)));
+    return null;
+  }
   if (mode === 'stop-failure') {
-    attempt(() => closeTurn(cfg, runId, payload, apiErrorOf(payload)));
+    attempt(() => closeTurn(cfg, runId, payload, { apiError: apiErrorOf(payload) }));
   }
 
   if (attempt(() => drainTriggerFired(cfg, runId), false)) {
     attempt(() => fireDrain(cfg, runId, payload, []));
   }
+  return null;
 }
 
 /**
@@ -366,6 +423,17 @@ function buildToolItem(payload, cfg, mode, runId) {
     : null;
   const failed = mode === 'failure' || !!recorded?.failed;
   const toolName = clamp(str(payload.tool_name) || 'Tool', 128);
+
+  // The scorecard's tool-failure rule reads these. Main agent only, and never the plugin's own
+  // tools: the review step's mubit_outcome must not become the turn's "last tool call".
+  if (!str(payload.agent_id) && !ownToolName(payload.tool_name)) {
+    attempt(() => appendScoreRow(cfg, payload.session_id, {
+      kind: 'tool',
+      prompt_id: turnKey(payload),
+      failed,
+      intent: toolIntent(payload.tool_name, payload.tool_input),
+    }));
+  }
 
   // The structured file-change lane. Two places it lands, and both are here rather than
   // beside `appendItem` because this is where `failed` is known: on Codex the verdict comes
@@ -555,9 +623,10 @@ function buildPermissionItem(payload, cfg) {
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {'stop'|'subagent'} mode
+ * @param {string} [suffix]  set for the answer to a message queued during the outcome review
  * @returns {Record<string, any>|null}
  */
-function buildTurnItem(payload, cfg, runId, mode) {
+function buildTurnItem(payload, cfg, runId, mode, suffix = '') {
   const event = mode === 'subagent' ? 'SubagentStop' : 'Stop';
   const cls = attempt(
     () => classifyTurn('', '', {
@@ -614,7 +683,7 @@ function buildTurnItem(payload, cfg, runId, mode) {
     payload,
     id: mode === 'subagent'
       ? `cc-sub-${idPart(payload.agent_id) || 'anon'}-${idPart(turnKey(payload)) || idPart(payload.session_id) || 'turn'}`
-      : `cc-stop-${idPart(turnKey(payload)) || idPart(payload.session_id) || 'turn'}`,
+      : `cc-stop-${idPart(turnKey(payload)) || idPart(payload.session_id) || 'turn'}${suffix ? `-${suffix}` : ''}`,
     text,
     intent: cls.intent,
     importance: cls.importance,
@@ -842,29 +911,69 @@ function readTurn(cfg, runId, promptId) {
  * — the staged terms and `last_assistant_message` — is in scope at one point in one function,
  * and the file is already being rewritten. One read, one write, no new lifecycle.
  *
- * `apiError` is `StopFailure`'s half. It is the only difference between the two closes, and
- * it turns the used-signal off — see below.
+ * Beside the turn-level signal it records the per-entry one (`used_evidence.entries`), the
+ * verdict inputs the session log holds for this prompt (Claude's `mubit_outcome` calls, the
+ * last non-read-only tool call), and appends the scorecard's `turn` row.
+ *
+ * `apiError` is `StopFailure`'s half: it turns the used-signal off. `followUp` is the Stop
+ * after the outcome review: the reply is the review line, so the first Stop's measurement is
+ * kept and only the verdicts are merged. `answered` is a follow-up whose continuation also
+ * answered a queued message: that answer is measured and merged into the first. `reviewError`
+ * is a review round trip that ended on an API error.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {Record<string, any>} payload
- * @param {string} [apiError]  the taxonomy value that ended the turn; '' on a normal Stop
+ * @param {{apiError?: string, followUp?: boolean, answered?: boolean, reviewError?: string}} [opts]
+ * @returns {{turn: Record<string, any>, rows: Record<string, any>[], promptId: string}|null}
  */
-function closeTurn(cfg, runId, payload, apiError = '') {
-  const p = turnPath(cfg, runId, turnKey(payload));
-  if (!p) return;
+function closeTurn(cfg, runId, payload, opts = {}) {
+  const apiError = str(opts.apiError);
+  const followUp = opts.followUp === true;
+  const answered = followUp && opts.answered === true;
+  const reviewError = str(opts.reviewError);
+  const promptId = turnKey(payload);
+  const p = turnPath(cfg, runId, promptId);
+  if (!p) return null;
   const prev = readJson(p, null);
   const base = isObject(prev) ? prev : {
-    prompt_id: turnKey(payload),
+    prompt_id: promptId,
     session_id: str(payload.session_id),
     started_at: Date.now(),
   };
+  const sessionId = str(payload.session_id);
+  const logged = cfg?.capture !== false && !!sessionId;
+  const rows = logged ? attempt(() => readScoreRows(cfg, sessionId), []) : [];
+  const standing = attempt(() => standingFor(rows, promptId), []);
+  const prevEvidence = isObject(base.used_evidence) ? base.used_evidence : null;
+
   // The signal asks whether the reply carried the injected memory's vocabulary. A reply the
   // API cut off has no denominator for that question — `max_output_tokens` is literally "the
   // answer stopped early" — and the answer it would produce is `used: false`, which
   // `decideOutcome` reads as "the model ignored the memory". Unmeasurable is not unused, and
   // this is the one place that distinction can still be made honestly.
-  const evidence = apiError ? null : attempt(() => usedEvidence(base, payload), null);
+  const raw = str(payload.last_assistant_message) || str(payload.message);
+  const reply = answered ? stripReviewLine(raw) : raw;
+  const measured = answered ? { ...payload, last_assistant_message: reply } : payload;
+  let evidence = null;
+  if (!apiError) {
+    if (followUp && !answered) {
+      evidence = prevEvidence;
+    } else {
+      const v1 = attempt(() => usedEvidence(base, measured), null);
+      const entries = attempt(() => entryEvidence(base, standing, measured), null);
+      const fresh = v1 || entries
+        ? { ...(v1 ?? {}), ...(entries ? { entry_method: ENTRY_SIGNAL_METHOD, entries } : {}) }
+        : null;
+      evidence = answered ? mergeEvidence(prevEvidence, fresh) : fresh;
+    }
+  }
+  const explicit = attempt(() => explicitFor(rows, promptId, base), { ids: [], byRef: {} });
+  const toolFailed = !apiError && attempt(() => lastActingToolFailed(rows, promptId), false);
+  const endedWithQuestion = followUp && !answered
+    ? base.ended_with_question === true
+    : /\?\s*$/.test(reply.trim());
+
   const closed = {
     ...base,
     // Absent when nothing was staged to look for. An absent key means "unmeasured" and the
@@ -873,17 +982,293 @@ function closeTurn(cfg, runId, payload, apiError = '') {
     // existed as an injection the model ignored.
     ...(evidence ? { used_evidence: evidence } : {}),
     ...(apiError ? { [API_ERROR_KEY]: apiError } : {}),
+    ...(explicit.ids.length ? { explicit_ids: explicit.ids, explicit: explicit.byRef } : {}),
+    ...(followUp ? { review_closed_at: Date.now() } : {}),
+    ...(reviewError ? { review_error: reviewError } : {}),
+    ended_with_question: endedWithQuestion,
     ended_at: Date.now(),
     outcome_pending: true,
   };
+  // Re-decided on every close: a failed call the review continuation re-ran cleanly is no
+  // longer the turn's last word.
+  if (toolFailed) {
+    closed.outcome = 'failure';
+    closed.failure_reason = 'tool_failure';
+  } else if (str(base.failure_reason) === 'tool_failure') {
+    delete closed.outcome;
+    delete closed.failure_reason;
+  }
   writeJsonAtomic(p, closed);
   // The durable copy. The turn file above is pruned six hours from now; the ledger row is
   // what the dashboard reads after that, and it is the last step here, inside its own
   // `attempt`, so a full disk costs the row and never the turn file or the drain that
-  // follows. One redaction, one stat, one append — single-digit milliseconds against the
-  // five-second Stop budget. Subagent stops arrive through `--subagent`, never here, so they
-  // write no row.
+  // follows. Subagent stops arrive through `--subagent`, never here, so they write no row.
   attempt(() => appendLedger(resolveDataDir(cfg), runId, turnLedgerRow(closed, runId, Date.now())));
+
+  if (logged) {
+    const entries = isObject(closed.used_evidence?.entries) ? closed.used_evidence.entries : {};
+    const explicitSet = new Set(explicit.ids);
+    const row = {
+      kind: 'turn',
+      prompt_id: promptId,
+      run_id: runId,
+      lessons: lessonsOfTurn(base, standing, entries),
+      used_refs: Object.keys(entries).filter((r) => entries[r]?.used === true && !explicitSet.has(r)),
+      ...(apiError ? { api_error: apiError } : {}),
+      ended_with_question: endedWithQuestion,
+    };
+    if (attempt(() => appendScoreRow(cfg, sessionId, row), false)) rows.push({ v: 1, at: Date.now(), ...row });
+  }
+  return { turn: closed, rows, promptId };
+}
+
+/**
+ * The first reply's evidence with the queued answer's merged in: per entry, a use wins over a
+ * miss and a miss over "could not tell"; the turn-level signal likewise.
+ *
+ * @param {Record<string, any>|null} prev
+ * @param {Record<string, any>|null} next
+ * @returns {Record<string, any>|null}
+ */
+function mergeEvidence(prev, next) {
+  if (!isObject(prev)) return next;
+  if (!isObject(next)) return prev;
+  const rank = (/** @type {any} */ e) => (e?.used === true ? 2 : e?.used === false ? 1 : 0);
+  const base = rank(next) > rank(prev) ? next : prev;
+  const a = isObject(prev.entries) ? prev.entries : {};
+  const b = isObject(next.entries) ? next.entries : {};
+  /** @type {Record<string, any>} */
+  const entries = {};
+  for (const ref of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    entries[ref] = rank(b[ref]) > rank(a[ref]) ? b[ref] : a[ref];
+  }
+  const { entries: _drop, ...v1 } = base;
+  return Object.keys(entries).length ? { ...v1, entry_method: ENTRY_SIGNAL_METHOD, entries } : v1;
+}
+
+/**
+ * The standing lessons, when this prompt is the first non-slash one after the latest session
+ * start (the only turn they count on).
+ *
+ * @param {Record<string, any>[]} rows
+ * @param {string} promptId
+ * @returns {{ref: string, terms: string[]}[]}
+ */
+function standingFor(rows, promptId) {
+  let start = -1;
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i].kind === 'start') { start = i; break; }
+  if (start < 0 || !isObject(rows[start].lessons)) return [];
+  const first = rows.slice(start + 1).find((r) => r.kind === 'prompt' && r.slash !== true);
+  if (!first || first.prompt_id !== promptId) return [];
+  return Object.entries(rows[start].lessons)
+    .filter(([ref, v]) => ref && isObject(v))
+    .map(([ref, v]) => ({ ref, terms: Array.isArray(v.terms) ? v.terms : [] }));
+}
+
+/**
+ * Each entry shown this turn (any type), plus the standing lessons, checked on its own against
+ * the reply (`evaluateUse`). The prompt's words never count.
+ *
+ * @param {Record<string, any>} turn
+ * @param {{ref: string, terms: string[]}[]} standing
+ * @param {Record<string, any>} payload
+ * @returns {Record<string, any>|null} null when nothing was shown
+ */
+function entryEvidence(turn, standing, payload) {
+  const shown = Array.isArray(turn.shown) ? turn.shown.filter((e) => isObject(e) && str(e.ref)) : [];
+  const refs = new Set(shown.map((e) => e.ref));
+  const list = [
+    ...shown.map((e) => ({ ref: e.ref, terms: Array.isArray(e.terms) ? e.terms : [] })),
+    ...standing.filter((e) => !refs.has(e.ref)),
+  ];
+  if (!list.length) return null;
+  const reply = str(payload.last_assistant_message) || str(payload.message);
+  return evaluateUse(list, reply, { exclude: termSet(str(turn.prompt)) });
+}
+
+/**
+ * The scorecard's per-lesson record for this turn: the lesson-typed shown entries and the
+ * standing lessons, each with the reply check's answer (null when there was none).
+ *
+ * @param {Record<string, any>} turn
+ * @param {{ref: string}[]} standing
+ * @param {Record<string, any>} entries
+ * @returns {Record<string, {used: boolean|null, matched: string[]}>}
+ */
+function lessonsOfTurn(turn, standing, entries) {
+  const refs = [
+    ...(Array.isArray(turn.shown) ? turn.shown : [])
+      .filter((e) => isObject(e) && str(e.ref) && str(e.type) === 'lesson').map((e) => e.ref),
+    ...standing.map((e) => e.ref),
+  ];
+  /** @type {Record<string, {used: boolean|null, matched: string[]}>} */
+  const out = {};
+  for (const ref of refs) {
+    const e = isObject(entries[ref]) ? entries[ref] : null;
+    out[ref] = {
+      used: e && typeof e.used === 'boolean' ? e.used : null,
+      matched: e && Array.isArray(e.matched) ? e.matched.slice(0, MAX_EVIDENCE_TERMS) : [],
+    };
+  }
+  return out;
+}
+
+/**
+ * Claude's own verdicts this turn: the session log's `explicit` rows for this prompt, merged
+ * with what the tool path already wrote onto the turn file. The last verdict per ref wins.
+ *
+ * @param {Record<string, any>[]} rows
+ * @param {string} promptId
+ * @param {Record<string, any>} turn
+ * @returns {{ids: string[], byRef: Record<string, string>}}
+ */
+function explicitFor(rows, promptId, turn) {
+  /** @type {Record<string, string>} */
+  const byRef = isObject(turn.explicit) ? { ...turn.explicit } : {};
+  const ids = Array.isArray(turn.explicit_ids) ? turn.explicit_ids.filter((v) => typeof v === 'string' && v) : [];
+  for (const r of rows) {
+    if (r.kind !== 'explicit' || r.prompt_id !== promptId || !Array.isArray(r.ids)) continue;
+    for (const ref of r.ids) {
+      if (typeof ref !== 'string' || !ref) continue;
+      if (!ids.includes(ref)) ids.push(ref);
+      byRef[ref] = str(r.outcome);
+    }
+  }
+  return { ids, byRef };
+}
+
+/**
+ * The scorecard's tool-failure rule: did this prompt's last non-read-only tool call fail?
+ *
+ * @param {Record<string, any>[]} rows
+ * @param {string} promptId
+ * @returns {boolean}
+ */
+function lastActingToolFailed(rows, promptId) {
+  const acting = rows.filter((r) => r.kind === 'tool' && r.prompt_id === promptId
+    && !READ_ONLY_INTENTS.has(str(r.intent)));
+  return acting.length > 0 && acting[acting.length - 1].failed === true;
+}
+
+/** @param {Record<string, any>|null} turn @returns {boolean} */
+function reviewPending(turn) {
+  return !!turn && Number(turn.review_requested_at) > 0 && !(Number(turn.review_closed_at) > 0);
+}
+
+// ---------------------------------------------------------------------------
+// The outcome review and the scorecard
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether to block this Stop once so Claude credits or faults this turn's lessons by id
+ * (`lib/review.mjs`), and with what text.
+ *
+ * @param {Record<string, any>} cfg
+ * @param {Record<string, any>} payload
+ * @param {{turn: Record<string, any>}|null} closed
+ * @param {import('../../lib/scorecard.mjs').ScoreSummary|null} summary
+ * @returns {{ids: string[], reason: string}|null}
+ */
+function reviewFor(cfg, payload, closed, summary) {
+  if (!closed || !summary) return null;
+  const candidates = reviewCandidates(summary.thisTurn.lessons);
+  const ok = shouldReview({
+    outcomeReview: str(cfg?.outcomeReview),
+    outcomeMode: str(cfg?.outcomeMode),
+    stopHookActive: payload.stop_hook_active === true,
+    alreadyRequested: Number(closed.turn.review_requested_at) > 0,
+    apiError: str(closed.turn[API_ERROR_KEY]),
+    isSubagent: !!str(payload.agent_id),
+    candidates,
+  });
+  if (!ok) return null;
+  const reason = reviewReason(candidates);
+  return reason ? { ids: candidates.map((c) => c.ref), reason } : null;
+}
+
+/**
+ * Record that the review was asked for, so the next Stop is read as its follow-up.
+ *
+ * @param {Record<string, any>} cfg @param {string} runId @param {Record<string, any>} payload
+ * @param {{turn: Record<string, any>, promptId: string}} closed @param {string[]} ids
+ */
+function markReview(cfg, runId, payload, closed, ids) {
+  const p = turnPath(cfg, runId, closed.promptId);
+  if (p) writeJsonAtomic(p, { ...closed.turn, review_requested_at: Date.now(), review_ids: ids });
+  appendScoreRow(cfg, payload.session_id, { kind: 'review', prompt_id: closed.promptId, ids });
+}
+
+/**
+ * The session scorecard under Claude's reply, when this turn showed a lesson.
+ *
+ * @param {Record<string, any>} cfg
+ * @param {import('../../lib/scorecard.mjs').ScoreSummary|null} summary
+ * @returns {Record<string, any>|null}
+ */
+function cardFor(cfg, summary) {
+  const mode = str(cfg?.sessionScore) || 'full';
+  if (!summary || mode === 'off') return null;
+  const text = renderScorecard(summary, mode);
+  return text ? { systemMessage: text, suppressOutput: true } : null;
+}
+
+// ---------------------------------------------------------------------------
+// The plugin's own tools
+// ---------------------------------------------------------------------------
+
+/** @param {any} name @returns {string} the bare tool name when it is the plugin's own, else '' */
+function ownToolName(name) {
+  const n = str(name);
+  for (const prefix of OWN_MCP_PREFIXES) if (n.startsWith(prefix)) return n.slice(prefix.length);
+  return '';
+}
+
+/**
+ * `mubit_learned` appends a `learned` row. `mubit_outcome` from the main agent appends an
+ * `explicit` row with its ids resolved from handles to reference ids, and merges the verdict
+ * onto the turn file so the implicit outcome never credits the same entry twice.
+ *
+ * @param {Record<string, any>} cfg
+ * @param {Record<string, any>} payload
+ */
+function noteOwnTool(cfg, payload) {
+  const tool = ownToolName(payload.tool_name);
+  if (tool !== 'mubit_outcome' && tool !== 'mubit_learned') return;
+  if (resultIsError(payload.tool_response)) return;
+  const sessionId = str(payload.session_id);
+  if (!sessionId) return;
+  const promptId = turnKey(payload);
+  if (tool === 'mubit_learned') {
+    appendScoreRow(cfg, sessionId, { kind: 'learned', prompt_id: promptId });
+    return;
+  }
+  if (str(payload.agent_id)) return;
+  const input = isObject(payload.tool_input) ? payload.tool_input : {};
+  const outcome = str(input.outcome).trim().toLowerCase();
+  if (!VERDICTS.has(outcome)) return;
+  const primary = str(input.reference_id).trim();
+  const raw = [...(primary && primary !== 'global' ? [primary] : []),
+    ...(Array.isArray(input.entry_ids) ? input.entry_ids : [])];
+  const resolved = resolveHandles(raw, knownRefsFromRows(readScoreRows(cfg, sessionId)));
+  const unresolved = new Set(resolved.unresolved);
+  const ids = [...new Set(resolved.ids.filter((id) => id && id !== 'global' && !unresolved.has(id)))];
+  if (!ids.length) return;
+  appendScoreRow(cfg, sessionId, { kind: 'explicit', prompt_id: promptId, ids, outcome });
+
+  const p = turnPath(cfg, deriveRunId(cfg, payload), promptId);
+  const prev = p ? readJson(p, null) : null;
+  if (!isObject(prev)) return;
+  const explicitIds = Array.isArray(prev.explicit_ids) ? prev.explicit_ids.filter((v) => typeof v === 'string') : [];
+  writeJsonAtomic(p, {
+    ...prev,
+    explicit_ids: [...new Set([...explicitIds, ...ids])],
+    explicit: { ...(isObject(prev.explicit) ? prev.explicit : {}), ...Object.fromEntries(ids.map((id) => [id, outcome])) },
+  });
+}
+
+/** @param {any} response @returns {boolean} an MCP result the server marked as an error */
+function resultIsError(response) {
+  return isObject(response) && response.isError === true;
 }
 
 /**
@@ -970,25 +1355,6 @@ function usedEvidence(turn, payload) {
   out.terms = hits.slice(0, MAX_EVIDENCE_TERMS);
   out.used = hits.length > 0;
   return out;
-}
-
-/**
- * Which of `terms` the reply carries.
- *
- * Every run of non-word characters becomes a single space, so the haystack is a stream of
- * space-delimited words and a term preceded by a space is a match at a left word boundary.
- * The *right* boundary is deliberately absent: `queue` matches `queued`, `idempotency`
- * matches `idempotency_key`. English inflection is the common case, and demanding an exact
- * match would turn ordinary suffixing into a false negative — the failure mode this signal
- * already has too much of.
- *
- * @param {string[]} terms  lowercased
- * @param {string} text
- * @returns {string[]} the matched terms, in the order they were staged
- */
-function matchTerms(terms, text) {
-  const hay = ` ${text.toLowerCase().replace(/[^a-z0-9_]+/g, ' ')} `;
-  return terms.filter((t) => hay.includes(` ${t}`));
 }
 
 // ---------------------------------------------------------------------------

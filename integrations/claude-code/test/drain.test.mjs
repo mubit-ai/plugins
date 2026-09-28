@@ -1013,6 +1013,20 @@ test('drain --correct: a failed post leaves the turn uncorrected', async (t) => 
   assert.equal(readJsonFile(turnFile).correction_sent_at, undefined);
 });
 
+test('drain --correct: outlasts a drainer that holds the lock past the outcome wait', async (t) => {
+  const dataDir = makeDataDir();
+  const server = await mubit(t);
+  seedCorrectableTurn(dataDir);
+  const lock = join(dataDir, 'runs', PREV_RUN, 'drain.lock');
+  writeFileSync(lock, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+  setTimeout(() => { try { unlinkSync(lock); } catch { /* gone */ } }, 2600);
+  assertHookContract(await runHook('drain', stop({ prompt_id: NEXT_PROMPT }), {
+    env: envFor(dataDir, server.url),
+    args: ['--correct', PROMPT_ID, '--run', PREV_RUN],
+  }));
+  server.assertCalled('POST', '/v2/control/outcome', 1);
+});
+
 test('drain --correct: waits for a lock another drainer is about to release', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);

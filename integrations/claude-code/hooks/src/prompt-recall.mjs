@@ -546,6 +546,10 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
     const prev = readJson(file, null);
     const base = isObject(prev) ? prev : {};
 
+    // A message queued into a running turn arrives under the same prompt_id and injects
+    // again; both blocks were in front of the model, so this adds to what the turn holds.
+    const prevRecall = isObject(base.recall) ? base.recall : null;
+
     /** @type {Record<string, any>} */
     const next = {
       ...base,
@@ -554,6 +558,7 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
       // stages ids, so that they too can be reinforced or corrected. Deduped: the same
       // entry reached through two lanes must not be reinforced twice for one turn.
       recalled: [...new Set([
+        ...(Array.isArray(base.recalled) ? base.recalled.filter((v) => typeof v === 'string' && v) : []),
         ...claimStandingLessons(cfg, runId),
         ...(resume ? resume.refIds : []),
         ...outcome.refIds,
@@ -577,6 +582,13 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
         terms: memoryTerms(cfg, [resume?.block ?? '', outcome.block], str(payload?.prompt)),
       },
     };
+    if (prevRecall) {
+      for (const k of ['sources', 'tokens', 'chars', 'pointers']) {
+        next.recall[k] = (Number(prevRecall[k]) || 0) + (Number(next.recall[k]) || 0);
+      }
+      const terms = Array.isArray(prevRecall.terms) ? prevRecall.terms : [];
+      next.recall.terms = [...new Set([...terms, ...next.recall.terms])];
+    }
     if (typeof next.session_id !== 'string') next.session_id = str(payload?.session_id);
     if (!Number.isFinite(next.started_at)) next.started_at = Date.now();
 
@@ -591,7 +603,7 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
       pointer: e.pointer === true,
       terms: entryTerms(cfg, str(e.text), promptTerms),
     }));
-    next.shown = shown;
+    next.shown = mergeShown(Array.isArray(base.shown) ? base.shown : [], shown);
 
     writeJsonAtomic(file, next);
 
@@ -602,6 +614,24 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
     // §4.9: the cost of an unwritable data dir is this turn's attribution, never the prompt.
     log(cfg, 'warn', `prompt-recall: could not stage recalled ids (${messageOf(err)})`, { run_id: runId });
   }
+}
+
+/**
+ * One turn's shown entries across its injections: first seen first, and a full rendering
+ * replaces an earlier pointer to the same entry.
+ *
+ * @param {any[]} prev
+ * @param {{ref: string, pointer: boolean}[]} fresh
+ * @returns {Record<string, any>[]}
+ */
+function mergeShown(prev, fresh) {
+  const out = prev.filter((e) => isObject(e) && typeof e.ref === 'string' && e.ref);
+  for (const e of fresh) {
+    const at = out.findIndex((o) => o.ref === e.ref);
+    if (at < 0) out.push(e);
+    else if (out[at].pointer === true && !e.pointer) out[at] = e;
+  }
+  return out;
 }
 
 /**
