@@ -698,10 +698,13 @@ export const BUILDERS = Object.freeze({
  * are included because they are most of a real rollout and a reader that renders them would
  * spend its window on machinery.
  *
+ * An entry whose `text` is an array writes one content block per string, the way the host
+ * puts its 0.149+ preamble beside a typed prompt on one record.
+ *
  * An entry of `{hookPrompt: reason}` writes what a blocked Stop hook leaves instead — see
  * `rolloutHookPrompt`.
  *
- * @param {Array<{role: string, text: string} | HookPromptEntry>} [messages]
+ * @param {Array<{role: string, text: string | string[]} | HookPromptEntry>} [messages]
  * @returns {string}
  */
 export function rolloutJsonl(messages = []) {
@@ -720,11 +723,13 @@ export function rolloutJsonl(messages = []) {
         type: 'message',
         id: `msg_${lines.length}`,
         role: m.role,
-        content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.text }],
+        content: (Array.isArray(m.text) ? m.text : [m.text])
+          .map((text) => ({ type: m.role === 'assistant' ? 'output_text' : 'input_text', text })),
       },
     }));
     if (m.role === 'assistant') {
-      lines.push(JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message: m.text } }));
+      const message = Array.isArray(m.text) ? m.text.join('\n') : m.text;
+      lines.push(JSON.stringify({ type: 'event_msg', payload: { type: 'agent_message', message } }));
     }
   }
   lines.push(JSON.stringify({ type: 'response_item', payload: { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'gAAAA…' } }));

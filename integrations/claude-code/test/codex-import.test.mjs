@@ -450,6 +450,85 @@ describe('Stop-hook feedback in a 0.154 rollout', () => {
       'a user asking about the wrapper was dropped. Only a block that is one whole '
       + '<hook_prompt …>…</hook_prompt> element is the host\'s.');
   });
+
+  /**
+   * Two Stop hooks blocking on one turn: both reasons in one `user` text block, one element after
+   * the other, and the UI's `HookPrompt` copy with one fragment per hook. Not yet seen in a
+   * rollout; `fragments` being a list is what says a turn can carry more than one.
+   */
+  const hookPrompts = (reasons, sep = '\n') => [
+    user(reasons.map((r) => `<hook_prompt hook_run_id="${HOOK_RUN_ID}">${r}</hook_prompt>`).join(sep)),
+    completed({ type: 'HookPrompt', id: HOOK_MSG_ID, fragments: reasons.map((text) => ({ text, hookRunId: HOOK_RUN_ID })) }),
+  ];
+
+  it('a block of several elements imports nothing and neither splits nor adds a turn', async () => {
+    const r = await read([
+      meta({ version: '0.154.0' }), turnContext('/r/app'),
+      user('one'), assistant('first answer'),
+      ...hookPrompts(['first reason', REVIEW]), assistant('Reviewed.'),
+      ...hookPrompts(['second reason', 'third reason'], ''), assistant('Reviewed again.'),
+      user('two'), assistant('second answer'),
+    ]);
+    assert.deepEqual(prompts(r), ['one', 'two'],
+      'a block holding two Stop-hook reasons opened a turn of its own. Both reviews would be stored '
+      + 'as a question the user asked.');
+    const all = JSON.stringify(r.items.map((i) => i.item.text));
+    for (const reason of ['first reason', 'second reason', 'third reason', REVIEW]) {
+      assert.ok(!all.includes(reason), `"${reason}" was imported as something the user said`);
+    }
+  });
+
+  it('an element followed by the user\'s own words is the user\'s prompt, verbatim', async () => {
+    // No run id in the element: the importer redacts, and the path in one reads as high-entropy.
+    const said = '<hook_prompt hook_run_id="stop:0">run the tests first</hook_prompt>\nWhy did Codex send me this?';
+    const r = await read([
+      meta({ version: '0.154.0' }), turnContext('/r/app'),
+      user(said), assistant('A Stop hook blocked with that reason.'),
+    ]);
+    const t = turns(r);
+    assert.equal(t.length, 1,
+      'the user\'s question was dropped because it opens with a whole feedback element. Only a block '
+      + 'that is nothing but feedback elements is the host\'s.');
+    assert.ok(t[0].item.text.startsWith(`Q: ${said}\n\nA: A Stop hook blocked`),
+      `the prompt was cut or edited: ${JSON.stringify(t[0].item.text.slice(0, 160))}. A block is `
+      + 'kept or dropped whole, never trimmed.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A shell command the user ran, and an interrupted turn
+// ---------------------------------------------------------------------------
+
+describe('a shell command the user ran, and an interrupted turn', () => {
+  // The checkpoint keeps both, because after compaction they are what the user did. The importer
+  // goes on reading them as it always has: neither is a prompt, so neither opens a turn.
+  const USER_SHELL = '<user_shell_command>\n<command>\nnpm test\n</command>\n<result>\nExit code: 1\nOutput:\n2 failing\n</result>\n</user_shell_command>';
+  const ABORTED = '<turn_aborted>\nThe previous turn was aborted by the user.\n</turn_aborted>';
+
+  async function read(records) {
+    const { rolloutItems } = await C();
+    const { cfg } = await setup();
+    const root = sessionsRoot({ [FILE]: records });
+    return rolloutItems(cfg, join(root, FILE), { roots: ['/r/app'], projectDir: '/r/app' });
+  }
+
+  it('open no turn, and no item carries them as the user\'s', async () => {
+    const r = await read([
+      meta({ version: '0.154.0' }), turnContext('/r/app'),
+      user(...PREAMBLE), user('why does the drain stop?'), assistant('Looking.'),
+      user(USER_SHELL), assistant('Two tests fail.'),
+      user(ABORTED),
+      user('fix the first one'), assistant('Fixed.'),
+    ]);
+    assert.deepEqual(turns(r).map((i) => (/^Q: (.*)$/m.exec(i.item.text) ?? [])[1]),
+      ['why does the drain stop?', 'fix the first one'],
+      'a shell command or an aborted-turn marker opened a turn of its own. The checkpoint keeping '
+      + 'them must not make the importer file them as prompts.');
+    for (const i of r.items) {
+      assert.ok(!i.item.text.includes('<user_shell_command>') && !i.item.text.includes('<turn_aborted>'),
+        `an item carries host text as the user's: ${i.item.text.slice(0, 160)}`);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

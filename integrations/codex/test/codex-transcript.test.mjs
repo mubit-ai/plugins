@@ -30,7 +30,7 @@ import { join } from 'node:path';
 
 import {
   preCompact, runHook, baseEnv, makeDataDir, makeProjectDir, fakeMubit, tempDir,
-  assertHookContract, rolloutJsonl, HOOK_RUN_ID,
+  assertHookContract, rolloutJsonl, hookPromptText, HOOK_RUN_ID,
 } from './helpers/codex-fixtures.mjs';
 
 const RUN_ID = 'codex-transcript-test';
@@ -253,6 +253,127 @@ test('a Claude Code transcript that mentions hook_prompt still renders as before
   assert.deepEqual(userTurns(snapshot), [`user: ${said}`, 'user: cc-user-marker'],
     'the Claude Code envelope stopped rendering its user turns.');
   assert.match(snapshot, /^assistant: cc-assistant-marker$/m, 'the Claude Code envelope stopped rendering.');
+});
+
+test('several feedback elements in one block are dropped whole, however they are separated', async (t) => {
+  // Two Stop hooks that block on the same turn can leave both reasons in one text block.
+  const { server } = await checkpoint(t, [
+    { role: 'user', text: 'real-user-marker' },
+    { role: 'assistant', text: 'first answer' },
+    { role: 'user', text: `${hookPromptText('reason-one')}\n${hookPromptText('reason-two')}` },
+    { role: 'user', text: `\n${hookPromptText('reason-three')}${hookPromptText('reason-four')}\n` },
+    { role: 'user', text: [hookPromptText('reason-five'), hookPromptText('reason-six')] },
+    { role: 'assistant', text: 'second answer' },
+  ]);
+  const snapshot = snapshotOf(server);
+  assert.deepEqual(userTurns(snapshot), ['user: real-user-marker'],
+    'a block holding more than one Stop-hook reason was rendered in the user\'s voice: '
+    + `${JSON.stringify(userTurns(snapshot).map((u) => u.slice(0, 80)))}. A later session briefed `
+    + 'from this snapshot would read both reviews as requests the user made.');
+  assert.doesNotMatch(snapshot, /reason-(?:one|two|three|four|five|six)/,
+    'a Stop-hook reason survived into the snapshot under some other role');
+  assert.match(snapshot, /^assistant: second answer$/m, 'the assistant turn after the feedback is missing.');
+});
+
+test('a feedback element followed by the user\'s own words is the user\'s turn, verbatim', async (t) => {
+  // No run id in the element: the snapshot is redacted, and a path in one reads as high-entropy.
+  const said = '<hook_prompt hook_run_id="stop:0">run the tests first</hook_prompt>\nWhy did Codex send me this?';
+  const { server } = await checkpoint(t, [
+    { role: 'user', text: said },
+    { role: 'assistant', text: 'A Stop hook blocked with that reason.' },
+  ]);
+  assert.deepEqual(userTurns(snapshotOf(server)), [`user: ${said}`],
+    'the user\'s question was dropped because it opens with a whole feedback element. Only a block '
+    + 'that is nothing but feedback elements is the host\'s; words after them are the user\'s.');
+});
+
+// ===========================================================================
+// The rest of what the host writes in the user's voice
+// ===========================================================================
+
+// A Codex `user` record carries two kinds of text nobody typed. The preamble — the plugin
+// listing, the environment block, AGENTS.md, a mentioned file, a skill body — is the host
+// briefing the model, and a session is briefed afresh after compaction anyway. A shell command
+// the user ran from the composer, and a turn the user interrupted, are things the user did:
+// after compaction they are what explains why the work went the way it did, and this snapshot
+// is the only place they survive it.
+
+const PREAMBLE = [
+  '<recommended_plugins>\nrecommended-plugins-marker: available but not installed.\n</recommended_plugins>',
+  '<environment_context>\n  <shell>zsh</shell>\n  environment-context-marker\n</environment_context>',
+];
+const AGENTS_MD = '# AGENTS.md instructions for the project\n\nagents-md-marker: run the linter before a commit.';
+const FILES_MENTIONED = '# Files mentioned by the user\n\nfiles-mentioned-marker: the body of a file the user named.';
+const SKILL = '<skill name="release-notes">\nskill-body-marker: write the notes in the past tense.\n</skill>';
+const PREAMBLE_MARKERS = [
+  'recommended_plugins', 'recommended-plugins-marker', 'environment_context', 'environment-context-marker',
+  'AGENTS.md instructions', 'agents-md-marker', 'Files mentioned', 'files-mentioned-marker',
+  '<skill', 'skill-body-marker',
+];
+
+/**
+ * A shell command the user ran, and what it printed. What the code recognises is the opening
+ * `<user_shell_command>`; the layout inside it is illustrative, and what is asserted is that
+ * the command and its output both reach the snapshot.
+ */
+const SHELL_COMMAND = 'npm test -- --grep drain';
+const SHELL_OUTPUT = 'shell-output-marker: 2 failing';
+const USER_SHELL = '<user_shell_command>\n<command>\n' + SHELL_COMMAND + '\n</command>\n<result>\n'
+  + 'Exit code: 1\nOutput:\n' + SHELL_OUTPUT + '\n</result>\n</user_shell_command>';
+const ABORTED = '<turn_aborted>\nThe previous turn was aborted by the user.\n</turn_aborted>';
+
+/** One session with every kind of host text in it, in the order a real one would carry them. */
+const HOST_TEXT_SESSION = [
+  { role: 'user', text: [...PREAMBLE, AGENTS_MD] },
+  { role: 'user', text: 'Find out why the drain stops.' },
+  { role: 'assistant', text: 'Looking at the drain.' },
+  { role: 'user', text: USER_SHELL },
+  { role: 'assistant', text: 'Two tests fail in the drain suite.' },
+  { role: 'user', text: ABORTED },
+  { role: 'user', text: [SKILL, FILES_MENTIONED, 'Fix only the first failure.'] },
+  { hookPrompt: REVIEW },
+  { role: 'assistant', text: 'Fixed the first failure.' },
+];
+
+test('the host preamble and Stop-hook feedback are dropped from the snapshot, the typed turns kept', async (t) => {
+  const { server } = await checkpoint(t, HOST_TEXT_SESSION);
+  const snapshot = snapshotOf(server);
+  assert.ok(snapshot, `nothing was checkpointed; saw ${server.summary()}`);
+  for (const marker of PREAMBLE_MARKERS) {
+    assert.ok(!snapshot.includes(marker),
+      `the host preamble reached the snapshot (${JSON.stringify(marker)}). It is the host briefing the `
+      + 'model, which happens again after compaction, and here it spends the window and reads as '
+      + 'something the user said.');
+  }
+  assert.ok(!snapshot.includes('hook_prompt') && !snapshot.includes(REVIEW),
+    'Stop-hook feedback reached the snapshot beside the shell command and the aborted turn. Keeping '
+    + 'what the user did must not bring back what the host said.');
+  assert.match(snapshot, /^user: Find out why the drain stops\.$/m, 'the typed prompt is missing.');
+  assert.match(snapshot, /^user: Fix only the first failure\.$/m,
+    'the prompt that shared its record with a skill body and a mentioned file is missing. The '
+    + 'preamble blocks are dropped one by one, not the record they ride on.');
+  assert.match(snapshot, /^assistant: Fixed the first failure\.$/m, 'the last assistant turn is missing.');
+});
+
+test('a shell command the user ran stays in the snapshot, with what it printed', async (t) => {
+  const { server } = await checkpoint(t, HOST_TEXT_SESSION);
+  const snapshot = snapshotOf(server);
+  assert.ok(snapshot, `nothing was checkpointed; saw ${server.summary()}`);
+  assert.ok(snapshot.includes(SHELL_COMMAND),
+    'the shell command the user ran was dropped from the snapshot. After compaction nothing else '
+    + 'records that the user ran it, and the next turn\'s "two tests fail" loses its cause.');
+  assert.ok(snapshot.includes(SHELL_OUTPUT),
+    'the output of the user\'s shell command was dropped from the snapshot. It is what the '
+    + 'assistant was answering, and the session cannot re-anchor on it once compaction runs.');
+});
+
+test('a turn the user interrupted stays in the snapshot', async (t) => {
+  const { server } = await checkpoint(t, HOST_TEXT_SESSION);
+  const snapshot = snapshotOf(server);
+  assert.ok(snapshot, `nothing was checkpointed; saw ${server.summary()}`);
+  assert.ok(snapshot.includes('<turn_aborted>'),
+    'the aborted-turn marker was dropped from the snapshot. Without it a later session reads the '
+    + 'interrupted work as finished and picks up after it, instead of where the user stopped it.');
 });
 
 // ===========================================================================

@@ -289,3 +289,197 @@ describe('Stop-hook feedback is the host talking, not the user', () => {
       + 'the fix for Codex must leave them reading exactly as before.');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Several feedback elements in one block
+// ---------------------------------------------------------------------------
+
+// Two Stop hooks that block on the same turn can leave both reasons in one text block, one
+// element after the other. That block is still nothing but the host talking.
+
+/** The given reasons as consecutive elements of one block, `sep` between them. */
+const hookPromptsText = (reasons, sep = '\n') => reasons.map((r) => hookPromptText(r)).join(sep);
+
+/** An element quoted without a run id, for a text that has to come back verbatim. */
+const QUOTED = '<hook_prompt hook_run_id="stop:0">run the tests first</hook_prompt>';
+
+describe('several feedback elements in one block are the host talking', () => {
+  it('isInjectedUserText recognises two or three elements in one block, whatever separates them', async () => {
+    const { isInjectedUserText } = await R();
+    for (const text of [
+      hookPromptsText(['first reason', REVIEW]),
+      hookPromptsText(['first reason', REVIEW], ''),
+      hookPromptsText(['first reason', REVIEW], '\n\n'),
+      hookPromptsText(['first reason', 'second reason', REVIEW]),
+      `\n  ${hookPromptsText(['first reason', REVIEW], ' \n')}\n`,
+      `<hook_prompt>first reason</hook_prompt>\n<hook_prompt source="stop" hook_run_id="${HOOK_RUN_ID}">${REVIEW}</hook_prompt>`,
+      hookPromptsText(['Line one of the first.\nLine two of the first.', 'Line one of the second.\nLine two.']),
+    ]) {
+      assert.equal(isInjectedUserText(text), true,
+        `a block of several Stop-hook reasons read as typed text: ${JSON.stringify(text.slice(0, 80))}. `
+        + 'When two hooks block at once, every reader that walks user messages would take both '
+        + 'reviews for something the user asked.');
+    }
+  });
+
+  it('isInjectedUserText leaves an element followed, split or preceded by the user\'s own words alone', async () => {
+    const { isInjectedUserText } = await R();
+    for (const text of [
+      `${hookPromptText(REVIEW)}\nand also fix the flaky test`,
+      `${hookPromptText(REVIEW)} Why did Codex send me this?`,
+      `${hookPromptsText(['first reason', REVIEW])}\nwhy did both of these fire?`,
+      `${hookPromptText('first reason')}\nthese two came together:\n${hookPromptText(REVIEW)}`,
+      `these came together:\n${hookPromptsText(['first reason', REVIEW])}`,
+      `${hookPromptText(REVIEW)}\n<hook_prompt> is what I keep seeing; why?`,
+    ]) {
+      assert.equal(isInjectedUserText(text), false,
+        `a person's message was filtered as host text: ${JSON.stringify(text.slice(0, 80))}. A block `
+        + 'is the host\'s only when it is nothing but whole feedback elements; a word of the user\'s '
+        + 'anywhere in it makes it the user\'s, and it is kept whole.');
+    }
+  });
+
+  it('stripInjectedBlocks drops a block of several elements whole', async () => {
+    const { stripInjectedBlocks } = await R();
+    const content = [
+      { type: 'input_text', text: hookPromptsText(['first reason', REVIEW]) },
+      { type: 'input_text', text: 'and also fix the flaky test' },
+    ];
+    assert.deepEqual(stripInjectedBlocks(content), [content[1]],
+      'the block of two reasons was kept, so it would be read as the user\'s beside what they typed');
+    assert.equal(stripInjectedBlocks(hookPromptsText(['first reason', REVIEW])), '', 'a string is one block');
+  });
+
+  it('firstUserText skips a block of several elements and returns the task after it', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([
+      META, user(...PREAMBLE), user(hookPromptsText(['first reason', REVIEW])), user('Summarise the failing tests.'),
+    ]);
+    assert.equal(firstUserText(path), 'Summarise the failing tests.',
+      'two Stop-hook reasons in one block were returned as the task. A subagent captured from this '
+      + 'rollout would be stored as having been asked to review its lessons.');
+  });
+
+  it('firstUserText answers nothing when the only user text is a block of several elements', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([META, user(...PREAMBLE), user(hookPromptsText(['first reason', REVIEW], ''))]);
+    assert.equal(firstUserText(path), '',
+      'with no typed text the caller falls back to the parent\'s staged prompt; returning the '
+      + 'feedback instead stores the review as the task');
+  });
+
+  it('firstUserText keeps an element followed by the user\'s words, verbatim', async () => {
+    const { firstUserText } = await R();
+    const said = `${QUOTED}\nWhy did Codex send me this?`;
+    const path = rollout([META, user(...PREAMBLE), user(said)]);
+    assert.equal(firstUserText(path), said,
+      'a user who pasted a feedback element and asked about it lost the prompt, or had the element '
+      + 'cut out of it. Words after the elements make the whole block the user\'s.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A feedback block of any size is classified, and nothing throws
+// ---------------------------------------------------------------------------
+
+/** Eight mebibytes of reason text, with the `<` and `>` a real reason can carry. */
+const EIGHT_MB = (() => {
+  const line = '- the lesson that helped: <drain> leaves the spool in place on a 500.\n';
+  return line.repeat(Math.ceil((8 * 1024 * 1024) / line.length));
+})();
+
+describe('a feedback block of any size is classified without throwing', () => {
+  it('a single element with an 8 MB body is the host\'s', async () => {
+    const { isInjectedUserText, stripInjectedBlocks } = await R();
+    const text = hookPromptText(EIGHT_MB);
+    const started = performance.now();
+    /** @type {any} */
+    let injected;
+    /** @type {any} */
+    let stripped;
+    assert.doesNotThrow(() => { injected = isInjectedUserText(text); },
+      'classifying one large feedback block threw. Every reader of a rollout calls this on each '
+      + 'user block, and a throw there costs the whole read, not just the block.');
+    assert.doesNotThrow(() => { stripped = stripInjectedBlocks([{ type: 'input_text', text }, { type: 'input_text', text: 'fix it' }]); },
+      'stripping one large feedback block threw, and with it the read of the record the user typed beside it');
+    assert.equal(injected, true,
+      'a large Stop-hook reason read as typed text. Its size does not make the user its author.');
+    assert.deepEqual(stripped, [{ type: 'input_text', text: 'fix it' }],
+      'the large feedback block was kept, or the user\'s block beside it was lost');
+    const ms = performance.now() - started;
+    assert.ok(ms < 1000,
+      `classifying an 8 MB block took ${Math.round(ms)} ms. The readers run inside a hook's time `
+      + 'budget, and a cost that grows faster than the text runs out of it.');
+  });
+
+  it('an 8 MB message that opens with the tag and never closes it is the user\'s', async () => {
+    const { isInjectedUserText, stripInjectedBlocks } = await R();
+    const started = performance.now();
+    for (const text of [`<hook_prompt> ${EIGHT_MB}`, `<hook_prompt hook_run_id="stop:0">${EIGHT_MB}`]) {
+      /** @type {any} */
+      let injected;
+      /** @type {any} */
+      let stripped;
+      assert.doesNotThrow(() => { injected = isInjectedUserText(text); },
+        'classifying a large message that opens with the tag threw. A user who pastes a long log '
+        + 'costs every reader of the rollout its read.');
+      assert.doesNotThrow(() => { stripped = stripInjectedBlocks(text); },
+        'stripping a large message that opens with the tag threw');
+      assert.equal(injected, false,
+        'a large message that opens with the tag but is not one whole element was taken for the '
+        + 'host\'s. It is the user\'s, and it was dropped from every reader.');
+      assert.equal(stripped, text, 'the user\'s large message was not returned as it came');
+    }
+    const ms = performance.now() - started;
+    assert.ok(ms < 1000,
+      `classifying two unclosed 8 MB messages took ${Math.round(ms)} ms. The readers run inside a `
+      + 'hook\'s time budget, and a cost that grows faster than the text runs out of it.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A shell command the user ran, and an interrupted turn: never the task
+// ---------------------------------------------------------------------------
+
+// The checkpoint keeps these two, because after compaction they are what the user did. Every
+// other reader goes on treating them as the host's, as it did before Stop-hook feedback was
+// recognised: neither is a task a subagent was given, nor a prompt an import files a turn under.
+
+/** Only the openings are what the code recognises; the layout inside is illustrative. */
+const USER_SHELL = '<user_shell_command>\n<command>\nnpm test\n</command>\n<result>\nExit code: 1\nOutput:\n2 failing\n</result>\n</user_shell_command>';
+const ABORTED = '<turn_aborted>\nThe previous turn was aborted by the user.\n</turn_aborted>';
+
+describe('a shell command the user ran, and an interrupted turn, are not the task', () => {
+  it('isInjectedUserText and stripInjectedBlocks still treat both as the host\'s', async () => {
+    const { isInjectedUserText, stripInjectedBlocks } = await R();
+    for (const text of [USER_SHELL, ABORTED, '<user_shell_command>ls -la</user_shell_command>', '<turn_aborted>\nThe previous turn was aborted']) {
+      assert.equal(isInjectedUserText(text), true,
+        `${JSON.stringify(text.slice(0, 40))} read as typed text. Only the checkpoint keeps it; every `
+        + 'other reader would start filing it as something the user asked.');
+    }
+    const content = [
+      { type: 'input_text', text: USER_SHELL },
+      { type: 'input_text', text: ABORTED },
+      { type: 'input_text', text: 'do the thing' },
+    ];
+    assert.deepEqual(stripInjectedBlocks(content), [content[2]],
+      'the filter the importer and firstUserText share started keeping these blocks. The '
+      + 'checkpoint\'s decision to keep them must not leak into the readers that look for a prompt.');
+  });
+
+  it('firstUserText skips both and returns the task after them', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([META, user(...PREAMBLE), user(USER_SHELL), user(ABORTED), user('Summarise the failing tests.')]);
+    assert.equal(firstUserText(path), 'Summarise the failing tests.',
+      'a shell command or an aborted-turn marker was returned as the task. A subagent captured from '
+      + 'this rollout would be stored as having been asked to run npm test.');
+  });
+
+  it('firstUserText answers nothing when they are the only user text', async () => {
+    const { firstUserText } = await R();
+    const path = rollout([META, user(...PREAMBLE), user(USER_SHELL), assistant('Two tests fail.'), user(ABORTED)]);
+    assert.equal(firstUserText(path), '',
+      'with no typed text the caller falls back to the parent\'s staged prompt; returning a shell '
+      + 'command or an abort marker instead stores it as the task');
+  });
+});

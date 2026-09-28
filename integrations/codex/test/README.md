@@ -71,7 +71,7 @@ recorder home to drive, and `--import <file> --as <Event>[.<variant>]` files a c
 | `codex-boot.test.mjs` | env-before-import: what the shim fills in, what it refuses to overwrite, and the ordering assertion over every entry point |
 | `codex-hooks.test.mjs` | end to end, one per event: real subprocess, real Codex payload, the emitted `hookEventName`, and zero HTTP where the contract says zero |
 | `codex-runid.test.mjs` | the cross-harness claim — one directory, two harnesses, one run — the four-value `source` table, and `turnKey` |
-| `codex-transcript.test.mjs` | `checkpoint.mjs`'s reader on a rollout fixture: same rendering, redacted, a real tail, Stop-hook feedback (`<hook_prompt>`) never rendered as a user turn, and the Claude Code envelope still working |
+| `codex-transcript.test.mjs` | `checkpoint.mjs`'s reader on a rollout fixture: same rendering, redacted, a real tail, Stop-hook feedback (`<hook_prompt>`, one element or several in a block) and the host preamble never rendered as a user turn, a shell command the user ran and an interrupted turn kept, and the Claude Code envelope still working |
 | `codex-classify.test.mjs` | `shell`, `apply_patch`, `update_plan`, `view_image`, `web_search`, `collaborationspawn_agent`, `mcp__mubit__*` → real intents, never `unclassified` |
 | `codex-skills.test.mjs` | Codex frontmatter (`name`, `description`, and none of the keys Codex does not read), `mcp__mubit__` prefixes, and the content guards |
 | `codex-mcp.test.mjs` | real stdio `tools/list` against the committed bundle, the `instructions` frame, and that the two copies of the vendored server are byte-identical |
@@ -112,6 +112,7 @@ server and the contract assertions are identical across the two hosts, and a for
 be a second thing to keep true.
 
 `rolloutJsonl()` builds a Codex rollout transcript, envelopes and all, for the checkpoint tests.
+A `text` given as an array writes one content block per string on the one record.
 An entry of `{hookPrompt: reason}` writes what a blocked Stop hook leaves in it instead: the
 reason wrapped in `<hook_prompt>` on a `user` record, and the `HookPrompt` item beside it
 (`rolloutHookPrompt()`, in the shape observed on codex-cli 0.154.0).
