@@ -231,7 +231,7 @@ function assertIdSentence(ctx, label) {
     + 'example such as [m7k2q], or the word "bracket"), so the model cannot tell which token on '
     + `the line to pass:\n${line}`);
   assert.doesNotMatch(line, /codex|claude/i,
-    `${label}: the id sentence names a host. The issue asks for host-neutral wording; the same `
+    `${label}: the id sentence names a host. The wording must be host-neutral; the same `
     + `sentence must read correctly whichever harness renders it:\n${line}`);
 }
 
@@ -519,10 +519,10 @@ for (const review of /** @type {const} */ (['off', 'nudge', 'stop'])) {
         + `on its most frequent injection. It belongs to the Codex branch only. Block was:\n${got.ctx}`);
     }
     assert.equal(withLessons.r.stdout, CLAUDE_CODE_STDOUT.startup,
-      'the Claude Code session-start output changed on startup. This issue changes the Codex '
-      + 'block only; Claude Code must print exactly what it printed before.');
+      'the Claude Code session-start output changed on startup. Only the Codex block '
+      + 'carries the id sentence; Claude Code must print exactly what it printed before.');
     assert.equal(compacted.r.stdout, CLAUDE_CODE_STDOUT.compact,
-      'the Claude Code session-start output changed on compact. This issue changes the Codex '
-      + 'block only; Claude Code must print exactly what it printed before.');
+      'the Claude Code session-start output changed on compact. Only the Codex block '
+      + 'carries the id sentence; Claude Code must print exactly what it printed before.');
   });
 }
