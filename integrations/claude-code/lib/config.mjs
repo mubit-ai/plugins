@@ -2,10 +2,9 @@
 /**
  * `lib/config.mjs` — the one resolution function that sees every setting.
  *
- * The module API and the frozen `Config`, the environment
- * variables and defaults), §6.2 (`userConfig` keys and the env var each maps
- * to), §6.3 (the `CLAUDE_PLUGIN_OPTION_*` injection guard) and §7
- * (`config.json`, 300 s TTL).
+ * The module API and the frozen `Config`: the environment variables and their defaults, the
+ * `userConfig` keys and the env var each maps to, the `CLAUDE_PLUGIN_OPTION_*` injection
+ * guard, and `config.json` (300 s TTL).
  *
  * Precedence, highest first:
  *   1. `userConfig`  — `CLAUDE_PLUGIN_OPTION_*`
@@ -36,7 +35,7 @@ import { readCredentials } from './credentials.mjs';
 import { dataDir as resolveDataRoot, readJson, writeJsonAtomic } from './state.mjs';
 
 // ---------------------------------------------------------------------------
-// §6.1 defaults
+// Defaults
 // ---------------------------------------------------------------------------
 
 /**
@@ -99,7 +98,7 @@ function screaming(key) {
  * environment variables, where `<KEY>` is the option key uppercased." Plainly
  * read, `apiKey` becomes `APIKEY`, not `API_KEY` — and no example there uses a
  * multi-word key, which is why all three stay. It matters for nine of the
- * thirteen §6.2 keys: single-word ones (`endpoint`, `capture`, `recall`,
+ * thirteen `userConfig` keys: single-word ones (`endpoint`, `capture`, `recall`,
  * `redact`) collapse to the same string under both transforms, so only the
  * camelCase ones were ever at risk, and they are exactly the ones a user sets at
  * enable time (`apiKey`, `runStrategy`, `mcpTools`, …). Missing them would make
@@ -177,7 +176,7 @@ export function authHeaders(cfg) {
  * the right fix.
  *
  * An absolute `http:`/`https:` URL or nothing. Both a blank endpoint and a plausible-looking
- * one with no scheme (`eu.mubit.ai`) fail identically inside `fetch` — `urlFor` concatenates
+ * one with no scheme (`api.mubit.ai`) fail identically inside `fetch` — `urlFor` concatenates
  * the route onto whatever this is, and a relative URL throws `ERR_INVALID_URL` before a
  * socket exists. That is a local config gap in both cases, so both classify the same way.
  * Without this the throw falls through `classifyError` to `server_error` and the plugin
@@ -361,7 +360,7 @@ function resolveApiKey(e, creds, userFile) {
  */
 function resolveAll(e, userFile, creds, projectDir, dataDir) {
   /**
-   * One lookup per §6.2 row: `userConfig` key, then its `MUBIT_*` env var, then the
+   * One lookup per `userConfig` row: `userConfig` key, then its `MUBIT_*` env var, then the
    * credentials store, then the project file, then the caller's default.
    *
    * The store sits below the environment so a CI job exporting `MUBIT_API_KEY` still
@@ -369,7 +368,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
    * project file so a fresh `/mubit-memory:auth` beats a stale committed `.mubit-cc.json`.
    *
    * @param {string} key   the `userConfig` key name
-   * @param {string} envVar the §6.1 environment variable it maps to
+   * @param {string} envVar the environment variable it maps to
    */
   const pick = (key, envVar) => {
     const opt = optionValue(key, e);
@@ -380,7 +379,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
     return undefined;
   };
 
-  // §6.2 userConfig rows -------------------------------------------------
+  // userConfig rows ------------------------------------------------------
   const endpointRaw = str(pick('endpoint', 'MUBIT_ENDPOINT'), '');
   const endpoint = endpointRaw.trim();   // blank means unconfigured: nothing is sent
   const apiKey = str(pick('apiKey', 'MUBIT_API_KEY'), '').trim();
@@ -420,7 +419,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
     pick('subagentRecallTokenBudget', 'MUBIT_CC_SUBAGENT_RECALL_TOKENS'), 600);
   const recallAssemble = enumOf(pick('recallAssemble', 'MUBIT_CC_RECALL_ASSEMBLE'),
     ['client', 'server'], 'client');
-  // § 5.2 — what to do with a memory this run has already injected. `pointer` renders it as
+  // What to do with a memory this run has already injected. `pointer` renders it as
   // its reference id plus its first clause (~20 tokens against ~200) and keeps the id in
   // `recalled[]` so it can still be reinforced; `full` re-sends the whole entry on every
   // prompt, which is what every release before the seen-set did. The measurement that
@@ -428,22 +427,18 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   // 356 tokens once for the entire MCP tool surface it was assumed to be cheaper than.
   const recallRepeatMode = enumOf(pick('recallRepeatMode', 'MUBIT_CC_RECALL_REPEAT_MODE'),
     ['pointer', 'full'], 'pointer');
-  // What recall does when rung 1 (`direct_bypass`, zero LLM calls) is refused by instance
-  // policy. `none` is the default deliberately: rung 2 pays a routing LLM call, measured at a
-  // 5 s median and a long tail past 11 s, against a recall budget of 1500 ms inside a 3 s hook
-  // timeout — so on an instance with direct search disabled it aborts nearly every time,
-  // having spent the call. Blocking every prompt on that is worse than recalling nothing.
-  // Operators who would rather pay it can opt back in.
+  // What recall does when rung 1 (`direct_bypass`) is refused by instance policy. `none` is
+  // the default deliberately: the routed rung 2 answers in seconds, against a recall budget of
+  // 1500 ms inside a 3 s hook timeout — so on an instance with direct search disabled it would
+  // abort nearly every time. Blocking every prompt on that is worse than recalling nothing.
+  // Operators who would rather wait for it can opt back in.
   const recallFallback = enumOf(pick('recallFallback', 'MUBIT_CC_RECALL_FALLBACK'),
     ['none', 'agent_routed'], 'none');
-  // How the server fuses semantic, lexical and recency scores for a recall query.
-  // `relevance` is the server's own default and barely counts recency, which is why "where
-  // were we?" answers with the most *similar* memory rather than the most recent one;
-  // `freshness` makes recency dominant and `balanced` sits between them. The exact weights
-  // are the instance's own and are operator-tunable, so they are not restated here — a query
-  // with `explain: true` reports the ones actually used. Costs nothing either way: it is a
-  // field on a request the plugin already sends, and there is real event time to rank on
-  // because every captured item carries `occurrence_time`.
+  // How a recall query orders what it returns. `relevance` favours the most *similar*
+  // memory, which is why "where were we?" can answer with a similar memory rather than the
+  // most recent one; `freshness` favours recent memories and `balanced` sits between them.
+  // Costs nothing either way: it is a field on a request the plugin already sends, and every
+  // captured item carries `occurrence_time`.
   //
   // `auto` is the default and decides per prompt (`lib/rank.mjs`): a temporal or handoff
   // question gets `freshness`, everything else `relevance`. Pinning `relevance` turns the
@@ -463,12 +458,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   // manifest fields are real but static, so a flag expressed there would need two competing
   // registrations and would cost a second process per prompt to everyone, opted in or not.
   const recallAsync = bool(pick('recallAsync', 'MUBIT_CC_RECALL_ASYNC'), false);
-  // Whether recall may ask the server for its cross-run lesson overlay: lessons
-  // learned in OTHER runs, surfaced alongside this run's own memory. It is real value, and it
-  // is billed on a lane that cannot be bounded by a run id, so its cost tracks the size of the
-  // whole instance and grows on its own as one fills up. On a hosted instance today it is
-  // ~1.7s of a ~2.0s recall — five times the rest of the query put together, for the one
-  // extra item it returned in every measurement.
+  // Whether recall may also ask for lessons learned in OTHER runs, surfaced alongside this
+  // run's own memory. It is real value, and it makes a recall noticeably slower.
   //
   // `auto` (the default) spends it where there is room and declines it where there is not,
   // reading the budget the caller already passed rather than asking anyone to choose: a hook
@@ -478,7 +469,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   const recallCrossRun = enumOf(pick('recallCrossRun', 'MUBIT_CC_RECALL_CROSS_RUN'),
     ['auto', 'on', 'off'], 'auto');
   const reflectOnEnd = bool(pick('reflectOnEnd', 'MUBIT_CC_REFLECT_ON_END'), true);
-  // §5.7 runs in a process the host is free to take away: under `--print` Claude Code emits
+  // SessionEnd runs in a process the host is free to take away: under `--print` Claude Code emits
   // its result and *cancels* SessionEnd about a second in, and interactive sessions are
   // cancelled too. On (the default) the hook hands its whole body to a detached child, which
   // is the only thing that lets the end-of-session drain and the reflect finish at all. Off is
@@ -524,8 +515,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   //
   // **Default ON, and it is the only one of these opt-ins that is.** The three that ship off
   // are off because they cost something on EVERY prompt: `recallAsync` a second process,
-  // `recallAssemble: "server"` two LLM calls, `preToolWarnings` text in front of a tool call.
-  // This costs one process and two LLM calls **per session** — paid at the one moment the
+  // `recallAssemble: "server"` a slower recall, `preToolWarnings` text in front of a tool call.
+  // This costs one process and one context call **per session** — paid at the one moment the
   // model knows least about what it is walking into, and never again. The README row states
   // that cost out loud rather than leaving it to be discovered.
   const resumeBlock = bool(pick('resumeBlock', 'MUBIT_CC_RESUME_BLOCK'), true);
@@ -533,16 +524,11 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   const mcpTools = list(mcpToolsRaw, DEFAULT_MCP_TOOLS);
   // The ceiling on what an MCP write may claim for itself. The bundled SDK stamps a
   // fixed `lesson_scope` on `mubit_learned` regardless of the caller, and `mcp/src/egress.mjs`
-  // resolves it to this. The widest scope is deliberately absent from the list: it is not a
-  // value a client sets for itself.
+  // resolves it to this. The widest scope is deliberately absent from the list: `org` is not
+  // a configurable ceiling.
   //
-  // **`session`, and it used to be `run`.** The argument for `run` was that reflect is the
-  // authority that widens a lesson, which makes a narrow initial stamp free — the lesson
-  // travels later, through the sanctioned path. Measured against a real instance, it does
-  // not: a reflect over a run containing an agent-written lesson stored its output at `run`
-  // as well, and nothing on that instance sat above `run` at all. So `run` was not a narrow
-  // *first* stamp, it was the only stamp, and an agent-written lesson had no path out of the
-  // run that wrote it.
+  // **`session`, and it used to be `run`.** A lesson stamped `run` is read back only by the
+  // run that wrote it, so an agent-written lesson never reached a later run.
   //
   // `session` is also what the tool itself tells the model it does: `mubit_learned`'s
   // description — frozen inside a bundle this repo cannot rebuild — says it "writes one
@@ -569,7 +555,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
   // block goes back to being byte-for-byte what it was before pins existed.
   const pins = bool(pick('pins', 'MUBIT_CC_PINS'), true);
 
-  // §6.1 environment-only rows -------------------------------------------
+  // Environment-only rows ------------------------------------------------
   const only = (envVar, key) => {
     const opt = key ? optionValue(key, e) : undefined;
     if (opt !== undefined) return opt;
@@ -666,7 +652,7 @@ function resolveAll(e, userFile, creds, projectDir, dataDir) {
 }
 
 // ---------------------------------------------------------------------------
-// §7 config.json — 300 s TTL, keyed by an input hash
+// config.json — 300 s TTL, keyed by an input hash
 // ---------------------------------------------------------------------------
 
 /**
@@ -749,7 +735,7 @@ function parseUserFile(raw) {
 // ---------------------------------------------------------------------------
 
 /**
- * Booleans arrive in two spellings: §6.1 uses `MUBIT_CC_CAPTURE=0`, while a
+ * Booleans arrive in two spellings: the environment uses `MUBIT_CC_CAPTURE=0`, while a
  * `userConfig` boolean reaches us as `CLAUDE_PLUGIN_OPTION_CAPTURE=false` —
  * which is just what a JSON `false` stringifies to. Both must coerce.
  */

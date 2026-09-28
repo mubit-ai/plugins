@@ -969,7 +969,7 @@ function writeSubagent(dataDir, runId, subId, patch = {}) {
     prompt_id: '11111111-2222-3333-4444-555555555555',
     at: 1_700_000_010_000,
     recall: { rung: 1, sources: 1, tokens: 504, chars: 2013, dropped: 0, pointers: 0, empty_reason: '', ms: 384 },
-    recalled: ['05c404d7-c1f4-4d91-95a1-e70c55c5d3ff'],
+    recalled: ['0d0d0d0d-0000-4000-8000-00000000000d'],
     linked: false,
     ...patch,
   }));
@@ -995,7 +995,7 @@ test('subagents: readSubagents maps every record through a whitelist, sorted by 
   assert.equal(first.promptId, '11111111-2222-3333-4444-555555555555');
   assert.equal(first.at, 1_700_000_010_000);
   assert.deepEqual(first.recall, { rung: 1, sources: 1, tokens: 504, chars: 2013, pointers: 0, ms: 384 });
-  assert.deepEqual(first.recalled, ['05c404d7-c1f4-4d91-95a1-e70c55c5d3ff']);
+  assert.deepEqual(first.recalled, ['0d0d0d0d-0000-4000-8000-00000000000d']);
   assert.equal(first.recalledCount, 1);
   assert.ok(!JSON.stringify(rows).includes('must not be served'), 'unknown fields are dropped');
   for (const k of Object.keys(first)) assert.ok(!k.includes('_'), `camel-cased for the page; found ${k}`);

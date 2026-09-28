@@ -182,9 +182,9 @@ test('export: the route is dialled at exactly one path, and nothing else is', as
 
 /**
  * The route takes no `limit`, and `lib/http.mjs` caps *requests*, not responses: `dial()`
- * reads the whole body and parses it in one allocation. An empty `run_id` means "every run
- * this key can see", so the run scope is the only bound the response has. It is therefore
- * required, and a caller who omits it gets a refusal instead of an unbounded read.
+ * reads the whole body and parses it in one allocation. The run scope is the only bound the
+ * response has, so it is required, and a caller who omits it gets a refusal instead of an
+ * unbounded read.
  */
 test('export: a missing run id dials nothing at all', async (t) => {
   const { server, cfg, mod } = await setup(t, {
@@ -200,11 +200,10 @@ test('export: a missing run id dials nothing at all', async (t) => {
 });
 
 /**
- * `ExportActivityRequest` has seven fields — run_id, user_id, agent_id, entry_types,
- * created_after, created_before, sort — and none of them is `exclude_derived`, `projection`,
- * `limit` or `page_token`. Sending one is not an error: the handler deserialises with serde's
- * default, which drops unknown keys silently. That is precisely why it must not be sent. A
- * request carrying `exclude_derived` that nothing reads is a client believing it filtered.
+ * The export route reads run_id, user_id, agent_id, entry_types, created_after, created_before
+ * and sort. It does not read `exclude_derived`, `projection`, `limit` or `page_token`, so none of
+ * them is sent: a request carrying `exclude_derived` that nothing reads is a client believing
+ * it filtered.
  */
 test('export: the body carries format and omits every field the route does not take', async (t) => {
   const { server, cfg, mod } = await setup(t, {
@@ -342,13 +341,11 @@ test('export: the content is not re-redacted on the way out', async (t) => {
 // ===========================================================================
 
 /**
- * What the server means by "derived", and the four spellings past it.
+ * Every spelling a derived entry arrives in.
  *
- * `list_activity`'s own `exclude_derived` drops an entry when `metadata_json` parses to an
- * object carrying `promotion: true` or `derived: true` — as JSON booleans, via `as_bool()`.
- * That is a narrower test than the data warrants: recurrence promotion writes
- * `auto_promoted: true`, the A/B path writes `promoted`, a stringified boolean fails
- * `as_bool()` outright, and `metadata_json` reaches us double-encoded often enough to matter.
+ * An entry is derived when its `metadata_json` carries `promotion`, `derived`, `promoted` or
+ * `auto_promoted` set to true — as a JSON boolean or as a string — and `metadata_json` can
+ * arrive double-encoded.
  *
  * Erring wide is the only safe direction. Over-filtering shows a caller fewer entries than
  * exist, which they can see; under-filtering prints a promoted fact under a heading that says
@@ -358,11 +355,11 @@ test('derived: every spelling a promoted entry arrives in is detected', async (t
   const { mod } = await setup(t);
 
   const derived = [
-    ['{"promotion":true,"promotion_confidence":0.8}', 'the promotion pipeline\'s own metadata'],
-    ['{"derived":true}', 'the second half of the server\'s own filter'],
-    ['{"promoted":true}', 'what the shadow-A/B promotion path writes'],
-    ['{"auto_promoted":true}', 'recurrence promotion — which the server\'s exclude_derived misses'],
-    ['{"derived":"true"}', 'a stringified boolean, which as_bool() rejects server-side'],
+    ['{"promotion":true,"promotion_confidence":0.8}', 'the promotion flag'],
+    ['{"derived":true}', 'the derived flag'],
+    ['{"promoted":true}', 'the promoted flag'],
+    ['{"auto_promoted":true}', 'the auto_promoted flag'],
+    ['{"derived":"true"}', 'a stringified boolean'],
     ['"{\\"derived\\":true}"', 'metadata_json double-encoded: a JSON string holding JSON'],
   ];
   for (const [metadata_json, why] of derived) {
@@ -392,7 +389,7 @@ test('derived: nothing that merely looks promoted is dropped', async (t) => {
     ['{"promotion":false}', 'the flag, explicitly false'],
     ['{"derived":"no"}', 'a string that is not a truth value'],
     ['{"promotion_confidence":0.9,"promotion_tier":"stable_fact"}',
-      'promotion-adjacent keys without the flag itself — an entry the promoter looked at and did not promote'],
+      'promotion-adjacent keys without the flag itself'],
   ];
   for (const [metadata_json, why] of kept) {
     assert.equal(mod.isDerived(activityEntry({ metadata_json })), false, `${why}: ${metadata_json}`);
@@ -456,7 +453,7 @@ test('compact: content is truncated at the same boundary the server uses', async
  * "I asked for non-derived entries" is a claim about a request field. "These are the
  * non-derived entries" is a claim about bytes. This test is the difference.
  */
-test('listing: an ignored exclude_derived is corrected here, and reported', async (t) => {
+test('listing: derived entries in a response are dropped here, and reported', async (t) => {
   const { cfg, mod } = await setup(t, {
     routes: {
       [LIST_ROUTE]: listPage([
@@ -470,9 +467,9 @@ test('listing: an ignored exclude_derived is corrected here, and reported', asyn
   const r = await mod.listActivity(cfg, { run: RUN, excludeDerived: true });
   assert.equal(r.ok, true);
   assert.deepEqual(r.data.entries.map((e) => e.id), ['plain'],
-    'the instance returned promoted entries under a request that excluded them');
+    'derived entries in the response are dropped client-side');
   assert.equal(r.data.excludeDerivedFallbackUsed, true,
-    '"the server did not honour this" is itself audit-relevant and must reach the caller');
+    '"entries had to be dropped here" is itself audit-relevant and must reach the caller');
   assert.equal(r.data.droppedDerived, 2);
 
   // And `total_visible` is the server's count, over the server's filtering. It over-counts by
@@ -581,9 +578,8 @@ test('listing: the new filter fields reach the wire when set', async (t) => {
 /**
  * The additive half, which is the whole risk of touching `fetchActivity`.
  *
- * Every one of the five is emitted only when it is set. An unconditional `user_id: ''` would
- * be read server-side by `effective_logical_user_scope` and become a filter nobody asked for —
- * the same shape as the `user_id` trap on the ingest side, where filling the field made new
+ * Every one of the five is emitted only when it is set. An unconditional `user_id: ''` is still
+ * a filter value, and one nobody asked for — the same shape as the `user_id` trap on the ingest side, where filling the field made new
  * captures unrecallable.
  */
 test('listing: an unset filter field is absent from the body, not empty', async (t) => {
@@ -707,8 +703,7 @@ test('scan: running out of wall clock is reported, not silently trimmed', async 
  * A bound can only truncate something that was still coming. Checked before the page token,
  * a scan that read the feed to its very last page still reported `truncated` whenever it
  * happened to cross a bound on the way in — and a complete answer labelled partial is the same
- * failure as a partial one labelled complete, pointed the other way. Measured against a hosted
- * instance: 697 lessons, every one of them collected, reported as short.
+ * failure as a partial one labelled complete, pointed the other way.
  */
 test('scan: reaching the last page is complete, even when a bound would have fired next', async (t) => {
   const { cfg, mod } = await setup(t, {
@@ -775,16 +770,9 @@ test('scan: the client-side corrections apply across every page', async (t) => {
 /**
  * Why the Memory tab counts lessons from the activity feed and not from the lessons route.
  *
- * `/v2/control/lessons` applies `limit` **before** it filters to `entry_type == "lesson"`, so
- * `limit: 200` means "take two hundred arbitrary facts and keep whichever happen to be
- * lessons". Measured against a hosted instance, seventeen thousand entries in, the newest three
- * hundred contained not a single one — a tab that is empty because of the order the server does
- * two operations in, not because the instance holds nothing.
- *
- * `/v2/control/activity` collects, filters by `entry_types`, sorts, and only then pages, and it
- * reports `total_visible` and `next_page_token`. It is also a strict superset: `list_lessons`
- * builds every field it returns out of `f.metadata`, which is the same map the activity route
- * serialises wholesale into `metadata_json`.
+ * `/v2/control/activity` filters by `entry_types` and pages through what is left, and it
+ * reports `total_visible` and `next_page_token`, so a count built on it is a count of lessons.
+ * It also carries every field the lessons route returns, inside `metadata_json`.
  *
  * The trap that makes the projection load-bearing is one line away in this very module.
  * `correct()` maps every row through `compactEntry` unless the projection is `full`, and
@@ -881,7 +869,7 @@ test('census: hitting the page cap is reported rather than rendered as a total',
 /**
  * The three spellings a scope arrives in, all of which the server itself accepts.
  *
- * `list_lessons` reads `scope` and falls back to `lesson_scope`, so an instance that has both
+ * The lessons route reads `scope` and falls back to `lesson_scope`, so an instance that has both
  * conventions in its history serves both. The double-encoded case is not hypothetical either:
  * `metadata_json` is a JSON string by declaration, and an instance that round-trips it through
  * a second encoder hands over a string whose contents are themselves JSON.
@@ -901,7 +889,7 @@ test('census: a scope stated as scope, as lesson_scope, or through a second enco
   assert.equal(r.ok, true);
   const byId = new Map(r.data.lessons.map((l) => [l.id, l]));
   assert.equal(byId.get('plain').scope, 'global');
-  assert.equal(byId.get('aliased').scope, 'session', 'the server reads lesson_scope too');
+  assert.equal(byId.get('aliased').scope, 'session', 'lesson_scope is read as the scope too');
   assert.equal(byId.get('wrapped').scope, 'org', 'a doubly-encoded metadata_json still has a scope in it');
   for (const id of ['plain', 'aliased', 'wrapped']) {
     assert.equal(byId.get(id).scopeKnown, true, `${id} named its scope out loud`);

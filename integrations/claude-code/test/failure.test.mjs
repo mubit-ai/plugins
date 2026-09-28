@@ -120,7 +120,7 @@ async function probe(cfg, http, over = {}) {
 }
 
 /**
- * Write `n` spool items straight to the §7 layout (`runs/<run_id>/spool/*.json`),
+ * Write `n` spool items straight to the spool layout (`runs/<run_id>/spool/*.json`),
  * one file per item. Deliberately does not go through `lib/spool.mjs`: a drain test
  * should fail because the drain is wrong, not because the spooler is missing.
  */
@@ -174,7 +174,7 @@ function logLines(dataDir) {
 
 /**
  * `drain.mjs` is detached and takes its payload through a file, not stdin
- * (§4.9 `spawnDetached`). The payload goes on both channels so the test pins the
+ * (`spawnDetached`). The payload goes on both channels so the test pins the
  * behaviour, not the plumbing.
  */
 async function runDrain(dataDir, env, payload, args = []) {
@@ -220,9 +220,9 @@ function chmodTree(dir, mode) {
 // ===========================================================================
 
 describe('transport failures', () => {
-  // "Nothing listening" must be a *typed* state, not an exception's table maps
-  // ECONNREFUSED/ENOTFOUND/EHOSTUNREACH/ECONNRESET to `unreachable`. And nothing may be
-  // lost: §5.5 "all failures leave the spool intact for the next drain."
+  // "Nothing listening" must be a *typed* state, not an exception: the classification table
+  // maps ECONNREFUSED/ENOTFOUND/EHOSTUNREACH/ECONNRESET to `unreachable`. And nothing may be
+  // lost: every failure leaves the spool intact for the next drain.
   test('nothing listening (ECONNREFUSED) -> unreachable, exit 0, JSON stdout, items stay spooled', async (t) => {
     const dataDir = makeDataDir();
     const endpoint = await deadEndpoint();
@@ -364,7 +364,7 @@ describe('a timeout is not a verdict', () => {
   });
 
   // "Only timeoutStreak >= 3 escalates, and only to not_responding, never to
-  // unreachable or server_error." §10 renders that as `◌ slow`, not `✖ unreachable`.
+  // unreachable or server_error." The status line renders that as `◌ slow`, not `✖ unreachable`.
   test('three consecutive timeouts escalate to not_responding and never to unreachable', async (t) => {
     const dataDir = makeDataDir();
     const srv = await server(t, { 'POST /v2/control/lessons': { hang: true } });
@@ -553,8 +553,8 @@ describe('budgets are hard deadlines', () => {
       `expected the hook back within ${budgetMs}+100ms (+${NODE_STARTUP_ALLOWANCE_MS}ms node startup), took ${res.ms}ms`);
   });
 
-  // "RUNG 2 — ... Skip when < 500ms of budget remains." Rung 2 costs an LLM
-  // call; starting one you cannot finish spends the call and injects nothing.
+  // Rung 2 is skipped when under 500 ms of budget remains: starting a call you cannot
+  // finish spends it and injects nothing.
   test('rung 2 is skipped when under 500ms of budget remains, and the hook still lands inside its budget', async (t) => {
     const dataDir = makeDataDir();
     const budgetMs = 900;
@@ -617,7 +617,7 @@ describe('hostile stdin', () => {
       'exactly one log line at warn+ — a parse failure is worth one line, not a loop');
   });
 
-  // Claude Code can close stdin without writing (§4.9 reads to EOF). Empty is not "{}",
+  // Claude Code can close stdin without writing (the hook reads to EOF). Empty is not "{}",
   // it is zero bytes, and `JSON.parse("")` throws.
   test('empty stdin -> every hook exits 0, emits {}, logs once, dials nothing', async (t) => {
     const dataDir = makeDataDir();
@@ -643,10 +643,10 @@ describe('hostile stdin', () => {
 // ===========================================================================
 
 describe('a read-only ${CLAUDE_PLUGIN_DATA}', () => {
-  // "claimOnce returns true on a non-EEXIST error — proceed on marker failure. The
-  // marker prevents a *double* flush; a read-only or full ${CLAUDE_PLUGIN_DATA} must not be
-  // able to prevent the flush entirely. Losing the batch is worse than sending it twice,
-  // and the per-batch idempotency_key makes a double send a server-side no-op anyway."
+  // claimOnce returns true on a non-EEXIST error, so a marker failure proceeds. The marker
+  // prevents a *double* flush; a read-only or full ${CLAUDE_PLUGIN_DATA} must not be able to
+  // prevent the flush entirely. Losing the batch is worse than sending it twice, and the
+  // per-batch idempotency_key lets a double send be recognised as one.
   test('read-only data dir -> hooks still exit 0 and claimOnce returns true', async (t) => {
     if (process.getuid?.() === 0) {
       t.skip('running as root: permission bits are not enforced, so this scenario cannot be staged');
@@ -812,7 +812,7 @@ describe('pre-flight guards', () => {
       direct_lane: 'semantic_search', evidence_only: true, budget: 'low', limit: 8,
     };
 
-    // The exact typos that silently cost an LLM call per prompt, forever, with no error.
+    // The exact typos that would silently change the retrieval path on every prompt, with no error.
     for (const mode of ['direct-bypass', 'DirectBypass', 'directbypass', 'semantic_search', 'bypass']) {
       const r = await postQuery(cfg, { ...base, mode });
       assert.equal(r.ok, false, `mode ${JSON.stringify(mode)} must be rejected before dialing`);
@@ -1037,14 +1037,14 @@ describe('the policy ladder — a 403 on rung 1 is a verdict, not a fault', () =
     assert.deepEqual(res.json, { suppressOutput: true });
 
     assert.equal(srv.countOf('POST', '/v2/control/query'), 1,
-      'a 401 is a hard failure: give up, do not spend an LLM call on rung 2');
+      'a 401 is a hard failure: give up, do not try rung 2');
     assert.deepEqual(policyFiles(dataDir), [],
       'a 401 must never be cached as a policy verdict — that would hide a revoked key for 24h');
     assert.equal(breakerFile(dataDir).state, 'auth_failed');
   });
 
-  // "A 'granted' verdict is not cached: rung 1 succeeding is self-evident and caching
-  // it would only add a stale-state failure mode."
+  // A 'granted' verdict is not cached: rung 1 succeeding is self-evident and caching it
+  // would only add a stale-state failure mode.
   test('a successful rung 1 writes nothing to policy/ — grants are never cached', async (t) => {
     const dataDir = makeDataDir();
     const srv = await server(t); // default routes: query succeeds
@@ -1054,7 +1054,7 @@ describe('the policy ladder — a 403 on rung 1 is a verdict, not a fault', () =
     assertHookContract(res);
 
     assert.deepEqual(queryModes(srv), ['direct_bypass'],
-      'rung 1 is the primary path and costs zero LLM calls; nothing below it should run');
+      'rung 1 is the primary path; nothing below it should run');
     srv.assertNotCalled('POST', '/v2/control/context');
     assert.deepEqual(policyFiles(dataDir), [], 'grants are never cached');
   });
@@ -1065,14 +1065,13 @@ describe('the policy ladder — a 403 on rung 1 is a verdict, not a fault', () =
 // ===========================================================================
 
 describe('session end', () => {
-  // "best-effort throughout — a failed reflect is logged and shown in the marker as
-  // `reflect: failed`, never surfaced as a blocking error." The drain must still commit:
-  // §1.4 says a lost reflect costs scope promotion for that session's lessons, not the
-  // captures themselves.
+  // Best-effort throughout — a failed reflect is logged and shown in the marker as
+  // `reflect: failed`, never surfaced as a blocking error. The drain must still commit: a
+  // lost reflect must never cost the captures themselves.
   test('a failing reflect at SessionEnd is logged, marked failed, exits 0, and the drain still commits', async (t) => {
     const dataDir = makeDataDir();
     const srv = await server(t, {
-      'POST /v2/control/reflect': { status: 500, json: { error: 'llm provider unavailable' } },
+      'POST /v2/control/reflect': { status: 500, json: { error: 'reflect unavailable' } },
     });
     const env = hookEnv({ dataDir, endpoint: srv.url });
     seedSpool(dataDir, RUN, 3);
@@ -1096,10 +1095,10 @@ describe('session end', () => {
     assert.ok(logLines(dataDir).length > 0, 'a failed reflect must be logged');
   });
 
-  // §4.7's rule, applied to the one caller that dials *wider* than the configured default:
+  // The breaker's rule, applied to the one caller that dials *wider* than the configured default:
   // "a timeout is not a verdict." `lib/http.mjs` exempts a caller who squeezed its deadline
   // below `cfg.timeoutMs`, because a 400 ms slice learns nothing about a healthy server. The
-  // reflect is the mirror image — it is LLM-backed, so it dials wide on purpose — and the
+  // reflect is the mirror image — it is slow by nature, so it dials wide on purpose — and the
   // exemption does not cover it: inline it dials exactly the 4000 ms default, which is not
   // *less than* the default, so its abort lands in `recordFailure(… 'not_responding')`.
   //
@@ -1107,7 +1106,7 @@ describe('session end', () => {
   // the ingest drain. So a merely slow reflect escalates into captures stopping altogether —
   // the client's own patience, laundered into a verdict about the server.
   //
-  // Both routes below stall, which is what makes the failure window readable at all: §5.7's
+  // Both routes below stall, which is what makes the failure window readable at all: the
   // idle heartbeat runs *after* reflect, and `recordSuccess` empties `failures` outright — so
   // against a server that answers the heartbeat, the buggy and the fixed tree leave byte-
   // identical state and no assertion here could tell them apart. Stalling the heartbeat too

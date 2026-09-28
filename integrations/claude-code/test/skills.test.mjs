@@ -36,7 +36,7 @@ const AGENTS_DIR = join(PLUGIN_ROOT, 'agents');
  */
 const SERVER_BUNDLE = join(PLUGIN_ROOT, 'mcp', 'dist', 'server.js');
 
-/** §3.2 matcher note — `.mcp.json` names the server `mubit`. */
+/** `.mcp.json` names the server `mubit`. */
 const QUALIFIED_PREFIX = 'mcp__plugin_mubit-memory_mubit__';
 
 /**
@@ -205,14 +205,14 @@ for (const name of SKILLS) {
   });
 }
 
-// Exactly this set. An extra skill is extra always-loaded context that §3.5's
+// Exactly this set. An extra skill is extra always-loaded context that the
 // contextCost estimate does not account for.
 test('exactly the documented skills ship — no more, no fewer', () => {
   assert.ok(existsSync(SKILLS_DIR), `skills/ does not exist yet: ${SKILLS_DIR}`);
   const dirs = readdirSync(SKILLS_DIR, { withFileTypes: true })
     .filter((d) => d.isDirectory()).map((d) => d.name).sort();
   assert.deepEqual(dirs, [...SKILLS].sort(),
-    'the plugin ships exactly this skill set (§2 file tree); contextCost in marketplace.json is sized for it');
+    'the plugin ships exactly this skill set; contextCost in marketplace.json is sized for it');
 });
 
 // Haiku with maxTurns 3 is the right shape: the work is retrieval and
@@ -240,7 +240,7 @@ test('agents/mubit-recall.md declares none of hooks, mcpServers, permissionMode'
   }
 });
 
-// §3.2 matcher note ("will bite you") — a bare `mcp__<server>__<tool>` grant does not
+// A bare `mcp__<server>__<tool>` grant does not
 // match a plugin-provided server, so the skill loses the tool it was written around.
 test('every tools: entry across skills and agents is fully qualified', () => {
   const files = allMarkdown();
@@ -315,19 +315,15 @@ test('remember/SKILL.md warns that mubit_learned returns when the write is queue
     'remember must tell the model not to immediately search for what it just saved');
 });
 
-// Mubit extracts lessons on its own as it ingests, but those keep the scope they
-// were extracted at. Only the explicit reflect path widens scope, which is the entire reason
-// this skill (and reflectOnEnd) exist. Without that paragraph the model sees lessons
-// accumulating and concludes the explicit call is redundant.
+// The skill must say why it exists: a lesson at `run` scope does not reach the next session.
+// Without that paragraph the model sees lessons accumulating and concludes the explicit call
+// is redundant.
 //
-// This pins the consequence, not the mechanism. It used to require the skill to name a
-// server-side flag verbatim — a term that is in neither the proto nor the public docs, so the
-// assertion forced an internal identifier into a shipped file and would have kept forcing it
-// back after any scrub. What a user can act on is the scope gap.
-test('reflect/SKILL.md explains that background extraction never widens scope', () => {
+// This pins the consequence, not the mechanism. What a user can act on is the scope gap.
+test('reflect/SKILL.md explains the run-scope gap', () => {
   const { body } = loadSkill('reflect');
   assert.match(body, /\brun\b[\s\S]{0,120}\bscope\b|\bscope\b[\s\S]{0,120}\brun\b/i,
-    'reflect must say that background-extracted lessons stay at run scope');
+    'reflect must say what run scope means for a lesson');
   assert.match(body, /invisible to the next session|not visible|next session/i,
     'reflect must state the consequence: a run-scoped lesson does not reach the next session');
   assert.match(body, /only[\s\S]{0,80}explicit|explicit[\s\S]{0,80}(widen|promot|reserved)/i,
@@ -417,7 +413,7 @@ test('auth/SKILL.md is user-invocable', () => {
 });
 
 /**
- * The §9.3 trust rule, which `setup` states and `auth` now has more reason to: this is
+ * The trust rule, which `setup` states and `auth` now has more reason to: this is
  * the skill that talks to a browser and writes a credential, and it is exactly where a
  * "helpfully" installed package would be hardest to notice.
  */
@@ -579,12 +575,8 @@ test('setup/SKILL.md sends the user to /mubit-memory:auth', () => {
 
 // What `mubit_learned` actually writes.
 //
-// This paragraph was true and is now false. The bundled SDK hard-codes
-// `lesson_scope: "session"`, and the control plane reads every scope but `run` across runs —
-// so the skill was telling the model that a saved lesson "stays with related sessions" while
-// it was in fact reaching every other run on the instance. The MCP egress guard clamps it to
-// `run`; the skill has to say the same thing, because this paragraph is the model's only
-// account of where its lesson went.
+// The skill must state the scope `mubit_learned` writes at and name the setting that
+// changes it, because this paragraph is the model's only account of where its lesson went.
 //
 // Asserted on the paragraph rather than the file: the template table two sections up
 // legitimately contains the word `session` for DEBUG_SUCCESS and API_PATTERN.
@@ -630,8 +622,7 @@ test('doctor/SKILL.md routes a cross-session lesson complaint at the scope ceili
 });
 
 // A ceiling with no documented way to raise it reads as a limitation rather than a setting,
-// and the next person to want a cross-project rule reaches for `mubit_remember` instead —
-// which is exactly the tool that leaked in the first place.
+// and the next person to want a cross-project rule works around it instead of changing it.
 test('remember/SKILL.md names the setting that widens what an agent may write', () => {
   const { body } = loadSkill('remember');
   assert.match(body, /mcpLessonScope|MUBIT_MCP_LESSON_SCOPE/,

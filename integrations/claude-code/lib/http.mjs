@@ -2,11 +2,10 @@
 /**
  * `lib/http.mjs` — the only network primitive in the plugin.
  *
- * The module, its routes, and the per-route body cap on
- * `/v2/control/query`), §1.2 (auth, and which call the plugin may make before a key is set), §1.3
- * (required fields — a missing one is a 422, not a silent default), §1.8 + §5.2 (the `mode`
- * literal and what a typo costs), §4.3 (the `"default"` run-id guard), §4.7 (the breaker is
- * consulted before dialing).
+ * The module, its routes and the per-route body cap on `/v2/control/query`; auth, and which
+ * call the plugin may make before a key is set; required fields (a missing one is a 422, not a
+ * silent default); the `mode` literal and what a typo costs; the `"default"` run-id guard; and
+ * the breaker, consulted before dialing.
  *
  * The load-bearing property of this module is that it **never throws**. Every hook exits 0
  * in every failure mode, and that is only affordable because the network layer hands
@@ -15,7 +14,7 @@
  *   success  -> `{ok: true,  status, body, ms}`
  *   failure  -> `{ok: false, state, status?, error, ms}`
  *
- * `state` is a `ConnState` from §4.7 (`unreachable | server_error | auth_failed |
+ * `state` is a `ConnState` (`unreachable | server_error | auth_failed |
  * not_responding`) for anything that reached the socket, plus two values that never do.
  *
  * `invalid_request`, for the five pre-flight guards below. A guard failure is a bug in
@@ -35,17 +34,17 @@
  *      so we would open a circuit over our own request.
  *   2. The `mode` literal. Only `"direct_bypass"` and `"direct"` reach the direct lane;
  *      every other value — *including an omitted one* — falls through to the routed path
- *      with no error, costing a model call per prompt forever. The class being rejected is
+ *      with no error, and every recall after it is slower. The class being rejected is
  *      therefore "anything that silently becomes agent_routed", which makes `agent_routed`
  *      itself legal: it is the rung entered deliberately after a 403 on the direct one.
  *   3. `run_id === "default"`. That literal is the bundled server's placeholder, and it
  *      identifies nothing: a run id has to name one project on one machine. Exact match
  *      only — a project legitimately called `default-config` must still be able to have
  *      a run.
- *   4. §1.3 required fields, validated locally so the error names the field instead of
+ *   4. Required fields, validated locally so the error names the field instead of
  *      arriving as an opaque 422.
- *   5. `postLessons` deliberately has **no** `run_id`: empty means "all runs", which is
- *      exactly what a global-lessons fetch wants.
+ *   5. `postLessons` deliberately sends **no** `run_id`: a global-lessons fetch is not about
+ *      one run.
  *
  * Retries: **one**, only for `state === "not_responding"`, and only when the caller passes
  * `{retry: true}` — which only `drain.mjs` does, because it is detached and nobody is
@@ -56,10 +55,10 @@
  * Two `opts` beyond the documented `{timeoutMs, retry}`, both for callers that own the
  * meaning of a result better than this module can:
  *   - `{record: false}` suppresses breaker bookkeeping for one call.
- *   - a **403 is never recorded** by default. §5.2: `permission_denied` on a rung the
+ *   - a **403 is never recorded** by default. `permission_denied` on a rung the
  *     plugin deliberately probed is a policy verdict, not a transport fault, and recording it
  *     as `auth_failed` would pin the status line to "✖ auth" on a perfectly healthy instance
- *     whose operator merely set `the instance's direct-search policy disabled`.
+ *     whose operator merely disabled direct search.
  *
  * Discipline shared with the rest of `lib/`: zero dependencies, Node >= 20 built-ins only
  * (`fetch` and `AbortController` are built in), standalone-importable ESM. Network calls are
@@ -125,7 +124,7 @@ const HEALTH_TTL_MS = 30 * 1000;
 const HEALTH_CACHE = ['status', 'health.json'];
 
 /**
- * §5.2 + §1.8: the three literals that say, out loud, which rung is being paid for.
+ * The three literals that say, out loud, which rung is being asked for.
  * Case-sensitive: the server matches exact strings and case does not fold.
  */
 export const QUERY_MODES = Object.freeze(['direct_bypass', 'direct', 'agent_routed']);
@@ -185,13 +184,13 @@ export async function request(cfg, method, path, body, opts = {}) {
       }
     }
 
-    // --- §4.1: no endpoint, no dial. `urlFor` would hand `fetch` the bare route, which is a
+    // --- No endpoint, no dial. `urlFor` would hand `fetch` the bare route, which is a
     // relative URL and throws `ERR_INVALID_URL` before a socket exists — a throw that reads
     // downstream as a fault in a server we never contacted. Ahead of `allowRequest` because
     // that call writes when it spends the half-open probe.
     if (!isConfigured(cfg)) return refuseUnconfigured(cfg, started, `${verb} ${route}`);
 
-    // --- §4.2/§4.7: consult the breaker before dialing. Called exactly once per request:
+    // --- Consult the breaker before dialing. Called exactly once per request:
     // while the breaker is open this consumes the single half-open probe, so asking twice
     // would spend a probe the retry below is entitled to.
     if (!allowRequest(cfg)) {
@@ -249,7 +248,7 @@ export async function request(cfg, method, path, body, opts = {}) {
 export async function health(cfg, opts = {}) {
   const started = Date.now();
   try {
-    // §4.1, and before the cache read as well as before `allowRequest`: a cached `ready`
+    // No endpoint, no dial — before the cache read as well as before `allowRequest`: a cached `ready`
     // from a previous endpoint must not answer for a config that no longer has one.
     if (!isConfigured(cfg)) return refuseUnconfigured(cfg, started, `GET ${ROUTES.health}`);
 
@@ -279,7 +278,7 @@ export async function health(cfg, opts = {}) {
     // telling the model memory is active when nothing behind it is Mubit. The route returns
     // the bare string `OK`, so one comparison settles it.
     //
-    // This lands as `server_error` rather than a state of its own: §4.7 already classes "a
+    // This lands as `server_error` rather than a state of its own: the breaker already classes "a
     // 2xx whose body will not parse" that way for the JSON routes, and "up and answering
     // wrongly" is the same verdict here.
     // Only a 2xx is reinterpreted here. A `dial` that already failed carries a verdict about
@@ -330,9 +329,9 @@ export async function postIngest(cfg, req, opts = {}) {
 }
 
 /**
- * `POST /v2/control/query` — rungs 1 and 2 of the §1.8 ladder.
+ * `POST /v2/control/query` — rungs 1 and 2 of the read ladder.
  * The query payload requires `run_id`; `mode` is validated
- * here because the server has no error for a wrong one, only a bill.
+ * here because a wrong one produces no error, only a slower recall.
  *
  * @param {Record<string, any>} cfg
  * @param {Record<string, any>} req
@@ -350,7 +349,7 @@ export async function postQuery(cfg, req, opts = {}) {
 }
 
 /**
- * `POST /v2/control/context` — rung 3 only, and it costs two LLM calls.
+ * `POST /v2/control/context` — rung 3 only, and the slowest of the three.
  * The request body requires `run_id`.
  *
  * @param {Record<string, any>} cfg
@@ -367,7 +366,7 @@ export async function postContext(cfg, req, opts = {}) {
 
 /**
  * `POST /v2/control/outcome` — the request body requires
- * `run_id` and a **non-empty** `reference_id`. §1.3: for run-level attribution with no single
+ * `run_id` and a **non-empty** `reference_id`. For run-level attribution with no single
  * primary lesson, pass `"global"` and put the real ids in `entry_ids[]` — never `""`.
  *
  * @param {Record<string, any>} cfg
@@ -403,9 +402,9 @@ export async function postCheckpoint(cfg, req, opts = {}) {
 }
 
 /**
- * `POST /v2/control/lessons` — the one control route with **no** required `run_id`. An
- * absent run scope means "every run", which is precisely what a global-lessons fetch wants;
- * requiring one here would make cross-run recall impossible.
+ * `POST /v2/control/lessons` — the one control route with **no** required `run_id`. A
+ * global-lessons fetch sends none on purpose; requiring one here would make lessons from other
+ * runs impossible to look at.
  *
  * @param {Record<string, any>} cfg
  * @param {Record<string, any>} [req]
@@ -537,7 +536,7 @@ export async function getIngestJob(cfg, runId, jobId, opts = {}) {
   if (!job) {
     return refuse(cfg, started, 'getIngestJob: job_id is required', { route: ROUTES.ingestJobs });
   }
-  // The §4.3 guard lives in `request()`, which only inspects bodies — and this route has
+  // The `"default"` run-id guard lives in `request()`, which only inspects bodies — and this route has
   // none. Repeat it here rather than let the poisoned literal through on a query string.
   if (run === POISONED_RUN_ID) {
     return refuse(cfg, started,
@@ -639,8 +638,8 @@ async function dial(cfg, o) {
 /**
  * Breaker bookkeeping for one completed `request()`/`health()` — the whole reason the
  * breaker can ever open. Recorded once per call, not once per attempt: a retried timeout is
- * one symptom, and double-counting it would escalate `timeoutStreak` twice as fast as §4.7
- * allows.
+ * one symptom, and double-counting it would escalate `timeoutStreak` twice as fast as it
+ * should.
  *
  * @param {Record<string, any>} cfg
  * @param {{ok: boolean, state?: string, status?: number, abortedEarly?: boolean}} res
@@ -664,7 +663,7 @@ function settle(cfg, res, opts) {
 }
 
 // ---------------------------------------------------------------------------
-// Status/health.json, a 30 s verdict cache
+// status/health.json, a 30 s verdict cache
 // ---------------------------------------------------------------------------
 
 /** @param {Record<string, any>} cfg */
@@ -799,7 +798,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === 'string' && v.trim()) return '';
-  return `${who}: "${field}" is required and must be a non-empty string (§1.3 — a missing field is a 422, not a default)`
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)`
     + (hint ? `; ${hint}` : '');
 }
 
@@ -829,9 +828,9 @@ function requireItems(req) {
 }
 
 /**
- * §5.2 + §1.8. The rejected class is "anything that silently becomes `agent_routed`", which
- * is why an omitted `mode` is rejected too: the serverdefaults it, so omission and a
- * typo cost exactly the same — one LLM call per prompt, forever, with no error anywhere.
+ * The rejected class is "anything that silently becomes `agent_routed`", which is why an
+ * omitted `mode` is rejected too: omission and a typo cost exactly the same — a slower
+ * recall on every prompt, forever, with no error anywhere.
  * @param {any} req
  * @returns {string}
  */
@@ -841,8 +840,8 @@ function requireMode(req) {
   const shown = mode === undefined ? '(omitted)' : JSON.stringify(mode);
   return `postQuery: invalid query mode ${shown} — must be exactly one of `
     + `${QUERY_MODES.map((m) => `"${m}"`).join(', ')} (case-sensitive). `
-    + 'Anything else — including an omitted mode — silently becomes agent_routed server-side '
-    + 'and costs an LLM call per prompt with no error.';
+    + 'Anything else — including an omitted mode — silently becomes agent_routed, which is '
+    + 'slower on every prompt, with no error.';
 }
 
 /** @param {any} req */

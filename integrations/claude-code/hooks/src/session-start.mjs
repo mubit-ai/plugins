@@ -10,27 +10,27 @@
  * the model has no idea memory exists.
  *
  * On `source === "compact"` it also carries the post-compaction re-anchor. That belongs to
- * §5.6 and used to ship from `checkpoint --post`, where the host discarded it on every
+ * the checkpoint flow and used to ship from `checkpoint --post`, where the host discarded it on every
  * compaction: `PostCompact` is not a `hookSpecificOutput.hookEventName` Claude Code accepts,
  * and `SessionStart` is. See `hooks/src/checkpoint.mjs` and `test/hook-output.test.mjs`.
  *
- * The flow is §5.1 verbatim:
+ * The flow:
  *
  *   1. `loadConfig`; with capture AND recall both off there is nothing to say and nobody to
  *      say it to — emit `{}` and dial nothing.
- *   2. `deriveRunId` honouring the §4.3 `source` table (that module owns the whole table,
+ *   2. `deriveRunId` honouring the `source` table (that module owns the whole table,
  *      including `/clear`'s counter and the session-map write).
  *   3. `marker.cold_start_until = now + coldStartGraceMs` — the grace window starts
  *      here, so a server still starting up does not read as "memory broken".
  *   4. `GET /v2/core/health` @`HEALTH_MS`. Not ok → skip 5-6 but **still steer**, saying memory
  *      is offline. Without that the model invents recall or apologises for its absence.
  *   5. `POST /v2/control/agents/register` @600 ms — or `/heartbeat` on `resume` and `fork`,
- *      because re-registering an agent that never left is noise the control plane reconciles.
+ *      because re-registering an agent that never left is only noise.
  *   6. One page of `POST /v2/control/activity` @900 ms — lesson entries, full projection,
- *      newest first, across every run — filtered to `global` scope here. **No `run_id`**: a
+ *      newest first — filtered to `global` scope here. It sends **no `run_id`** on purpose: a
  *      lesson another run widened past its own is the entire point of the section, so scoping
- *      the request to this run would return nothing on a brand-new one. Scope is not a field
- *      this route accepts, which is why the filter is client-side and the page is large.
+ *      the request to this run would return nothing on a brand-new one. The route takes no
+ *      scope field, so the filter is client-side and the page is large.
  *   7. Assemble `additionalContext`, update the marker, emit — and, on `startup` and `resume`
  *      only, spawn the detached `session-resume` that assembles the resume briefing the first
  *      substantive prompt will render. Nothing here waits on it; `spawnResume` says why.
@@ -71,7 +71,7 @@ const BUDGET_MS = 2500;
 const HARNESS_BUDGET_MS = 3200;
 
 /**
- * §5.1 sub-budgets. Each is a CEILING clamped by `budgetFor()` to whatever is left of
+ * Sub-budgets. Each is a CEILING clamped by `budgetFor()` to whatever is left of
  * `BUDGET_MS` — not a reservation, and not time anything is made to wait.
  *
  * Health is derived from the envelope rather than pinned, and it gets the largest slice,
@@ -154,7 +154,7 @@ await runHook('session-start', {
       return {};
     }
 
-    // §16.2 steps 2-3. Read once, here, so every return path below can carry it: whether the
+    // The status-line probe. Read once, here, so every return path below can carry it: whether the
     // shipped `settings.json` actually took effect is independent of whether Mubit is up.
     const statusLineHint = probeStatusLine(cfg);
 
@@ -324,7 +324,7 @@ await runHook('session-start', {
       return out;
     }
 
-    //
+    // Step 7.
     updateMarker(cfg, runId, {
       mode: cfg.mode,
       state: 'ready',
@@ -367,7 +367,7 @@ await runHook('session-start', {
         hookEventName: 'SessionStart',
         additionalContext: steerBlock(cfg, runId, lessons, anchor, lessonsPartial),
       },
-      // §16.2's hint fires once, ever, per install, so on that one session it *takes* the
+      // The status-line hint fires once, ever, per install, so on that one session it *takes* the
       // line rather than being appended to it: `systemMessage` is one line by contract, and
       // the run and mode it would displace are already named in the steer block above.
       systemMessage: statusLineHint || summary,
@@ -430,12 +430,12 @@ function appendStart(cfg, payload, lessons) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.1 step 7's last act: fire `session-resume` and forget about it.
+ * The last act of the flow: fire `session-resume` and forget about it.
  *
  * The whole feature turns on this call being fire-and-forget. `SessionStart` is a **blocking**
  * hook — Claude Code holds the session open for it, with a 5 s host timeout and a 2500 ms
- * internal budget — and the briefing costs a `/v2/control/context` round trip, which is two
- * LLM calls and a 20 s deadline. Awaiting any part of it here would open every session in the
+ * internal budget — and the briefing costs a `/v2/control/context` round trip, which is slow
+ * and has a 20 s deadline. Awaiting any part of it here would open every session in the
  * world on a stalled hook, and would blow the budget often enough that the *steer block* would
  * start going missing too. `test/session-resume.test.mjs` pins the wall clock against a
  * `/context` that never answers.
@@ -447,7 +447,7 @@ function appendStart(cfg, payload, lessons) {
  *
  *   - **`clear`** asks for a blank slate and `lib/runid.mjs` gives it one — a brand-new run id
  *     with nothing under it. There is no "where we left off" to describe, and dialling for one
- *     spends two LLM calls to be told so.
+ *     is a slow round trip to be told so.
  *   - **`compact`** is re-anchored for free a few lines above: the checkpoint id `checkpoint
  *     --pre` stored does the same job with no round trip and against a transcript that is
  *     actually there.
@@ -499,17 +499,17 @@ function spawnResume(cfg, payload, runId, agentId, src) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.1 stdout. Two loads are carried here and nothing else: which run this session writes
+ * The stdout block. Two loads are carried here and nothing else: which run this session writes
  * to, and the instruction not to go looking for memory that arrives on its own.
  *
- * §5.6 adds a third on one source only. `anchor` is empty except immediately after a
+ * The checkpoint flow adds a third on one source only. `anchor` is empty except immediately after a
  * compaction, and an empty one renders nothing — a session that never compacted has no
  * pre-compaction context, and claiming otherwise is a sentence the model would act on.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {{id: string, type: string, content: string}[]} lessons
- * @param {string} [anchor]  §5.6 checkpoint id, or '' when there is nothing to re-anchor to
+ * @param {string} [anchor]  checkpoint id, or '' when there is nothing to re-anchor to
  * @param {boolean} [partial]  the standing set was read off a page that had more behind it
  * @returns {string}
  */
@@ -565,7 +565,7 @@ function steerBlock(cfg, runId, lessons, anchor = '', partial = false) {
 }
 
 /**
- * §5.1, the "there is no instance" case — distinct from `offlineBlock` because the two are
+ * The "there is no instance" case — distinct from `offlineBlock` because the two are
  * different claims and the model acts on the difference. Offline means work is buffered and
  * will be sent when Mubit answers; here nothing is going to answer until a person runs one
  * command, and saying "unreachable" would blame a server that does not exist.
@@ -591,7 +591,7 @@ function unconfiguredBlock(cfg, runId) {
 }
 
 /**
- * §5.1 "Failure", the case health cannot see. The endpoint answers, so it is not offline and
+ * The failure case health cannot see. The endpoint answers, so it is not offline and
  * it is not unconfigured — the key is simply not accepted. Naming that precisely is the
  * difference between a user who runs one command and a user who files a bug about memory
  * being empty.
@@ -614,7 +614,7 @@ function unauthenticatedBlock(cfg, runId) {
 }
 
 /**
- * §5.1 "Failure": the model is told, in the same channel it would have received memory in,
+ * Failure: the model is told, in the same channel it would have received memory in,
  * that there is none this session — and that its work is still being kept.
  *
  * Deliberately carries no lesson section: nothing was fetched, and an empty "Standing
@@ -786,7 +786,7 @@ function readLessons(body) {
 }
 
 /**
- * §16.2 steps 2-3 — is the status line actually live, and should we say so once?
+ * The status-line probe — is the status line actually live, and should we say so once?
  *
  * Whether a plugin can own `statusLine` through a shipped `settings.json` is undocumented and
  * may be ignored by the host, so the plugin finds out by experiment: `bin/statusline.mjs`
@@ -803,7 +803,7 @@ function readLessons(body) {
 function probeStatusLine(cfg) {
   try {
     // The user turned the widget off. Telling them how to turn on the thing they disabled is
-    // the exact behaviour §16.2 is warning about.
+    // exactly the nagging this probe exists to avoid.
     if (cfg.statusLine === false) return '';
 
     const p = join(dataDir(cfg), LIVENESS_FILE);
@@ -840,21 +840,21 @@ function probeStatusLine(cfg) {
     });
 
     if (!nag) return '';
-    log(cfg, 'info', 'session-start: status line never invoked; emitting the one-time §16.2 hint');
+    log(cfg, 'info', 'session-start: status line never invoked; emitting the one-time status-line hint');
     return statusLineHint();
   } catch {
     return '';
   }
 }
 
-/** §16.2 step 3, verbatim. `<CLAUDE_PLUGIN_ROOT>` is resolved when the host exported it. */
+/** The one-time hint. `<CLAUDE_PLUGIN_ROOT>` is resolved when the host exported it. */
 function statusLineHint() {
   const root = String(process.env.CLAUDE_PLUGIN_ROOT ?? '').trim() || '<CLAUDE_PLUGIN_ROOT>';
   return 'mubit: status line not active. Add to your settings.json: '
     + `"statusLine": {"type":"command","command":"node","args":["${root}/bin/statusline.mjs"]}`;
 }
 
-/** §4.7 ConnState, rendered raw — `not_responding` is a different fact from `unreachable`. */
+/** The ConnState, rendered raw — `not_responding` is a different fact from `unreachable`. */
 function connState(v) {
   const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
   return /^[a-z_]+$/.test(s) ? s : 'unreachable';

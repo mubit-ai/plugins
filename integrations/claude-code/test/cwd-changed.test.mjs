@@ -106,7 +106,7 @@ async function runIdFor(dir) {
   return withEnv(env, () => runid.deriveRunId(config.loadConfig(env), {}));
 }
 
-/** The §4.3 `SessionRecord` this session would be carrying before the `cd`. */
+/** The `SessionRecord` this session would be carrying before the `cd`. */
 async function seedSessionMap(env, runId, projectDir) {
   const runid = await lib('runid.mjs');
   const now = Date.now();

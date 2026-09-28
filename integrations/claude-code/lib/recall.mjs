@@ -1,34 +1,32 @@
 // @ts-check
 /**
- * `lib/recall.mjs` — the read ladder, as one call (§5.2 steps 1-4).
+ * `lib/recall.mjs` — the read ladder, as one call.
  *
  * ---------------------------------------------------------------------------
  * The ladder, and why it looks inverted
  * ---------------------------------------------------------------------------
  * The obvious design — ask `/v2/control/context` for a ready-to-inject `context_block` —
- * rests on the belief that the context route is pure assembly with no model call. **That
- * belief is false.** Measured end to end it costs two model calls, not zero, and the answer
- * they produce is discarded — this module assembles the block locally instead.
+ * is the slow one. The query route answers far faster, so this module asks it for evidence
+ * and assembles the block locally instead.
  *
- * | Rung | Request | LLM calls | Entered when |
- * | --- | --- | --- | --- |
- * | 1 | `query{mode:"direct_bypass", evidence_only:true, budget:"low"}` | **0** | always — the primary path |
- * | 2 | `query{mode:"agent_routed",  evidence_only:true, budget:"low"}` | 1 | rung 1 got **403** *and* `recallFallback === "agent_routed"` |
- * | 3 | `context{mode:"sections"}` | **2** | only when `recallAssemble === "server"` |
+ * | Rung | Request | Entered when |
+ * | --- | --- | --- |
+ * | 1 | `query{mode:"direct_bypass", evidence_only:true, budget:"low"}` | always — the primary path |
+ * | 2 | `query{mode:"agent_routed",  evidence_only:true, budget:"low"}` | rung 1 got **403** *and* `recallFallback === "agent_routed"` |
+ * | 3 | `context{mode:"sections"}` | only when `recallAssemble === "server"` |
  *
  * **Rung 2 is opt-in, and off by default** (`MUBIT_CC_RECALL_FALLBACK`). It buys the only
- * recall an instance with direct search disabled can serve, and it pays for it with a routing
- * LLM call on every prompt, and that call routinely takes longer than the entire recall
- * budget it has to fit inside. Nearly every one of those aborts *after* spending the call,
- * so the default trades recall nobody was getting for latency everybody was paying. Rung 1
- * sends no model call at all and is the path the docs call the default.
+ * recall an instance with direct search disabled can serve, and it routinely takes longer
+ * than the entire recall budget it has to fit inside. Nearly every one aborts, so the default
+ * trades recall nobody was getting for latency everybody was paying. Rung 1 is the fast path
+ * and the one the docs call the default.
  *
  * So rung 3 is the *last* rung, not the first, and it is never reached by default — its
  * absence is asserted explicitly by the tests, because it is the first thing a well-meaning
- * maintainer would "simplify" into place, at two LLM calls in front of every keystroke.
+ * maintainer would "simplify" into place, putting the slowest call in front of every keystroke.
  *
  * `recallAssemble: "server"` substitutes rung 3 for the ladder rather than appending itself
- * to it: paying rung 1 and then rung 3 would cost three LLM calls for one recall.
+ * to it: running rung 1 and then rung 3 would stack both latencies on one recall.
  *
  * ---------------------------------------------------------------------------
  * A 403 on rung 1 is a verdict, not a fault
@@ -84,54 +82,48 @@ import { log } from './log.mjs';
 import { recordRules } from './rules.mjs';
 import { readJson, resolveDataDir, writeJsonAtomic } from './state.mjs';
 
-/** Rung 2 costs an LLM call; do not start one that cannot land. */
+/** Rung 2 is slow; do not start one that cannot land. */
 const RUNG2_MIN_BUDGET_MS = 500;
 
-/** §5.2 rung-1 body, verbatim. */
+/** The rung-1 request body. */
 const ENTRY_TYPES = Object.freeze(['mental_model', 'rule', 'lesson', 'fact', 'trace']);
 const QUERY_LIMIT = 8;
 
 /**
- * The budget below which rung 1 opts OUT of the server's cross-run lesson overlay.
+ * The budget below which rung 1 opts OUT of cross-run lessons.
  *
- * `entry_types` above contains `lesson`, and that alone puts the query on a second retrieval
- * lane: alongside the run-scoped search, the server runs an unscoped one to surface lessons
- * learned in OTHER runs. The run-scoped search takes a bounded fast path. The unscoped one
- * has no run to bound it by, which makes it the half of a recall least able to promise an
- * answer inside a budget — and it is the same price whether it finds a lesson or finds
- * nothing.
+ * `entry_types` above contains `lesson`, and by default that also asks for lessons learned in
+ * OTHER runs. Those make a recall noticeably slower, and the wait is the same whether one is
+ * found or not.
  *
  * So the threshold sits above anything a blocking hook can offer: `prompt-recall` has to
  * answer before the user's prompt goes out and therefore always opts out, while the detached
- * refresh behind it always clears the threshold and keeps the overlay. The dial is a budget
+ * refresh behind it always clears the threshold and keeps them. The dial is a budget
  * the caller already has to set, not a new one to discover, and the rule reads the same way
- * in both directions — ask for the unbounded lane only where there is room to pay for it.
+ * in both directions — ask for cross-run lessons only where there is room to wait for them.
  *
  * Opting out here is NOT the same as going without cross-run memory, and the distinction is
  * easy to lose: `session-start` fetches global-scope lessons once per session on their own
  * bounded route, independent of this flag, and that is the path standing lessons actually
- * arrive on. What this threshold decides is only whether the *per-prompt* overlay is asked
- * for as well. Set `recallCrossRun: "on"` to pay for it on the blocking path anyway.
+ * arrive on. What this threshold decides is only whether the *per-prompt* recall asks for
+ * them as well. Set `recallCrossRun: "on"` to wait for them on the blocking path anyway.
  */
 const CROSS_RUN_MIN_BUDGET_MS = 3000;
 
 /**
- * The `rank_by` modes the server actually has. Anything else — `auto` included — is
- * left off the wire entirely.
+ * The `rank_by` modes the API accepts. Anything else — `auto` included — is left off the
+ * wire entirely.
  *
- * `rank_by` selects how the server weights semantic, lexical and recency scores:
- * `relevance` is similarity-dominant, `freshness` is recency-dominant, `balanced` sits
- * between them. The exact weights are the server's, are operator-tunable per instance, and
- * are deliberately not restated here — `explain: true` reports the ones actually used.
+ * `relevance` favours similar memories, `freshness` recent ones, and `balanced` sits between
+ * them.
  *
- * The server falls through to its default weighting on an unknown value, so a bad mode is
- * inert rather than an error — which is precisely why it is whitelisted here. A typo that
- * ranks at the default while sitting in the request log looking like a choice is a bug with
+ * An unknown value is not an error, so a bad mode is inert — which is precisely why it is
+ * whitelisted here. A typo that sits in the request log looking like a choice is a bug with
  * no symptom. `auto` is a client-side word (`lib/rank.mjs`) and never reaches the wire.
  */
 const RANK_MODES = Object.freeze(['relevance', 'balanced', 'freshness']);
 
-/** §5.2 rung-3 body, verbatim. */
+/** The rung-3 request limit. */
 const CONTEXT_LIMIT = 6;
 
 // ---------------------------------------------------------------------------
@@ -156,12 +148,10 @@ const CONTEXT_LIMIT = 6;
  * ---------------------------------------------------------------------------
  * The known weakness of this path, measured rather than assumed
  * ---------------------------------------------------------------------------
- * `GetContext` does **not** order its evidence by retrieval score. It re-sorts into a fixed
- * section hierarchy — mental_models, active_rules, lessons, …, working_memory(9), traces(10) —
- * with importance second and the fused score only as a third-order tiebreak, and then spends
- * `max_token_budget` top-down in that order. So the two sections a resume question is actually
- * about are the *last* to be paid for, and on a real run against api.mubit.ai a 1000-token
- * budget was consumed by 4 lessons and 2 traces with `working_memory` rendering nothing at all.
+ * `GetContext` fills its sections in a fixed order and spends `max_token_budget` top-down in
+ * that order, with `working_memory` and `traces` near the end. So the two sections a resume
+ * question is actually about are the *last* to be paid for, and a small budget can run out
+ * before `working_memory` renders anything at all.
  *
  * Narrowing this list to `working_memory,traces` was measured too and is worse, not better: a
  * `trace` is a captured tool call rather than a summary, so the block became 553 tokens of one
@@ -178,7 +168,7 @@ export const RESUME_SECTIONS = Object.freeze([
 ]);
 
 /**
- * The entry types that fill those sections (`lib/assemble.mjs`'s §4.10 table).
+ * The entry types that fill those sections (`lib/assemble.mjs`'s table).
  *
  * `working_memory` has no entry type here and does not need one: `include_working_memory: true`
  * on the request is what fills it, and it is the section most of the answer comes from. That
@@ -229,7 +219,7 @@ export const RESUME_LIMIT = 12;
  */
 const RESUME_TIMEOUT_MS = 20_000;
 
-/** §6.1 `resumeTokenBudget`, used when a config could not be resolved. */
+/** `resumeTokenBudget`, used when a config could not be resolved. */
 const RESUME_TOKEN_BUDGET = 1000;
 
 /** The policy verdict file, keyed by endpoint hash — the same scheme as the breaker. */
@@ -248,7 +238,7 @@ const ENDPOINT_HASH_LEN = 12;
  * @property {string} emptyReason
  * @property {string[]} refIds
  * @property {import('./assemble.mjs').AssembledEntry[]} entries  per-entry data; [] off rungs 1-2
- * @property {string} [state]   the §4.7 ConnState, on failure only
+ * @property {string} [state]   the ConnState, on failure only
  * @property {string} [error]
  */
 
@@ -315,36 +305,36 @@ async function ladder(cfg, o) {
     limit: QUERY_LIMIT,
     entry_types: [...ENTRY_TYPES],
     include_working_memory: true,
-    // `env_tags` is accepted on the query route but not on the context route — version-aware
-    // tag scoring is capability rungs 1-2 gain over rung 3, not something they give up.
+    // `env_tags` is accepted on the query route but not on the context route — a capability
+    // rungs 1-2 gain over rung 3, not something they give up.
     // Tagged from the directory this prompt was sent in, not the one the session launched
-    // in — the same reason the run id reads the payload. A recall scored against `repo:`
-    // tags from the wrong repo is worse than one scored against none.
+    // in — the same reason the run id reads the payload. A recall tagged with the wrong repo
+    // is worse than an untagged one.
     env_tags: envTags(cfg, o.projectDir),
     // `rank_by` is the same trap as `env_tags` above, one field further on. `/context`
     // accepts no ranking field of ANY kind,
     // which makes freshness the second capability rungs 1-2 gain over rung 3 rather than
     // something they give up. What makes it a trap rather than a limitation: turning rung 3
     // on (`recallAssemble: "server"`) does not fail, warn, or fall back: it silently reverts
-    // every recall to the default fusion weights, and "where were we?" quietly goes back to
+    // every recall to the default ordering, and "where were we?" quietly goes back to
     // answering with whatever is most similar. Documented in the README's `recallAssemble`
     // row for the same reason.
     //
     // Omitted rather than sent when it resolves to nothing: absent IS `relevance`
     // server-side, so there is no shape of request this spread cannot express.
     ...(rankBy ? { rank_by: rankBy } : {}),
-    // Opting out of the cross-run lesson overlay, and the ONLY field here that is sent
-    // to make the request cheaper rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
+    // Opting out of cross-run lessons, and the ONLY field here that is sent to make the
+    // request faster rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
     //
-    // Omitted rather than sent as `false` when the overlay is wanted: absent IS `false`
-    // server-side, and a request log that only ever shows the field when somebody declined
-    // the lane is easier to read than one where every request carries it.
+    // Omitted rather than sent as `false` when they are wanted: absent IS `false`, and a
+    // request log that only ever shows the field when somebody declined them is easier to
+    // read than one where every request carries it.
     ...(crossRun ? {} : { prefer_current_run: true }),
   };
 
   let denied = readPolicyDenial(cfg);
 
-  // --- RUNG 1. Zero LLM calls.
+  // --- RUNG 1. The fast path.
   if (!denied) {
     const budget = remaining(cfg, o.deadline);
     // Our own budget ran out, which is not a verdict about the server: reported as an empty
@@ -365,11 +355,11 @@ async function ladder(cfg, o) {
         // `warn`, not `info`: the default log level is `warn`, and this is the single most
         // important fact about the install — every recall from here on returns nothing until
         // an operator enables direct search. Logging it below the default level is how a
-        // permanently dead recall path stays invisible.
+        // recall path that never returns anything stays invisible.
         log(cfg, 'warn', 'prompt-recall: direct_bypass is disabled by instance policy and '
           + 'MUBIT_CC_RECALL_FALLBACK is "none", so this recall returns empty. Ask your operator '
-          + 'to enable direct search, or set MUBIT_CC_RECALL_FALLBACK=agent_routed to pay an LLM '
-          + 'call per prompt instead.', { run_id: o.runId });
+          + 'to enable direct search, or set MUBIT_CC_RECALL_FALLBACK=agent_routed to accept a '
+          + 'slower recall instead.', { run_id: o.runId });
         return empty(1, 'policy_denied');
       }
       log(cfg, 'warn', 'prompt-recall: direct_bypass is disabled by policy; descending to rung 2',
@@ -377,13 +367,13 @@ async function ladder(cfg, o) {
       denied = true;
     } else {
       // "Any other failure → give up; this is a transport/server problem, not policy."
-      // A 401 lands here, deliberately: spending an LLM call on rung 2 with a broken key
-      // buys a second 401.
+      // A 401 lands here, deliberately: trying rung 2 with a broken key only buys a second
+      // 401.
       return failure(res.state, res.error, 1);
     }
   }
 
-  // --- RUNG 2. One LLM call, opt-in, and only ever after a rung-1 probe was refused.
+  // --- RUNG 2. Slow, opt-in, and only ever after a rung-1 probe was refused.
   // The cached-denial path arrives here too, on every prompt for the next 24 h — the fresh
   // 403 above explains itself once, this keeps the door shut quietly thereafter.
   if (cfg.recallFallback !== 'agent_routed') return empty(1, 'policy_denied');
@@ -402,17 +392,16 @@ async function ladder(cfg, o) {
 }
 
 /**
- * Rung 3 — `POST /v2/control/context`, two LLM calls, opt-in only. The server has already
- * assembled the block, so it is injected verbatim: re-assembling what two LLM calls just
- * paid for would be pure waste.
+ * Rung 3 — `POST /v2/control/context`, opt-in only. The server has already assembled the
+ * block, so it is injected verbatim: re-assembling it would be pure waste.
  *
  * `rank_by` does not reach it either, and cannot: `/context` accepts no ranking field, so
  * this rung always ranks at the service's defaults. See the note beside the rung-1
  * body — it is the one cost of `recallAssemble: "server"` that nothing at runtime reports.
  *
  * The seen-set does not reach this rung, and cannot: the block is the server's rendering and
- * the client has no seam inside it to degrade. An operator paying two LLM calls per prompt
- * pays full token price too. `pointers` is 0 here, honestly rather than by omission.
+ * the client has no seam inside it to degrade. An operator who chose this rung pays full
+ * token price too. `pointers` is 0 here, honestly rather than by omission.
  *
  * @param {Record<string, any>} cfg
  * @param {RecallOptions} o
@@ -469,8 +458,7 @@ async function rungThree(cfg, o) {
  * so it declines to vote at all.
  *
  * 20 s is the right deadline for the same reason `recall-refresh` ignores `recallBudgetMs`:
- * nothing is waiting. Rung 3 costs two LLM calls, and an agent-routed call is slow enough
- * that no blocking budget could hold one.
+ * nothing is waiting. Rung 3 is slow enough that no blocking budget could hold it.
  *
  * Never throws and never rejects — every failure is already a shape in `Outcome`.
  *
@@ -554,8 +542,8 @@ function fromContext(responseBody, rung) {
 
 /**
  * Rungs 1-2 answer with `evidence[]`; `lib/assemble.mjs` renders it into the same shape,
- * in the same order, with the same `emptyReason` vocabulary rung 3 would have produced
- *. That is what makes `additionalContext` rung-agnostic.
+ * in the same order, with the same `emptyReason` vocabulary rung 3 would have produced.
+ * That is what makes `additionalContext` rung-agnostic.
  *
  * It is also where the rule store is filled. The `rule`-typed entries in this same
  * `evidence[]` are written to `runs/<run_id>/rules.json` for `hooks/src/pre-tool.mjs` to read
@@ -605,7 +593,7 @@ function fromEvidence(cfg, responseBody, rung, o) {
 }
 
 /**
- * The block's token ceiling: the caller's, then the config's, then §6.1's default. A
+ * The block's token ceiling: the caller's, then the config's, then the built-in default. A
  * `SubagentStart` caller overrides it and nothing else.
  * @param {Record<string, any>} cfg @param {RecallOptions} o @returns {number}
  */
@@ -614,7 +602,7 @@ function tokenBudgetOf(cfg, o) {
 }
 
 /**
- * The query's fusion weights: the caller's, then the config's, then nothing.
+ * The query's ranking mode: the caller's, then the config's, then nothing.
  *
  * "Nothing" is a real answer here and the reason this is not modelled with a default: the
  * field is optional on `/query`, and absent means exactly what `relevance` means.
@@ -633,12 +621,12 @@ function rankByOf(cfg, o) {
 }
 
 /**
- * Whether this call may ask for the server's cross-run lesson overlay.
+ * Whether this call may ask for cross-run lessons.
  *
  * `on` and `off` are pins. `auto` — the default — reads the budget the caller arrived with,
  * so the answer is a property of the PATH rather than of the installation: a hook that must
- * answer inside the host's prompt timeout declines the lane, the detached refresh behind it
- * takes it, and neither needed to be told which one it is. See `CROSS_RUN_MIN_BUDGET_MS`.
+ * answer inside the host's prompt timeout declines them, the detached refresh behind it
+ * asks for them, and neither needed to be told which one it is. See `CROSS_RUN_MIN_BUDGET_MS`.
  *
  * An absent or unparseable deadline is treated as no slack. That is the safe direction: the
  * cost of wrongly declining is one cross-run lesson, the cost of wrongly accepting is the

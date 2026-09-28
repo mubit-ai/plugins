@@ -13,17 +13,13 @@
  *      user says otherwise, and a constant baked into a build is not a promise this repo can
  *      keep on its own.
  *
- *   2. **The run id on a write.** Every write tool takes an optional `session_id`, so without
- *      a guard the run a write lands in is whatever the caller passed rather than the one the
- *      launcher derived — and an MCP write would stop matching the hook captures beside it.
+ *   2. **The run id on a write.** Every write tool takes an optional `session_id`; the guard
+ *      pins every write to the launcher's run, so an MCP write always matches the hook
+ *      captures beside it.
  *
  *   3. **The run id on a catalogue read.** `mubit_lessons` is the one read tool that resolves
- *      no default for the same optional argument, so with it absent the bundle sends
- *      `run_id: ""`. The transport backfills that field only when it is `== null`, and `?? ""`
- *      is precisely the spelling that defeats it — so the value goes out empty, which is the
- *      request that asks for every run the key can see rather than the one the model is
- *      working in. Filling the field is the whole of the fix; answering the question better
- *      is the rest of it.
+ *      no default for the same optional argument, so the guard fills in the run the model is
+ *      working in before the read goes out — and answers the question better while it is there.
  *
  *   4. **Provenance.** A lesson written through `mubit_learned` reached the instance saying
  *      nothing about which session or which prompt produced it; its `metadata_json` was
@@ -49,8 +45,7 @@
  *
  * The read path has a second rule on top of it. **Failure there is narrow, not wide**: a
  * catalogue this file could not assemble falls back to the *pinned* request, never to the one
- * the bundle built. Failing open would restore the wide read at exactly the moment nobody can
- * see that it happened.
+ * the bundle built.
  */
 
 import { readdirSync, statSync } from 'node:fs';
@@ -67,12 +62,12 @@ import { readJson, runDir } from '../../lib/state.mjs';
  * The scope lattice, widest last. Every step up this list is a step out of the run that wrote
  * the lesson.
  *
- * The widest scope is here to be clamped, never to be chosen: it is not a value a client sets
- * for itself, so it is absent from `CEILINGS` below.
+ * `org` is recognised only so it can be clamped; it is not a configurable ceiling, so it is
+ * absent from `CEILINGS` below.
  */
 const LATTICE = ['run', 'session', 'global', 'org'];
 
-/** What a user may set the ceiling to — the three the control plane accepts from a client. */
+/** What a user may set the ceiling to. */
 const CEILINGS = ['run', 'session', 'global'];
 
 /** The route a lesson leaves by. Matched on the pathname only; the host is the user's. */
@@ -178,8 +173,8 @@ const RESHAPED_HEADERS = ['content-length', 'content-encoding'];
  *
  * The fallback is the *narrowest* scope on purpose. The value this setting overrides is the
  * bundled SDK's hard-coded `session`, so "unparseable — keep what the SDK sent" would let a
- * typo silently widen every write. The widest scope is unrecognised here for the same reason
- * it is absent from `CEILINGS`: it is not a value a client sets for itself.
+ * typo silently widen every write. `org` is unrecognised here for the same reason it is absent
+ * from `CEILINGS`: it is not a configurable ceiling.
  *
  * @param {unknown} value
  * @returns {'run'|'session'|'global'}
@@ -555,9 +550,9 @@ function isCrossRunAsk(scope) {
  * Which rows a caller asked for, in the order the filters have to run.
  *
  * **Limit is applied last, by the caller of this function**, and that ordering is the entire
- * point of assembling a catalogue rather than forwarding the request. Asking the catalogue
- * route for a handful of rows at a named scope comes back empty against a real instance, and
- * an empty answer reads exactly like a memory that has never learned anything.
+ * point of assembling a catalogue rather than forwarding the request: a limit applied before
+ * the scope filter can leave nothing, and an empty answer reads exactly like a memory that
+ * has never learned anything.
  *
  * `mine` is a union because the run id is spelled two ways across the two routes the plugin
  * reads lessons from: bare on one, namespaced inside the metadata on the other. Either half
@@ -692,7 +687,7 @@ function censusOnce(cfg) {
     if (inflight) return inflight;
     inflight = (async () => {
       try {
-        // No `run`, which is what makes this instance-wide, and no breaker bookkeeping:
+        // The whole census, filtered locally below, and no breaker bookkeeping:
         // `lessonCensus` reads on the read-only options, so a feed that is down cannot
         // close the circuit on the hooks running beside this process.
         const res = await lessonCensus(cfg, {});
@@ -721,7 +716,7 @@ function censusOnce(cfg) {
  * touches neither. So `session-end` — deciding whether there is anything to reflect over —
  * could see a session whose whole memory contribution was `mubit_learned` and correctly
  * conclude, from the only evidence it had, that nothing had been ingested. It then skipped
- * reflect, which is the one call authorised to widen a lesson past the run that wrote it.
+ * reflect, which is what carries a lesson past the run that wrote it.
  *
  * Local, synchronous and best-effort, exactly like every other marker write: a failure here
  * costs a reflect, never the write that just succeeded.
@@ -995,7 +990,7 @@ export function installFetchGuard(opts) {
       }
     } catch {
       // Anything unexpected about the request means it goes out exactly as the server
-      // built it. A guard that could refuse a write is worse than the leak.
+      // built it. A guard that could refuse a write is worse than a missed clamp.
       note = null;
       noteKey = INGEST_NOTE_KEY;
       sendInit = init;

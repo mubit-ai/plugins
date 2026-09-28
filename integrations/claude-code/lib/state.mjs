@@ -39,7 +39,7 @@ const DATA_DIR_PREFIX = 'mubit-memory';
 // ---------------------------------------------------------------------------
 
 /**
- * §4.8 resolution order:
+ * Resolution order:
  *   `MUBIT_CC_DATA_DIR` -> `CLAUDE_PLUGIN_DATA` -> `cfg.dataDir` -> `liveDataDir()`.
  *
  * `${CLAUDE_PLUGIN_DATA}` survives plugin updates; `${CLAUDE_PLUGIN_ROOT}` does
@@ -270,11 +270,11 @@ export function writeJsonAtomic(p, value, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// pruneStale — the §7 TTL table
+// pruneStale — the TTL table
 // ---------------------------------------------------------------------------
 
 /**
- * The §7 TTL table, as a sweep. Called only from `drain.mjs` and
+ * The TTL table, as a sweep. Called only from `drain.mjs` and
  * `session-end.mjs` — never on a blocking hook's critical path — and gated to
  * at most once an hour by an `O_EXCL` `prune.lock`.
  *

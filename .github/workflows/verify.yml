@@ -1,8 +1,7 @@
 # The plugin's own checks.
 #
-# `npm ci` cannot work in this repository: `package.json` depends on a `file:../mcp` sibling
-# that exists in the source repository and not here, so resolving the tree fails before it
-# starts. Almost nothing under test needs a dependency — every hook, library and script imports
+# `npm ci` cannot work in this repository: `package.json` has a development dependency this
+# repository does not carry, so resolving the tree fails before it starts. Almost nothing under test needs a dependency — every hook, library and script imports
 # node builtins and local files only — with one exception: `test/engine-floor.test.mjs` imports
 # esbuild, because the guarantee it checks is "the shipped bundle parses on the oldest Node we
 # claim to support", and the honest way to check that is to hand the file to the same parser the
@@ -11,8 +10,8 @@
 #
 # The bundles under `hooks/dist`, `mcp/dist` and `bin/` are committed artifacts: Claude Code
 # installs a plugin by fetching the repository, so whatever is committed is what runs. The last
-# step rebuilds every target except the vendored server — which does need the private sibling —
-# and fails if the result differs from what is committed. That is the invariant that keeps a
+# step rebuilds every target except the vendored server, which cannot be rebuilt here, and
+# fails if the result differs from what is committed. That is the invariant that keeps a
 # comment edited in `hooks/src` from living on inside a stale bundle's sourcemap.
 
 name: verify

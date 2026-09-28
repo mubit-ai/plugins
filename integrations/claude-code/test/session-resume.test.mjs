@@ -243,8 +243,8 @@ async function mubitThatNeverAnswersContext() {
  * means the feature has quietly been put back on the blocking path.
  */
 
-// §5.1's whole budget is 2500 ms internal against a 5 s hook timeout, with the harness's hard
-// stop at 3200 ms. A briefing that costs two LLM calls cannot be bought with that, so the hook
+// Session-start's whole budget is 2500 ms internal against a 5 s hook timeout, with the
+// harness's hard stop at 3200 ms. A resume briefing takes longer than that, so the hook
 // must return without having seen the answer — with its steer block intact, not the
 // `{suppressOutput: true}` a blown budget emits.
 test('session-start returns inside its budget while the resume call never answers', async (t) => {
@@ -259,7 +259,7 @@ test('session-start returns inside its budget while the resume call never answer
   assertHookContract(r);
   assert.ok(r.ms < 3200,
     `session-start took ${r.ms}ms against a 3200ms harness budget. The resume call is worth `
-    + 'up to 20 s and two LLM calls; the moment any of it is awaited here, every session in '
+    + 'up to 20 s; the moment any of it is awaited here, every session in '
     + 'the world opens on a stalled hook');
   assert.equal(r.json?.hookSpecificOutput?.hookEventName, 'SessionStart',
     'a hook that blew its budget emits {suppressOutput:true} and no context at all — the '
@@ -308,7 +308,7 @@ test('the resume request is made by a second process, after session-start has re
 
   assert.equal(server.countOf('POST', '/v2/control/context'), 1,
     'one child, one briefing, one request — so `session-start` dialled nothing itself, and '
-    + 'the user paid for none of it. A second would be a second pair of LLM calls');
+    + 'the user paid for none of it. A second would be a second briefing the user pays for');
 });
 
 // ===========================================================================
@@ -389,7 +389,7 @@ test('the resume request body is a sections context request, with four fields de
       'working memory is the section a resume question is actually asking about, and it is '
       + 'the one no entry_type in this request can fill');
     assert.equal(body.limit, 12);
-    assert.equal(body.max_token_budget, 1000, '§6.1 `resumeTokenBudget`');
+    assert.equal(body.max_token_budget, 1000, '`resumeTokenBudget`');
     assert.deepEqual(body.sections, [...RESUME_SECTIONS]);
     assert.deepEqual(body.entry_types, [...RESUME_ENTRY_TYPES]);
     assert.equal(body.run_id, RUN_ID);
@@ -957,8 +957,8 @@ test('resumeBlock off: no second process, no context call, nothing written', asy
  *
  * On is the right default because the cost is per SESSION, not per prompt. The three settings
  * that ship off are off because they cost something on every turn — `recallAsync` a second
- * process, `recallAssemble: server` two LLM calls, `preToolWarnings` text in front of a tool
- * call. This is one process and two LLM calls once, against the prompt where the model knows
+ * process, `recallAssemble: server` a slower recall, `preToolWarnings` text in front of a tool
+ * call. This is one process and one briefing once, against the prompt where the model knows
  * least about what it is walking into.
  */
 test('resumeBlock defaults ON: an install that sets nothing gets a briefing', async (t) => {

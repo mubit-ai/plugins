@@ -71,7 +71,7 @@ const DEFAULT_MAX_STRATEGIES = 5;
 const MAX_STRATEGIES = 50;
 /** The same bound the SessionEnd reflect uses: the tail of the run, of every kind. */
 const REFLECT_LAST_N = 200;
-/** Reflect and strategies are LLM-backed and dial wide; a checkpoint carries a snapshot. */
+/** Reflect and strategies can take a while; a checkpoint carries a snapshot. */
 const SLOW_MS = 25_000;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 

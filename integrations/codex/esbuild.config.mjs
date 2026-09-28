@@ -97,8 +97,7 @@ const BINS = ['auth', 'activity', 'pin', 'admin', 'import', 'handoff', 'dashboar
  *
  * It is **copied**, not regenerated, and that is what lets `codex-mcp.test.mjs` assert the
  * two are byte-identical rather than merely equivalent. Regenerating would also require the
- * `../mcp` TypeScript sibling, which does not exist in the generated `claude-plugins` mirror
- * this tree lives in.
+ * `../mcp` TypeScript sibling, which this checkout does not have.
  */
 const VENDORED_SERVER = resolve(SHARED, 'mcp', 'dist', 'server.js');
 

@@ -2,8 +2,8 @@
 /**
  * `lib/breaker.mjs` — the connection-state classifier and the circuit breaker.
  *
- * The breaker: states, thresholds, cold start, and `breaker/<endpoint_hash>.json`,
- * §6.1 (`MUBIT_CC_BREAKER_*`).
+ * The breaker: states, thresholds, cold start, and `breaker/<endpoint_hash>.json`, tuned by
+ * `MUBIT_CC_BREAKER_*`.
  *
  * Every hook is a short-lived process, so the breaker lives in a file — one file per
  * endpoint, `breaker/<sha256(endpoint).slice(0,12)>.json`, so switching between a local
@@ -73,7 +73,7 @@ const TIMEOUT_ESCALATION = 3;
  */
 const NEVER_WARMING = new Set(['ready', 'auth_failed', 'unconfigured']);
 
-/** §6.1 fallbacks, used only when a caller hands us a partial config. */
+/** Fallbacks, used only when a caller hands us a partial config. */
 const DEFAULT_THRESHOLD = 5;
 const DEFAULT_WINDOW_MS = 300000;
 const DEFAULT_COOLDOWN_MS = 120000;
@@ -89,7 +89,7 @@ export const UNREACHABLE_CODES = new Set([
   'EAI_AGAIN', 'EPIPE',
 ]);
 
-/** §4.7 "AbortError / deadline exceeded". `UND_ERR_*_TIMEOUT` is undici's own spelling. */
+/** "AbortError / deadline exceeded". `UND_ERR_*_TIMEOUT` is undici's own spelling. */
 export const TIMEOUT_CODES = new Set([
   'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
@@ -182,7 +182,7 @@ function toStatus(v) {
 }
 
 // ---------------------------------------------------------------------------
-// Breaker/<sha256(endpoint).slice(0,12)>.json
+// breaker/<sha256(endpoint).slice(0,12)>.json
 // ---------------------------------------------------------------------------
 
 /**
@@ -227,7 +227,7 @@ function fresh() {
 }
 
 /**
- * §6.1 knobs, through `cfg.breaker`. Never hard-coded: the tests shrink all three, and a
+ * The `MUBIT_CC_BREAKER_*` knobs, through `cfg.breaker`. Never hard-coded: the tests shrink all three, and a
  * nonsense value (0, NaN, negative) falls back rather than opening a breaker on request one.
  * @param {Record<string, any>} [cfg]
  */
@@ -241,7 +241,7 @@ function params(cfg) {
 }
 
 /**
- * Read and sanitise. §4.9: a truncated, empty, absent or wrongly typed file is normal after
+ * Read and sanitise. A truncated, empty, absent or wrongly typed file is normal after
  * a SIGKILL or a full disk, and every one of them degrades to a fresh, closed breaker.
  * @param {Record<string, any>} cfg
  * @param {number} now

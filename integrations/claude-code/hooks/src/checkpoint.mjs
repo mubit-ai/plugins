@@ -12,8 +12,8 @@
  * Every other hook in this plugin would rather lose a memory than cost the user a
  * millisecond, because the content it is trying to capture is still on disk afterwards.
  * `PreCompact` is the single event where that is false: once the host compacts, the transcript
- * this hook was handed is **gone**, and nothing later can reconstruct it. §5.6 therefore
- * spends a 5000 ms internal budget against the 10 s `hooks.json` timeout, and §5.6's failure
+ * this hook was handed is **gone**, and nothing later can reconstruct it. So this hook
+ * spends a 5000 ms internal budget against the 10 s `hooks.json` timeout, and its failure
  * line is the one failure in the whole plugin the user is shown:
  *
  *     mubit: checkpoint failed (server_error) — pre-compaction context not saved
@@ -22,7 +22,7 @@
  * gets to fail a compaction.
  *
  * ---------------------------------------------------------------------------
- * The §5.6 flow, and the two places this file deviates from its step numbering
+ * The flow, and the two places this file deviates from its step numbering
  * ---------------------------------------------------------------------------
  *   1. read `transcript_path` — the LAST 200 KB of message text
  *   2. redact it, before it goes anywhere
@@ -30,8 +30,8 @@
  *   3. POST /v2/control/checkpoint
  *   4. persist {checkpoint_id, token_estimate, at} to runs/<run_id>/checkpoints.json
  *
- * **Step 5 runs before step 3 on purpose.** §5.6 calls the spooled item the thing that makes
- * the anchor survive "even if the checkpoint call itself failed" — and the checkpoint call
+ * **Step 5 runs before step 3 on purpose.** The spooled item is the thing that makes the
+ * anchor survive even if the checkpoint call itself failed — and the checkpoint call
  * can fail in a way a 500 does not cover: by hanging until the harness deadline fires and
  * takes the rest of the body with it. A local file write that happens first survives that;
  * one queued behind the socket does not. The item pays for it by carrying the `label` rather
@@ -46,7 +46,7 @@
  * ---------------------------------------------------------------------------
  * `--post` injects nothing, and the re-anchor ships from SessionStart instead
  * ---------------------------------------------------------------------------
- * §5.6 gives `--post` (800 ms, **zero network**) the job of telling the model what the anchor
+ * The design gave `--post` (800 ms, **zero network**) the job of telling the model what the anchor
  * is and how to ask for it. It cannot do that job, and it never could: Claude Code validates
  * `hookSpecificOutput` against a closed set of `hookEventName` values, `PostCompact` is not
  * one of them, and a name outside the set fails the **whole** output —
@@ -92,8 +92,8 @@ import { readJson, resolveDataDir, safeSegment, writeJsonAtomic } from '../../li
 const MODE = process.argv.slice(2).includes('--post') ? 'post' : 'pre';
 
 /**
- * §5.6 budgets. `hooks.json` allows PreCompact 10 s and PostCompact 5 s; the harness budget
- * sits inside that with room to emit stdout, and `PRE_BUDGET_MS` is the §5.6 working deadline
+ * Budgets. `hooks.json` allows PreCompact 10 s and PostCompact 5 s; the harness budget
+ * sits inside that with room to emit stdout, and `PRE_BUDGET_MS` is the working deadline
  * the flow actually paces itself against.
  */
 const PRE_HARNESS_MS = 8000;
@@ -105,7 +105,7 @@ const PERSIST_RESERVE_MS = 250;
 /** Below this there is no point dialing at all; the socket would not finish handshaking. */
 const MIN_POST_MS = 300;
 
-/** "the last 200 KB of message text". */
+/** The last 200 KB of message text. */
 const SNAPSHOT_BYTES = 200 * 1024;
 
 /**
@@ -138,7 +138,7 @@ const RAW_TAIL_BYTES = 2 * 1024 * 1024;
 
 /**
  * The spooled item is a *summary*, not a second copy of the snapshot: it travels the ordinary
- * ingest path, where §4.4's 8 KiB output cap applies. This leaves room for the header line
+ * ingest path, where the 8 KiB output cap applies. This leaves room for the header line
  * under that cap, so the item is never truncation-marked.
  */
 const SUMMARY_TAIL_BYTES = 6 * 1024;
@@ -178,7 +178,7 @@ await runHook('checkpoint', {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.6 steps 1-5. Returns the one `systemMessage` the user ever sees from this plugin, in
+ * Steps 1-5. Returns the one `systemMessage` the user ever sees from this plugin, in
  * either its saved or its failed form.
  *
  * @param {Record<string, any>} payload
@@ -206,7 +206,7 @@ async function precompact(payload, cfg, ctx) {
   // wire that carries an unscrubbed transcript.
   const snap = buildSnapshot(payload, cfg);
   if (!snap.text) {
-    // The transcript is missing, unreadable, empty, or carries no message text (§4.9 — a
+    // The transcript is missing, unreadable, empty, or carries no message text (a
     // compaction the plugin cannot snapshot must still not break the compaction). The user
     // is told, because this loses the same data the server failure below loses.
     log(cfg, 'warn', 'checkpoint: no readable transcript text; pre-compaction context not saved', {
@@ -220,10 +220,10 @@ async function precompact(payload, cfg, ctx) {
   // distinguishable — `precompact-1` and `precompact-7` are different moments in one run.
   const label = `${LABEL_PREFIX}${history.length + 1}`;
 
-  // §5.6 step 5, run early — see the header. The belt goes on before the braces.
+  // Step 5, run early — see the header. The belt goes on before the braces.
   attempt(() => spoolSummary(cfg, runId, payload, snap, label));
 
-  // §5.6 step 3. The deadline is this hook's own §5.6 budget rather than
+  // Step 3. The deadline is this hook's own budget rather than
   // `MUBIT_CC_TIMEOUT_MS`: that variable is tuned for the hot paths, where the alternative to
   // giving up is a slow turn. Here the alternative to waiting is losing the context forever.
   const timeoutMs = Math.max(MIN_POST_MS, deadline - Date.now() - PERSIST_RESERVE_MS);
@@ -263,7 +263,7 @@ async function precompact(payload, cfg, ctx) {
     return { systemMessage: failedMessage(state) };
   }
 
-  //
+  // Step 4.
   const tokens = intOr(body.token_estimate, 0);
   attempt(() => persist(cfg, runId, history, {
     checkpoint_id: checkpointId,
@@ -340,7 +340,7 @@ function postcompact(payload, cfg) {
   const latest = readHistory(cfg, runId).at(-1);
   const checkpointId = str(latest?.checkpoint_id);
   if (!checkpointId) {
-    // Nothing stored: `--pre` never ran for this run, its call failed, or §7's 30-day sweep
+    // Nothing stored: `--pre` never ran for this run, its call failed, or the 30-day sweep
     // took the file. The next SessionStart will find the same nothing and steer without an
     // anchor paragraph, which is the correct outcome — "checkpoint undefined holds your
     // context" spends the model's attention on a lie.
@@ -357,7 +357,7 @@ function postcompact(payload, cfg) {
 }
 
 // ---------------------------------------------------------------------------
-// §5.6 steps 1-2 — the snapshot
+// Steps 1-2 — the snapshot
 // ---------------------------------------------------------------------------
 
 /**
@@ -373,7 +373,7 @@ function postcompact(payload, cfg) {
  * The last 200 KB of message text, scrubbed.
  *
  * Order is the point: the tail is selected on **whole record boundaries**, then scrubbed, then
- * capped (§4.4 — "scrub before capping", so a cap can never slice a credential in half and
+ * capped (scrub before capping, so a cap can never slice a credential in half and
  * leave the recognizable prefix). Every stage is individually caught, and a stage that fails
  * yields no snapshot at all: an unredacted transcript is not an acceptable degraded mode.
  *
@@ -391,7 +391,7 @@ function buildSnapshot(payload, cfg) {
   const picked = attempt(() => lastMessages(raw, SNAPSHOT_BYTES), null);
   if (!picked || !picked.text) return NO_SNAPSHOT;
 
-  // `redactText`'s `output` cap is §4.4's 8 KiB, which is the right bound for an ingest item
+  // `redactText`'s `output` cap is 8 KiB, which is the right bound for an ingest item
   // and the wrong one for a checkpoint: it keeps the HEAD of what it caps, so the default
   // would hand back the oldest 8 KiB of the window — the exact opposite of a tail.
   const scrubbed = attempt(
@@ -498,7 +498,7 @@ function lastMessages(raw, maxBytes) {
  * Its text is derived from the **already-redacted** snapshot and re-scrubbed on the way out,
  * so there is no route by which a secret reaches the spool: the second pass is idempotent
  * (placeholders contain `[`, `]` and `:`, none of them in any rule's charset) and buys the
- * §4.4 byte cap for free.
+ * ingest byte cap for free.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
@@ -518,7 +518,7 @@ function spoolSummary(cfg, runId, payload, snap, label) {
     { text: '', redactions: 0, truncated: false });
   if (!body.text.trim()) return;
 
-  // PreCompact → `checkpoint`. §1.5: the intent is always set, or the server// pays for an LLM round trip per item to guess one.
+  // PreCompact → `checkpoint`. The intent is always set.
   const cls = attempt(
     () => classifyTurn('', '', { event: 'PreCompact', trigger: str(payload.trigger) }),
     { intent: 'checkpoint', importance: 'medium', contentType: 'text' });
@@ -540,7 +540,7 @@ function spoolSummary(cfg, runId, payload, snap, label) {
     intent: str(cls.intent) || 'checkpoint',
     importance: importanceOr(cls.importance),
     source: 'agent',
-    // Unix SECONDS (`control.proto`); milliseconds here dates every memory to the year 57000.
+    // Unix SECONDS; milliseconds here dates every memory to the year 57000.
     occurrence_time: Math.floor(Date.now() / 1000),
     // From the payload's directory, not the launch one: after a mid-session `cd` the run id
     // follows the new repo, and `repo:`/`branch:` have to follow it or the item lands in the
@@ -567,7 +567,7 @@ function spoolSummary(cfg, runId, payload, snap, label) {
 }
 
 // ---------------------------------------------------------------------------
-// Runs/<run_id>/checkpoints.json
+// runs/<run_id>/checkpoints.json
 // ---------------------------------------------------------------------------
 
 /** @param {Record<string, any>} cfg @param {string} runId @returns {string} */
@@ -617,7 +617,7 @@ function persist(cfg, runId, history, entry) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.6, verbatim: `mubit: checkpoint failed (<state>) — pre-compaction context not saved`.
+ * The failure line: `mubit: checkpoint failed (<state>) — pre-compaction context not saved`.
  * The parenthetical is the `ConnState`, so "it timed out" and "it rejected my key" are
  * distinguishable without opening a log.
  * @param {string} state
@@ -679,7 +679,7 @@ function idPart(v) {
 }
 
 /**
- * §5.4's discipline, applied here for the same reason: one broken step costs its own
+ * Capture's discipline, applied here for the same reason: one broken step costs its own
  * contribution and nothing else — most importantly, a redaction crash drops the snapshot
  * rather than letting an unredacted one through.
  * @template T
@@ -737,7 +737,7 @@ function importanceOr(v) {
   return ['low', 'medium', 'high', 'critical'].includes(s) ? s : 'medium';
 }
 
-/** `metadata_json` goes on the wire as a STRING, not an object (`control.proto`). */
+/** `metadata_json` goes on the wire as a STRING, not an object. */
 function safeJson(v) {
   try {
     const s = JSON.stringify(v ?? {});

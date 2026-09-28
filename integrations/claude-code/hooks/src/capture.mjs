@@ -18,15 +18,12 @@
  *    is `spawnDetached('drain')`, and only when a trigger fires. That is what makes
  *    "detached" cheap: re-spawning yourself detached on every `PostToolUse` pays node's
  *    startup twice per tool call, so instead capture is pure local I/O — one file write,
- *    well under the §5.4 budget of 40 ms wall.
+ *    well under its budget of 40 ms wall.
  *
- * 2. **Every item carries an `intent`.** The server classifies cheaply when an item
- *    arrives with an intent set, and otherwise falls back to an LLM round trip *per item*.
- *    An item without an
- *    intent is not a cosmetic problem, it is a bill — at tool-call frequency it is the
- *    difference between a plugin you leave on and one you uninstall.
+ * 2. **Every item carries an `intent`.** The plugin knows what kind of event each item is,
+ *    and at tool-call frequency saying so is what keeps ingest fast.
  *
- * §5.4's pipeline, and every step of it individually try/caught so that a redaction crash
+ * The pipeline, every step of it individually try/caught so that a redaction crash
  * drops the item rather than spooling it unredacted:
  *
  *   config -> self-reference -> denied path -> classify -> build text -> redact
@@ -59,7 +56,7 @@ import { readJson, resolveDataDir, safeSegment, writeJsonAtomic } from '../../li
 const BUDGET_MS = 1500;
 
 /**
- * `tool_input` keys that name a file on disk, for the §4.4 stage-2 denylist check.
+ * `tool_input` keys that name a file on disk, for the path denylist check.
  *
  * These are the keys a path is written under. They are no longer the only place a path is
  * *found*: `lib/filechange.mjs` also reads Codex's `apply_patch` bodies, where the subjects
@@ -70,7 +67,7 @@ const PATH_KEYS = [
 ];
 
 /**
- * The tools worth no memory. §3.2's matcher used to be an allowlist of eleven built-in tool
+ * The tools worth no memory. The hook matcher used to be an allowlist of eleven built-in tool
  * names, which is a rule this plugin cannot keep correct: the host owns that set and renames
  * it under us (`Task` -> `Agent`, `KillShell` -> `TaskStop`, `BashOutput` -> `TaskOutput`).
  * What kept the allowlist working at all was the host's own legacy-alias table — it tests a
@@ -107,8 +104,8 @@ const PATH_KEYS = [
  *
  * `AskUserQuestion` is the one that looks like bookkeeping and is not, so it gets its own
  * paragraph: its `tool_response` carries **what the human chose, and the options they turned
- * down**. §4.5 already grades it `feedback` — "the one entry type that records what the
- * human, not the model, decided" — and that is precisely the class of fact a model cannot
+ * down**. It is graded `feedback` — the one entry type that records what the human, not
+ * the model, decided — and that is precisely the class of fact a model cannot
  * re-derive by reading the codebase, which is the whole reason a memory layer exists. It was
  * on this list in an early draft only because, before the `tool_response` fix, the payload
  * looked empty. Do not tidy it back on.
@@ -186,7 +183,7 @@ const API_ERROR_KEY = 'api_error';
  * The taxonomy value is a closed vocabulary of short identifiers; this only bounds a host
  * that sends something else. The free-text `error_details` beside it is deliberately not
  * stored: the decision keys on the taxonomy value alone, and an unbounded API message is a
- * §4.4 question with nothing on the other side of it.
+ * redaction question with nothing on the other side of it.
  */
 const MAX_API_ERROR_CHARS = 64;
 
@@ -246,7 +243,7 @@ function capture(rawPayload, cfg, mode) {
   // 1. capture disabled -> nothing to do.
   if (cfg && cfg.capture === false) return null;
 
-  // 2a. §3.2: the matcher lets every tool through, so the bookkeeping tools are dropped
+  // 2a. The matcher lets every tool through, so the bookkeeping tools are dropped
   //     here. See `SKIP_TOOLS` for why an allowlist in the manifest could not do this job.
   //
   //     `--permission` is dropped by the same list: a permission request for `TodoWrite` is
@@ -257,7 +254,7 @@ function capture(rawPayload, cfg, mode) {
   // The plugin's own mubit_outcome / mubit_learned feed the scorecard before step 2 drops them.
   if (mode === 'tool') attempt(() => noteOwnTool(cfg, payload));
 
-  // 2. §4.4 self-reference suppression. Without it the plugin records its own traffic,
+  // 2. Self-reference suppression. Without it the plugin records its own traffic,
   //    recalls it, then records the recall.
   //
   //    Applied to a *successful* tool call only. The loop this defends against is one the
@@ -274,7 +271,7 @@ function capture(rawPayload, cfg, mode) {
     if (attempt(() => isSelfReference(payload.tool_name, payload.tool_input, cfg), false)) return null;
   }
 
-  // 3. §4.4 stage 2: a denylisted subject is DROPPED, never scrubbed. A scrubbed `.env` is
+  // 3. The path denylist: a denylisted subject is DROPPED, never scrubbed. A scrubbed `.env` is
   //    still a map of which secrets the project holds.
   if (mode === 'tool' || mode === 'failure' || mode === 'permission') {
     if (attempt(() => hasDeniedSubject(payload, cfg), false)) return null;
@@ -453,7 +450,7 @@ function buildToolItem(payload, cfg, mode, runId) {
   // without a round trip. Written here and read by nothing on a blocking path yet.
   if (changes.length) attempt(() => recordFileChanges(cfg, runId, changes));
 
-  // 4. §4.5. `classifyTool` is a function of the tool name and the outcome alone, so a
+  // 4. Classification. `classifyTool` is a function of the tool name and the outcome alone, so a
   //    hostile `tool_input` cannot change the intent — or throw on the way through.
   const cls = attempt(
     () => classifyTool(payload.tool_name, payload.tool_input, failed ? 'failure' : 'ok'),
@@ -494,7 +491,7 @@ function buildToolItem(payload, cfg, mode, runId) {
   return item({
     cfg,
     payload,
-    // "item_id is stable per tool call so a retried drain deduplicates." Derived from
+    // item_id is stable per tool call, so a retried drain deduplicates. Derived from
     // `tool_use_id` and nothing else — a timestamp in here would make every retry a new
     // entry, which is the exact failure the dedup exists to prevent.
     id: `cc-${idPart(payload.tool_use_id) || fallbackId(payload, text)}`,
@@ -558,8 +555,8 @@ function buildToolItem(payload, cfg, mode, runId) {
  *   1. **There is no `tool_response`.** `buildToolItem` would render `Tool(params) -> ` with
  *      nothing after the arrow, which is the exact string that made every early memory this
  *      plugin shipped useless.
- *   2. **The intent is `feedback`, not `tool_output`.** §4.5 grades `feedback` as "the one
- *      entry type that records what the human, not the model, decided", and a request for
+ *   2. **The intent is `feedback`, not `tool_output`.** `feedback` is the one entry type
+ *      that records what the human, not the model, decided, and a request for
  *      approval is a question put to a human. Grading it as tool output files it with the
  *      file reads.
  *   3. **There is no `tool_use_id`.** Codex's `permission-request.command.input` has no such
@@ -568,7 +565,7 @@ function buildToolItem(payload, cfg, mode, runId) {
  *      question asked twice.
  *
  * `medium`, not `high`: a gated call is a routine event under `dontAsk`, and grading every
- * one of them `high` would outrank the failures that §4.5 reserves `high` for.
+ * one of them `high` would outrank the failures that `high` is reserved for.
  *
  * @param {Record<string, any>} payload
  * @param {Record<string, any>} cfg
@@ -657,7 +654,7 @@ function buildTurnItem(payload, cfg, runId, mode, suffix = '') {
   const text = `Q: ${q.text}\n\nA: ${a.text}`;
 
   // A SubagentStop is attributed to the subagent's own `agent_id`, not the parent's.
-  // ingest item (control.proto) has no agent field and the batch-level one belongs
+  // The ingest item has no agent field and the batch-level one belongs
   // to the session, so the attribution rides in `metadata_json` — otherwise a six-subagent
   // fan-out collapses into one indistinguishable blob at recall time.
   const subAgent = str(cls.agentId);
@@ -708,7 +705,7 @@ function buildTurnItem(payload, cfg, runId, mode, suffix = '') {
 }
 
 /**
- * The §5.4 wire shape. `item_id` and `content_type` are REQUIRED — a missing one is a
+ * The ingest wire shape. `item_id` and `content_type` are REQUIRED — a missing one is a
  * 422 for the whole batch, not just this item — and `intent` is always set.
  *
  * @param {{cfg: Record<string, any>, payload: Record<string, any>, id: string, text: string,
@@ -720,10 +717,10 @@ function item(o) {
   // Who this is attributed to. A pure cache read — `lib/actor.mjs` keeps the detection
   // ladder, which shells out to git, on `drain`'s side of the line and nowhere near here.
   //
-  // It goes into `metadata_json` and it must NEVER go into `user_id`. `user_id` is a
-  // retrieval *scope* the server enforces as a filter on query, and `lib/recall.mjs` sends
-  // none — so an actor written there would scope every item this hook captures out of the
-  // recall meant to find it, silently, for as long as attribution was switched on.
+  // It goes into `metadata_json` and it must NEVER go into `user_id`. `user_id` scopes
+  // retrieval, and `lib/recall.mjs` sends none — so an actor written there would keep every
+  // item this hook captures out of the recall meant to find it, silently, for as long as
+  // attribution was switched on.
   const actor = attempt(() => readActor(cfg), '');
   /** @type {Record<string, any>} */
   const out = {
@@ -733,8 +730,7 @@ function item(o) {
     intent: intentOr(o.intent),
     importance: importanceOr(o.importance),
     source: 'agent',
-    // Unix SECONDS, as in the §5.4 example — `occurrence_time` is an int64 of seconds
-    // (control.proto) and handing it milliseconds dates every memory to the year 57000.
+    // Unix SECONDS — `occurrence_time` is an int64 of seconds, and handing it milliseconds dates every memory to the year 57000.
     occurrence_time: Math.floor(Date.now() / 1000),
     // The tags are derived from a directory too, and they ride on every ingested item. A
     // run id that follows a mid-session `cd` while `repo:`/`branch:` stay on the launch repo
@@ -1529,7 +1525,7 @@ function importanceOr(v) {
   return ['low', 'medium', 'high', 'critical'].includes(s) ? s : 'medium';
 }
 
-/** `metadata_json` goes on the wire as a STRING, not an object (control.proto). */
+/** `metadata_json` goes on the wire as a STRING, not an object. */
 function safeJson(v) {
   try {
     const s = JSON.stringify(v ?? {});

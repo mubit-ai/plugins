@@ -1,7 +1,6 @@
 // @ts-check
 /**
- * The closed attribution loop — an end-to-end vertical slice across three hooks
- * (§5.2 step 6 → §5.4 step 8 → §5.5 step 7).
+ * The closed attribution loop — an end-to-end vertical slice across three hooks.
  *
  *   prompt-recall  recalls evidence and persists the RENDERED reference_id[] into
  *                  runs/<run_id>/turns/<prompt_id>.json under `recalled`
@@ -12,8 +11,8 @@
  * written as a scenario test: any one hook can pass its own unit tests and still break the
  * loop at a seam.
  *
- * The seam most likely to break it: `reference_id`, NOT `id`, is what feeds
- * `RecordOutcome.entry_ids` (control.proto). The `queryResponse()` fixture gives
+ * The seam most likely to break it: `reference_id`, NOT `id`, is what an outcome's
+ * `entry_ids` carries. The `queryResponse()` fixture gives
  * them deliberately different values (`e1` vs `ref_rule_1`) so a mix-up cannot pass.
  *
  * These tests are written before the implementation. Failing with
@@ -73,7 +72,7 @@ test('recall → stop → drain attributes the outcome to the recalled reference
   const dir = makeDataDir();
   const e = env(dir, server);
 
-  // 1. Recall. §5.2 step 6: persist the rendered reference_ids for Stop attribution.
+  // 1. Recall: persist the rendered reference_ids for Stop attribution.
   //    prompt-recall runs before stage-prompt in hooks.json, so it creates the turn file.
   const recall = await runHook('prompt-recall', userPromptSubmit(), { env: e });
   assertHookContract(recall);
@@ -84,7 +83,7 @@ test('recall → stop → drain attributes the outcome to the recalled reference
   assert.deepEqual(afterRecall.recalled, RECALLED,
     'the turn records reference_id[], in render order — this is the whole attribution surface');
 
-  // 2. Stop. §5.4 step 8: mark the turn and ALWAYS trigger a drain with the outcome.
+  // 2. Stop: mark the turn and ALWAYS trigger a drain with the outcome.
   const captured = await runHook('capture', stop(), { env: e, args: ['--stop'] });
   assertHookContract(captured);
   const afterStop = readJsonFile(turnPath(dir));
@@ -92,7 +91,7 @@ test('recall → stop → drain attributes the outcome to the recalled reference
   assert.deepEqual(afterStop.recalled, RECALLED, 'Stop must not clobber what recall wrote');
   assert.equal(typeof afterStop.ended_at, 'number');
 
-  // 3. Drain. §5.5 step 7.
+  // 3. Drain.
   const drained = await runHook('drain', {}, { env: e, args: ['--with-outcome', PROMPT_ID] });
   assertHookContract(drained);
   await waitFor(() => server.countOf('POST', '/v2/control/outcome') >= 1, 5000);
@@ -100,8 +99,7 @@ test('recall → stop → drain attributes the outcome to the recalled reference
   const body = server.lastCall('POST', '/v2/control/outcome').body;
 
   // reference_id must be non-empty; "global" is the run-level sentinel and the
-  // real attribution lives in entry_ids[], which reinforces each entry individually
-  // (control.proto).
+  // real attribution lives in entry_ids[], which credits each entry individually.
   assert.equal(body.run_id, RUN_ID);
   assert.equal(body.reference_id, 'global');
   assert.equal(body.outcome, 'success');
@@ -117,7 +115,7 @@ test('recall → stop → drain attributes the outcome to the recalled reference
   for (const bad of EVIDENCE_IDS) {
     assert.ok(!body.entry_ids.includes(bad),
       `entry_ids contains QueryEvidence.id "${bad}" — it must carry reference_id instead ` +
-      '(control.proto). Reinforcement silently targets nothing when this is wrong.');
+      '— an outcome silently credits nothing when this is wrong.');
   }
 });
 
@@ -235,9 +233,8 @@ test('a turn that recalled nothing skips the outcome call entirely', async (t) =
 // ---------------------------------------------------------------------------
 
 // The outcome idempotency_key is derived from (run_id, prompt_id), never random, so a
-// retry after a failed post is a server-side no-op instead of double reinforcement. The
-// server keeps an outcome idempotency ledger across restarts, which only
-// helps if the client sends a stable key.
+// retry after a failed post is recognised as the same outcome instead of counting twice.
+// That only works if the client sends a stable key.
 test('two drains for the same turn send the same idempotency_key', async (t) => {
   const server = await fakeMubit({
     'POST /v2/control/ingest': SLOW_INGEST,

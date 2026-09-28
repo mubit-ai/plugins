@@ -2,8 +2,8 @@
 /**
  * `lib/seen.mjs` — the cross-turn seen-set, at `runs/<run_id>/seen/<session_id>.json`.
  *
- * Guide sections under test: §7 (state layout and the TTL table), §4.8/§4.9 (synchronous,
- * atomic, never throws), §5.2 (who calls it, and when).
+ * Under test: the state layout and the TTL table; that it is synchronous, atomic and never
+ * throws; who calls it, and when.
  *
  * ---------------------------------------------------------------------------
  * What this file is defending

@@ -7,8 +7,8 @@
  *   node labs/runid.mjs '{"session_id":"abc","source":"clear"}'
  *
  * Same two functions every hook calls, same environment, no network, no side effect other
- * than the session-map write `deriveRunId` makes on purpose (see §4.3: the `/clear` counter
- * has to persist somewhere).
+ * than the session-map write `deriveRunId` makes on purpose (the `/clear` counter has to
+ * persist somewhere).
  */
 
 import { loadConfig } from '../integrations/claude-code/lib/config.mjs';

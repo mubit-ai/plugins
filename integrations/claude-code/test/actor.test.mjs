@@ -3,8 +3,8 @@
  * `lib/actor.mjs` — the actor id nobody has to type.
  *
  * The regression this whole module is shaped around lives in `capture.test.mjs`, not here:
- * an actor must reach the wire in `metadata_json` and **never** in `user_id`. Server-side
- * `user_id` is a retrieval *scope* that is enforced as a filter on query, and `lib/recall.mjs`
+ * an actor must reach the wire in `metadata_json` and **never** in `user_id`. An entry stored
+ * with a `user_id` is only returned to a query that sends the same one, and `lib/recall.mjs`
  * never sends one — so stamping a detected login into `user_id` would make every newly
  * captured entry invisible to the recall that is supposed to find it.
  *
@@ -57,7 +57,7 @@ function gitJail(dataDir, extra = {}) {
     // to by a test either way.
     MUBIT_CC_DATA_DIR: undefined,
     CLAUDE_PLUGIN_DATA: undefined,
-    // The §W1 rung-5 inputs. Deleted unless a row asks for them, so a developer's shell
+    // The username inputs. Deleted unless a row asks for them, so a developer's shell
     // cannot supply the answer a test is meant to be proving.
     USER: undefined,
     USERNAME: undefined,
@@ -168,7 +168,7 @@ for (const row of LADDER) {
   });
 }
 
-// §W1 rung 5 names three variables because the three shells in use do not agree on one.
+// The username fallback reads three variables because the three shells in use do not agree on one.
 test('resolveActor: rung 5 accepts USERNAME and LOGNAME as well as USER', async () => {
   const actor = await lib('actor.mjs');
   const projectDir = repoWith({});
@@ -270,7 +270,7 @@ test('resolveActor: cfg.actorId overrides a cached value and replaces it', async
 });
 
 // ===========================================================================
-// §4.9 totality — every failure costs the actor and nothing else
+// Totality — every failure costs the actor and nothing else
 // ===========================================================================
 
 test('resolveActor: no git on PATH is "" and never a throw', async () => {

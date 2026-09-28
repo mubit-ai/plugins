@@ -129,9 +129,9 @@ test('proxy: READ_ONLY is frozen and says record false', async (t) => {
 
 /**
  * The hook deadline is 4000 ms because a hook sits on a prompt's critical path. Nothing here
- * does, and the activity listing is a scan that runs past four seconds on a run with real
- * history — measured against a hosted instance, where inheriting the hook's budget turned a
- * busy server into a banner reporting it as unreachable.
+ * does, and the activity listing is a scan that can run past four seconds on a run with real
+ * history, where inheriting the hook's budget would turn a slow answer into a banner reporting
+ * the server as unreachable.
  */
 test('proxy: dashboard calls get a longer deadline than a hook, and do not inherit 4000ms', async (t) => {
   const { cfg, mod } = await setup(t, {
@@ -208,10 +208,9 @@ test('lessons: created_at is joined in from the activity feed', async (t) => {
 });
 
 /**
- * Measured against a hosted instance: the activity feed is every entry type in descending time
- * order, and seventeen thousand entries in, the newest three hundred were all traces and not
- * one was a lesson. An unfiltered join therefore fetches a page, matches nothing, and reports
- * success — the worst of the three outcomes, because it looks like the instance has no dates.
+ * The activity feed is every entry type in descending time order, and on a run with real
+ * history a whole page of it can be traces. An unfiltered join then fetches a page, matches
+ * nothing, and reports success — the worst of the three outcomes, because it looks like the instance has no dates.
  */
 test('lessons: the join asks the activity feed for lessons only', async (t) => {
   const { server, cfg, mod } = await setup(t, {
@@ -228,8 +227,8 @@ test('lessons: the join asks the activity feed for lessons only', async (t) => {
 });
 
 /**
- * An instance can answer the join and still have no dates to give: on the hosted instance
- * measured here, `ActivityEntry.created_at` is populated for traces and empty for lessons.
+ * An instance can answer the join and still have no dates to give: its lesson entries may
+ * carry no `created_at`.
  *
  * "The call worked" and "the call found something" are different facts, and only the second
  * one entitles a page to claim it is showing dates. `joined` reports the first, `dated` the
@@ -282,14 +281,13 @@ test('lessons: an empty lessons result does not pay for an activity call', async
   server.assertNotCalled('POST', '/v2/control/activity');
 });
 
-// `run_id` is optional on this one route, and an absent one means every run — which is exactly
-// what a global-lessons view wants. Defaulting it to the current run would make cross-run
-// recall impossible to look at.
+// `run_id` is optional on this one route, and the global-lessons view sends none on purpose.
+// Defaulting it to the current run would make lessons from other runs impossible to look at.
 test('lessons: an omitted run scope sends no run_id at all', async (t) => {
   const { server, cfg, mod } = await setup(t);
   await mod.fetchLessons(cfg, {});
   const body = server.lastCall('POST', '/v2/control/lessons')?.body;
-  assert.ok(!('run_id' in body), `an absent scope means every run; body was ${JSON.stringify(body)}`);
+  assert.ok(!('run_id' in body), `a global view sends no run_id; body was ${JSON.stringify(body)}`);
   assert.equal(typeof body.limit, 'number');
 });
 
@@ -348,12 +346,9 @@ test('lessons: a lesson naming no scope is a run lesson, which is what the serve
 });
 
 /**
- * `fromOtherRun` is wrong today on any hosted instance, and this is the field that fixes it.
- *
- * `list_lessons` falls back to `&f.run_id` — the *scoped* run id, as stored. The activity route
- * serialises `unscoped_run_id_for_owner(&fact.run_id, owner)`. So the id the lessons route hands
- * back and the id the page holds as "the current run" are not the same string even when they
- * name the same run, and every lesson reads as foreign. Off the feed both sides are unscoped.
+ * The lessons route and the activity feed can hand back a lesson's run id in different forms,
+ * and only the feed's matches the id the page holds as "the current run". Compared against the
+ * other form, every lesson reads as foreign.
  */
 test('lessons: the source run is the unscoped id the page can actually compare against', async (t) => {
   const { mod } = await setup(t);
@@ -409,12 +404,11 @@ test('lessons: the census filters scope over the rows it collected, never on the
 });
 
 /**
- * D1, which is the whole reason a `global` lesson written by another run can never appear.
+ * Why a `global` lesson written by another run could never appear.
  *
- * `list_lessons` branches on the request: a `run_id` takes `nexus.list(run_id, limit)` and an
- * absent one takes `list_global(limit)`. The Memory tab always sent the current run, so the one
- * question it exists to answer — what is visible outside the run that wrote it — was the one
- * question the request made unanswerable. The current run is what a row is *rendered against*;
+ * A request that names a `run_id` answers for that run only. The Memory tab always sent the
+ * current run, so the one question it exists to answer — what is visible outside the run that
+ * wrote it — was the one question the request made unanswerable. The current run is what a row is *rendered against*;
  * it is not a filter, and it must not become one on the way out.
  */
 test('lessons: the current run is what a row is compared against, not what the request asks for', async (t) => {
@@ -489,8 +483,8 @@ test('activity: the offset page token and total_visible are surfaced verbatim', 
 // Guards that refuse before dialling
 // ---------------------------------------------------------------------------
 
-// This is the one route where an empty scope is a client bug rather than "every run". Sending
-// it anyway earns a 400 from the instance and teaches the page nothing.
+// On this route an empty scope is a client bug. Sending it anyway earns a 400 from the
+// instance and teaches the page nothing.
 test('memory health: a missing run id is refused here, not upstream', async (t) => {
   const { server, cfg, mod } = await setup(t);
   const r = await mod.fetchMemoryHealth(cfg, {});
@@ -981,10 +975,9 @@ test('entry: a failing dereference records nothing in the breaker and a 401 read
 // ---------------------------------------------------------------------------
 
 /**
- * `bump_outcome_counters` on the instance stamps `success_count`, `reinforcement_count`,
- * `confidence`, `last_outcome` and friends into a lesson's metadata every time an outcome
- * credits it — and `failure_count` / `partial_count` / `neutral_count` appear only once such
- * an outcome has landed. The plugin never read any of it. The census carries the metadata
+ * A lesson's metadata may carry outcome counters — `success_count`, `reinforcement_count`,
+ * `confidence`, `last_outcome` and friends — and `failure_count` / `partial_count` /
+ * `neutral_count` appear only once such an outcome has landed. The plugin never read any of it. The census carries the metadata
  * whole, so the counters ride the same path as scope and provenance.
  */
 test('lessons: the outcome counters are read off the census, absent counts are zero, and countersStamped says which', async (t) => {

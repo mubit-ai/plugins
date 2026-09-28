@@ -9,12 +9,10 @@
  * is actively harmful, and the reason is the whole design of this module.
  *
  * `cfg.userId` reaches the wire as `user_id` on every ingest item (`capture.mjs`,
- * `drain.mjs`, `session-end.mjs`, `checkpoint.mjs`). Server-side, `user_id` is not an
- * attribution tag: on capture it is stamped into the entry's metadata, and **on query it is
- * enforced as a filter**, defaulting to `actor::<accountId>` when a client sends nothing.
- * `lib/recall.mjs` never sends a `user_id`, so every recall this plugin performs runs under
- * that default. Stamping a detected login into `user_id` would therefore scope every newly
- * captured entry into a bucket recall never looks in — the memory would keep being written
+ * `drain.mjs`, `session-end.mjs`, `checkpoint.mjs`). `user_id` is not an attribution tag:
+ * **it also narrows what a query returns**. `lib/recall.mjs` never sends a `user_id`, so
+ * stamping a detected login into it would scope every newly captured entry away from what
+ * recall reads — the memory would keep being written
  * and would go silently invisible, which is the worst failure mode a memory layer has.
  *
  * So the actor rides in `metadata_json`, which is free-form, is already on every ingest item,

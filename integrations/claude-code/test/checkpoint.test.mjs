@@ -2,11 +2,11 @@
 /**
  * `hooks/src/checkpoint.mjs` — PreCompact (`--pre`, blocking) / PostCompact (`--post`).
  *
- * Guide sections under test:
- *   §5.6  the flow, the request body, both stdout shapes, the one visible failure
- *   §4.4  redaction — a transcript is the densest secret surface the plugin ever touches
- *   §7    `runs/<run_id>/checkpoints.json` holds the last 10 `{checkpoint_id, token_estimate, at}`
- *   §4.9  exit 0 always, even when the checkpoint is lost
+ * Under test:
+ *   - the flow, the request body, both stdout shapes, the one visible failure
+ *   - redaction — a transcript is the densest secret surface the plugin ever touches
+ *   - `runs/<run_id>/checkpoints.json` holds the last 10 `{checkpoint_id, token_estimate, at}`
+ *   - exit 0 always, even when the checkpoint is lost
  *
  * Budgets: PreCompact 5000 ms internal / 10 s hook timeout — the one place blocking is
  * justified, because after compaction the content is gone. PostCompact 800 ms, no network.
@@ -41,7 +41,7 @@ function env(dataDir, endpoint, extra = {}) {
 const runDir = (dataDir) => join(dataDir, 'runs', RUN_ID);
 const checkpointsPath = (dataDir) => join(runDir(dataDir), 'checkpoints.json');
 
-/** §7 stores the last 10 entries; read tolerantly so the assertion is about content. */
+/** The file keeps the last 10 entries; read tolerantly so the assertion is about content. */
 function readCheckpoints(dataDir) {
   const j = readJsonFile(checkpointsPath(dataDir));
   return Array.isArray(j) ? j : (j.checkpoints ?? j.items ?? []);
@@ -114,7 +114,7 @@ test('--pre posts /v2/control/checkpoint with run_id, agent_id, label, snapshot 
   assert.ok(fx.SESSION_ID.startsWith(String(meta.session_id)), 'metadata carries the session id');
 });
 
-// §5.6 steps 1-2 + §4.4 — take the LAST 200 KB, and redact before sending. A transcript
+// Take the LAST 200 KB, and redact before sending. A transcript
 // is the densest secret surface in the product: it contains every command and every
 // file the user pasted.
 test('--pre redacts the transcript and bounds the snapshot to the last 200 KB', async (t) => {
@@ -195,7 +195,7 @@ test('--pre keeps only the last 10 checkpoints', async (t) => {
 
 // The spooled `checkpoint`-intent item is the belt to the checkpoint call's
 // braces: it goes through the normal ingest path, so the anchor survives even when the
-// dedicated endpoint fails. §1.5: intent is always set, or the server pays an LLM call.
+// dedicated endpoint fails. Its intent is always set.
 test('--pre spools a checkpoint-intent item even when the checkpoint POST 500s', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/checkpoint': { status: 500, json: { error: 'boom' } } });
   t.after(() => server.close());
@@ -271,7 +271,7 @@ test('--pre stdout carries the checkpoint id in systemMessage', async (t) => {
     `systemMessage must name the checkpoint, got: ${r.json.systemMessage}`);
 });
 
-// §5.6 "Failure" — the ONE failure the user is shown, because it is the only one that
+// The ONE failure the user is shown, because it is the only one that
 // loses data permanently: after compaction the context is gone. Still exit 0.
 test('--pre failure emits the exact checkpoint-failed systemMessage and exits 0', async (t) => {
   const server = await fakeMubit({ 'POST /v2/control/checkpoint': { status: 500, json: { error: 'boom' } } });
@@ -373,7 +373,7 @@ test('--pre with an unreadable transcript_path exits 0 without crashing', async 
 });
 
 // ---------------------------------------------------------------------------
-// --post clears the cross-turn seen-set.2 / `lib/seen.mjs`
+// --post clears the cross-turn seen-set (`lib/seen.mjs`)
 // ---------------------------------------------------------------------------
 
 /*

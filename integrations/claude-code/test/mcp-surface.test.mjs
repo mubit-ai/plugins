@@ -7,9 +7,9 @@
  * `MUBIT_MCP_TOOLS` before the import — and proves nothing about whether anything reads it.
  * `test/manifests.test.mjs` reads tool names out of the bundle's *text*, which shows what is
  * **defined**, not what is **registered**. Between them there was no assertion that the
- * server a user runs answers `tools/list` with the ten tools the plugin configured, and a
- * server that ignored the allowlist entirely shipped past 650 green tests: 21 schemas
- * resident in every session, 5,382 tokens where 2,664 were declared.
+ * server a user runs answers `tools/list` with the ten tools the plugin configured. A server
+ * that ignored the allowlist would pass both, and every session would carry schemas for
+ * tools it never asked for.
  *
  * So this file speaks real stdio MCP to the committed `mcp/dist/index.js` and asserts the
  * surface itself. It is the only gate here that runs the shipped artifact end to end.
@@ -37,7 +37,7 @@ const DEFAULT_ALLOWLIST = [
 ];
 
 /**
- * The fourteen §8.2 excludes: a hook already does the job better, there is no Claude Code
+ * The fourteen excluded tools: a hook already does the job better, there is no Claude Code
  * surface for it at all, or a skill reaches it through `bin/admin.mjs` without a listing.
  * Named rather than derived, so this file states the contract outright instead of restating
  * whatever the server happens to register.
@@ -197,8 +197,8 @@ test('serverInfo reports the bundled server\'s real version', async () => {
 
   assert.equal(server?.name, 'mubit-memory', `unexpected server name: ${JSON.stringify(server)}`);
   assert.notEqual(server?.version, '0.1.0',
-    'serverInfo.version is the "0.1.0" hardcode, which means the bundled server predates the '
-    + `§8.1 patch and MUBIT_MCP_TOOLS is inert.${REMEDY}`);
+    'serverInfo.version is the "0.1.0" hardcode, which means the bundled server predates '
+    + `MUBIT_MCP_TOOLS support and the allowlist is inert.${REMEDY}`);
   assert.equal(server?.version, expected,
     `serverInfo.version is "${server?.version}", but this plugin is ${expected} and the two `
     + 'ship in lockstep. The launcher inlines the version at build time (esbuild.config.mjs '

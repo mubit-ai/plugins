@@ -3,7 +3,7 @@
  * `lib/ledger.mjs` — one durable, redacted line per closed turn.
  *
  * `runs/<run_id>/turns/<prompt_id>.json` is the record of a turn while it is in flight, and it
- * is pruned six hours after it closes (`lib/state.mjs`, the §7 TTL table). Everything the
+ * is pruned six hours after it closes (`lib/state.mjs`, the TTL table). Everything the
  * dashboard could say about a turn — which memories were injected, whether the reply echoed
  * them, what outcome that earned — expired with it, so the page's history was whatever it
  * happened to be open for. The ledger is the part of that record worth keeping, appended by

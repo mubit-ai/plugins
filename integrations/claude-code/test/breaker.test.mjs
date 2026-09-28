@@ -2,8 +2,8 @@
 /**
  * `lib/breaker.mjs` — the connection-state classifier and the circuit breaker.
  *
- * Guide sections under test: §4.7 (breaker), §7 (state layout), §12.6 (test plan),
- * §1.1/§1.2 (status codes, and which call is made before a key is set).
+ * Under test: the breaker, its state file, the status codes, and which call is made before a
+ * key is set.
  *
  * Two rules dominate this file and both exist to stop the plugin from lying to the user:
  *   1. "A timeout is not a verdict."  A cold start, a laptop waking from sleep, and
@@ -96,21 +96,21 @@ const abortError = () => Object.assign(new Error('The operation was aborted'), {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
-// classifyError — the §4.7 mapping table, one assertion per row
+// classifyError — the mapping table, one assertion per row
 // ---------------------------------------------------------------------------
 
 /** @type {Array<[string, any, number|undefined, string]>} */
 const CLASSIFY_ROWS = [
-  // §4.7 row "2xx" — a parsed 2xx is the only thing that means the endpoint is healthy.
+  // Row "2xx" — a parsed 2xx is the only thing that means the endpoint is healthy.
   ['200 → ready', null, 200, 'ready'],
   ['201 → ready', null, 201, 'ready'],
   ['204 → ready', null, 204, 'ready'],
 
-  // §4.7 row "401, 403" / §1.2 — every /v2/control/* handler authenticates first.
+  // Row "401, 403" — every /v2/control/* route authenticates first.
   ['401 → auth_failed', null, 401, 'auth_failed'],
   ['403 → auth_failed', null, 403, 'auth_failed'],
 
-  // §4.7 row "5xx, or unparseable body on a JSON route".
+  // Row "5xx, or unparseable body on a JSON route".
   ['500 → server_error', null, 500, 'server_error'],
   ['502 → server_error', null, 502, 'server_error'],
   ['503 → server_error', null, 503, 'server_error'],
@@ -119,13 +119,13 @@ const CLASSIFY_ROWS = [
   // throws SyntaxError and that is exactly what http.mjs hands back here.
   ['SyntaxError on a 200 JSON route → server_error', new SyntaxError('Unexpected token < in JSON at position 0'), 200, 'server_error'],
 
-  // §4.7 row "ECONNREFUSED, ENOTFOUND, EHOSTUNREACH, ECONNRESET".
+  // Row "ECONNREFUSED, ENOTFOUND, EHOSTUNREACH, ECONNRESET".
   ['ECONNREFUSED → unreachable', err('ECONNREFUSED'), undefined, 'unreachable'],
   ['ENOTFOUND → unreachable', err('ENOTFOUND'), undefined, 'unreachable'],
   ['EHOSTUNREACH → unreachable', err('EHOSTUNREACH'), undefined, 'unreachable'],
   ['ECONNRESET → unreachable', err('ECONNRESET'), undefined, 'unreachable'],
 
-  // §4.7 row "AbortError / deadline exceeded" — classification names the symptom;
+  // Row "AbortError / deadline exceeded" — classification names the symptom;
   // `recordFailure` decides whether the symptom ever becomes a verdict (see below).
   ['AbortError → not_responding', abortError(), undefined, 'not_responding'],
   ['DOMException AbortError → not_responding', new DOMException('aborted', 'AbortError'), undefined, 'not_responding'],
@@ -134,7 +134,7 @@ const CLASSIFY_ROWS = [
 ];
 
 for (const [label, e, status, want] of CLASSIFY_ROWS) {
-  // §4.7 classification table.
+  // One test per classification row.
   test(`classifyError: ${label}`, async () => {
     const { classifyError } = await lib('breaker.mjs');
     assert.equal(classifyError(e, status), want);
@@ -229,7 +229,7 @@ test('readBreaker: a fresh breaker is closed, ready and empty', async () => {
   assert.equal(B.allowRequest(cfg), true);
 });
 
-// State file `breaker/<sha256(endpoint).slice(0,12)>.json` with the §4.7 field set.
+// State file `breaker/<sha256(endpoint).slice(0,12)>.json` with the documented field set.
 test('recordFailure: writes breaker/<sha256(endpoint).slice(0,12)>.json with the documented shape', async () => {
   const { cfg, dataDir, B } = await setup();
   B.recordFailure(cfg, 'unreachable');
@@ -266,7 +266,7 @@ test('breaker state is per endpoint: a local outage does not condemn the hosted 
     'the two endpoints hash to different files');
 });
 
-// §4.9 discipline: nothing in this plugin may throw on a corrupt file. A half-written
+// Nothing in this plugin may throw on a corrupt file. A half-written
 // breaker (SIGKILL mid-write) must degrade to a fresh, closed breaker.
 test('readBreaker: a truncated state file degrades to a fresh closed breaker, never throws', async () => {
   const { cfg, dataDir, B } = await setup();
@@ -433,7 +433,7 @@ test('auth_failed: only a success clears the sticky state', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Threshold, window, cooldown.7 (5 failures / 300 s → open for 120 s)
+// Threshold, window, cooldown (5 failures / 300 s → open for 120 s)
 // ---------------------------------------------------------------------------
 
 // Threshold-many failures inside the window opens the breaker.
@@ -533,7 +533,7 @@ test('breaker: a failed half-open probe re-opens with a fresh openedAt', async (
 });
 
 // ---------------------------------------------------------------------------
-// Cold-start suppression.8 (marker.cold_start_until)
+// Cold-start suppression (marker.cold_start_until)
 // ---------------------------------------------------------------------------
 
 // Within `coldStartGraceMs` of the run's first SessionStart the failure is still

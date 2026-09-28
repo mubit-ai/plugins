@@ -165,10 +165,9 @@ test('the initialize frame carries the instructions block', async () => {
     'the instructions block does not mention Mubit, which is the one thing it exists to say.');
 });
 
-test('the server refuses to start rather than write into the poisoned default run', async () => {
-  // § The facade maps `session_id` onto the control-plane `run_id`, and the upstream server
-  //   defaults it to the literal "default" — a fallback rather than a run of anyone's. An
-  //   unset `static` pin is the realistic way to reach it. Starting
+test('the server refuses to start without a derivable run id', async () => {
+  // § Without a derived run id there is no run to write under. An unset `static` pin is the
+  //   realistic way to get here. Starting
   //   anyway would be worse than not starting: the hooks in the same session fail the same
   //   derivation and capture nothing, so the MCP writes would be the only thing landing, and
   //   landing in the wrong place.
@@ -186,9 +185,8 @@ test('the server refuses to start rather than write into the poisoned default ru
     error = err;
   }
   assert.ok(error,
-    'the server answered tools/list with no derivable run id. Every write it then accepts '
-    + 'lands in the shared "default" run, pooling this project with every other consumer of '
-    + 'the instance.');
+    'the server answered tools/list with no derivable run id, so every write it then '
+    + 'accepts lands under a run id that names no project.');
   assert.match(String(error.message), /not started/i,
     `the server exited without saying why. A silent refusal is indistinguishable from a crash:\n${error.message}`);
   assert.match(String(error.message), /run id/i,
@@ -222,9 +220,7 @@ test('a lesson written through the Codex plugin lands in the derived run', async
   assert.ok(wrote.length > 0, 'the tool reported success and sent nothing.');
   const body = JSON.stringify(wrote.map((q) => q.body));
   assert.match(body, /codex-mcp-write-test/,
-    'the write did not carry the derived run id. The upstream default is the literal '
-    + `"default"; what went out was:\n${body.slice(0, 600)}`);
+    `the write did not carry the derived run id; what went out was:\n${body.slice(0, 600)}`);
   assert.ok(!/"session_id"\s*:\s*"default"/.test(body),
-    'the write went to the poisoned default run, which pools this project with every other '
-    + 'consumer of the instance.');
+    'the write went out under the "default" run id, which names no project.');
 });

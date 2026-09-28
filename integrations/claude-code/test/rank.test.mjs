@@ -1,22 +1,21 @@
 // @ts-check
 /**
- * `lib/rank.mjs` — the prompt-shape rule behind `rank_by` (W1-2).
+ * `lib/rank.mjs` — the prompt-shape rule behind `rank_by`.
  *
  * ---------------------------------------------------------------------------
  * What is being claimed, and what would falsify it
  * ---------------------------------------------------------------------------
- * Ask the plugin "where were we?" and recall answers with whatever is most **similar**,
- * because `/v2/control/query` fuses at its default weighting, under which recency barely
- * counts. A handoff question wants the opposite emphasis, and `rank_by: "freshness"` is the
- * server-side dial for it. The exact weights are the instance's and are not asserted here —
- * these tests pin the mode the client *sends*, which is the only half the client owns.
+ * Ask the plugin "where were we?" and recall answers with whatever is most **similar**.
+ * A handoff question wants the most recent work instead, and `rank_by: "freshness"` is the
+ * request field that asks for it. These tests pin the mode the client *sends*, which is the
+ * only half the client owns.
  *
  * The rule that decides which of those two a prompt gets is the entire risk in this change,
  * and it fails in exactly two directions:
  *
  *   1. **Under-firing** — a real handoff question is ranked by similarity and the user gets
  *      last month's most-relevant lesson instead of yesterday's work. That is the bug we
- *      already have, so every phrase the ticket names has a row below.
+ *      already have, so every common handoff phrase has a row below.
  *   2. **Over-firing** — the rule degrades into a substring match, fires on half of all
  *      prompts, and quietly re-ranks ordinary questions by recency. There is no error and no
  *      log line when this happens; recall just gets worse for everyone. The negatives are
@@ -45,7 +44,7 @@ let _mod;
 const R = async () => (_mod ??= await lib('rank.mjs'));
 
 // ---------------------------------------------------------------------------
-// Freshness — every phrase the ticket names, in a prompt someone would actually type
+// Freshness — every common handoff phrase, in a prompt someone would actually type
 // ---------------------------------------------------------------------------
 
 /** `[prompt, which trigger it is here to pin]` */

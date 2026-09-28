@@ -6,8 +6,8 @@
  * Not registered in `hooks.json`, for the same reason `drain.mjs` and `recall-refresh.mjs` are
  * not: it is spawned detached by `session-start`, exactly the way `prompt-recall` fires the
  * refresh. Nothing waits on it, and that is the entire point — `SessionStart` is a blocking
- * hook the host holds the session open for, and a briefing worth two LLM calls cannot be
- * bought with the user's time.
+ * hook the host holds the session open for, and a briefing that slow cannot be bought with
+ * the user's time.
  *
  * ```
  * session-start (blocking, ~300 ms)             session-resume (detached, up to 20 s)

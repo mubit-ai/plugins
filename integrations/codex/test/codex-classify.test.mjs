@@ -4,11 +4,11 @@
  *
  * The stake is not a crash: `FALLBACK` already catches every unknown name and returns
  * `tool_output` / `low`, so an unported classifier is perfectly safe and perfectly useless.
- * What it loses is the **mutation-vs-read signal** — the one distinction the §4.5 table
- * exists to draw. `apply_patch` is the Codex equivalent of `Edit`/`Write`: the change *is*
+ * What it loses is the **mutation-vs-read signal** — the one distinction the classification
+ * table exists to draw. `apply_patch` is the Codex equivalent of `Edit`/`Write`: the change *is*
  * the episode, and it is the row that makes a run replayable. Graded `tool_output`/`low` it
- * sinks below every `Read` in retrieval, and a run reads as a sequence of file reads that
- * somehow ended with the code different.
+ * is filed with every `Read`, and a run reads as a sequence of file reads that somehow ended
+ * with the code different.
  *
  * The names below were recorded from live `PreToolUse` payloads, not read off a
  * documentation page.
@@ -110,15 +110,13 @@ describe('classifyTool — the guarantee that has no exceptions', () => {
     it(`${JSON.stringify(name)} still gets a real intent`, async () => {
       const { classifyTool } = await C();
       const got = classifyTool(/** @type {any} */ (name), {}, 'ok');
-      // § §1.5, and it admits no exceptions: an item that arrives at ingest already carrying a
-      //   real intent is classified far more cheaply than one that arrives without it. At
-      //   tool-call frequency that difference is a bill. `unclassified` is a valid intent tag
-      //   upstream, which is exactly why it must never be *this* module's answer — it would
-      //   pass every schema and cost an LLM round trip per item.
+      // § Every item carries a real intent, with no exceptions. `unclassified` is a valid
+      //   intent tag upstream, which is exactly why it must never be *this* module's answer —
+      //   it would pass every schema and say nothing.
       assert.notEqual(got.intent, 'unclassified',
         `${JSON.stringify(name)} produced \`unclassified\`. There is no path through `
         + 'classify.mjs that may return it: unknown tool, blank name, null — all land on a real '
-        + 'intent, because an untyped item costs an LLM call at ingest and this runs per tool call.');
+        + 'intent, and this runs per tool call.');
       assert.ok(got.intent && got.importance, 'both fields are mandatory on every path.');
     });
   }
@@ -129,10 +127,9 @@ describe('classifyTool — failures outrank every row', () => {
     it(`${tool} that failed → trace/high`, async () => {
       const { classifyTool } = await C();
       const got = classifyTool(tool, {}, 'failure');
-      // § §4.5: a failed approach is the highest-value thing a coding agent can remember — the
-      //   one class of knowledge the model cannot re-derive by reading the codebase — and the
-      //   server turns a streak of them into an extracted lesson for free at a threshold of 3.
-      //   Grading failures low would bury them in retrieval and starve that trigger.
+      // § A failed approach is the highest-value thing a coding agent can remember — the
+      //   one class of knowledge the model cannot re-derive by reading the codebase.
+      //   Grading failures low would bury them.
       assert.equal(got.intent, 'trace', `a failed ${tool} must be a trace, whatever it succeeds as.`);
       assert.equal(got.importance, 'high', `a failed ${tool} must be high, whatever it succeeds as.`);
     });

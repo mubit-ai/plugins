@@ -3,8 +3,8 @@
  * `lib/assemble.mjs` — client-side section assembly.
  *
  * Rungs 1 and 2 of the read ladder answer with `evidence[]`, not a preassembled
- * `context_block`. This module does what rung 3 (`POST /v2/control/context`) would have done
- * server-side — for **zero LLM calls instead of two**. That substitution is only honest if
+ * `context_block`. This module does client-side what rung 3 (`POST /v2/control/context`)
+ * returns preassembled, so the fast rungs need no extra call. That substitution is only honest if
  * the client renders the *same* shape, in the *same* order, with the *same* `emptyReason`
  * vocabulary the server would have used, so everything downstream — the status line, the
  * doctor skill, `additionalContext` itself — is rung-agnostic. Every rule below exists to
@@ -15,7 +15,7 @@
  *     traces → goals. The client never reorders, so switching rungs cannot look like a
  *     change in what was recalled.
  *   - **Section vocabulary is the server's**. Nothing here may invent a key; an
- *     `entry_type` with no row in the §4.10 table renders under `other`.
+ *     `entry_type` with no row in the table below renders under `other`.
  *   - **`emptyReason` is the server's**: `""` when something rendered, `"no_evidence"` when
  *     there was nothing to say, `"budget_exhausted"` when there was and none of it fit.
  *     `"recency_fallback"` is server-only and is never produced here.
@@ -38,14 +38,14 @@
 
 import { handleFor, handleTag } from './handles.mjs';
 
-/** §1.3 (`control.proto`) — the only section keys that may ever be emitted. */
+/** The only section keys that may ever be emitted (`control.proto`). */
 export const SECTION_KEYS = Object.freeze([
   'mental_models', 'active_rules', 'lessons', 'archive_blocks', 'handoffs', 'feedback',
   'facts', 'observations', 'working_memory', 'traces', 'goals', 'checkpoints', 'logs',
   'other',
 ]);
 
-/** §1.3/§4.10 (`control.proto`) — the server's fixed emission order. */
+/** The fixed emission order of a server-assembled block (`control.proto`). */
 export const EMISSION_ORDER = Object.freeze([
   'mental_models', 'active_rules', 'lessons', 'facts', 'observations',
   'working_memory', 'traces', 'goals',
@@ -62,15 +62,15 @@ const RENDER_ORDER = Object.freeze([
 ]);
 
 /**
- * §4.10's `entry_type → section` table, plus two rows.
+ * The `entry_type → section` table, plus two rows.
  *
  * The last row of that table is literally "anything else → `other`", which is why
- * `reflection`, `log` and `workflow` land in `other` even though §1.3 defines a `logs`
+ * `reflection`, `log` and `workflow` land in `other` even though `control.proto` defines a `logs`
  * section key. `handoff` and `feedback` used to land there too; they now fill the `handoffs`
- * and `feedback` sections §1.3 defines for them, because the handoff lane writes both entry
+ * and `feedback` sections `control.proto` defines for them, because the handoff lane writes both entry
  * types and the resume briefing asks for `handoffs` — a section no entry type could fill
- * would render as nothing, silently, on a healthy 200. `assemble.test.mjs` encodes this table
- * as the spec, so a change belongs there first.
+ * would render as nothing, silently, on a healthy 200. `assemble.test.mjs` encodes this table,
+ * so a change belongs there first.
  */
 const SECTION_BY_ENTRY_TYPE = Object.freeze({
   mental_model: 'mental_models',
@@ -109,7 +109,7 @@ const HEADINGS = Object.freeze({
   other: 'Other',
 });
 
-/** §6.1 `MUBIT_CC_RECALL_TOKENS`. Used when a caller names no budget. */
+/** `MUBIT_CC_RECALL_TOKENS`. Used when a caller names no budget. */
 const DEFAULT_TOKEN_BUDGET = 1500;
 
 /** "~4 chars per token. Deliberately cheap." */
@@ -241,7 +241,7 @@ export function assembleContext(evidence, opts = {}) {
   const allowed = Array.isArray(o.sections) && o.sections.length
     ? new Set(o.sections.filter((s) => typeof s === 'string').map((s) => s.trim()))
     : null;
-  // §6.1 `recallRepeatMode`. `full` is every release before the seen-set: an operator who
+  // `recallRepeatMode`. `full` is every release before the seen-set: an operator who
   // opted out gets the old block back, and a caller who passes no set never degrades at all.
   const seen = str(o.repeatMode) === 'full' ? null : seenSetOf(o.seen);
 
@@ -258,8 +258,7 @@ export function assembleContext(evidence, opts = {}) {
     const text = oneLine(e.content);
     if (!text) continue;                    // nothing to render is not a dropped candidate
 
-    // "maps entry_type (or origin_entry_type when the entry came through an
-    // overlay)". The overlay's own type is bookkeeping; the origin is what the user reads.
+    // `origin_entry_type`, when an entry carries one, is the type the user reads.
     const type = (str(e.origin_entry_type) || str(e.entry_type)).toLowerCase();
     const section = sectionFor(type);
     if (allowed && !allowed.has(section)) continue;

@@ -3,14 +3,13 @@
  * `lib/runid.mjs`.
  *
  * Protects the four run-id strategies, the `SessionStart.source` table and
- * `SessionRecord`, plus spec §7 (identity and session model).
+ * `SessionRecord`, plus the identity and session model.
  *
  * The run id is the data scope: get it wrong and a user's memory either leaks
  * across projects or is silently written somewhere they will never read it
  * from. The single most important rule in this file is that no input — no
- * matter how hostile — may ever produce the literal `"default"`. That is the bundled
- * server's placeholder, and it identifies nothing: a run id has to name one project on
- * one machine.
+ * matter how hostile — may ever produce the literal `"default"`: a run id has to name one
+ * project on one machine.
  */
 
 import { test } from 'node:test';
@@ -57,7 +56,7 @@ function derive(config, runid, env, payload) {
 /** @param {string} sid */
 function sessionFile(dataDir, sid) { return join(dataDir, 'sessions', `${sid}.json`); }
 
-/** A full §4.3 SessionRecord. */
+/** A full SessionRecord. */
 function record(over = {}) {
   return {
     run_id: 'cc-pinned-deadbeef',
@@ -254,7 +253,7 @@ test('git-branch tracks the branch; per-directory ignores it', async () => {
 // The SessionStart.source table
 // ===========================================================================
 
-// §4.3 `startup`: "Derive fresh, write the map."
+// `startup`: derive fresh, write the map.
 test('source=startup: derives fresh and writes the session map', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -272,7 +271,7 @@ test('source=startup: derives fresh and writes the session map', async () => {
   assert.equal(rec.project_dir, projectDir);
 });
 
-// §4.3 `startup`: fresh means fresh — a leftover mapping is not reused.
+// `startup`: fresh means fresh — a leftover mapping is not reused.
 test('source=startup: ignores a stale mapped run id', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -286,7 +285,7 @@ test('source=startup: ignores a stale mapped run id', async () => {
   assert.match(id, HASH8);
 });
 
-// §4.3 `resume`: "Reuse the mapped run_id."
+// `resume`: reuse the mapped run_id.
 test('source=resume: reuses the mapped run id', async () => {
   const config = await lib('config.mjs');
   const runid = await lib('runid.mjs');
@@ -299,7 +298,7 @@ test('source=resume: reuses the mapped run id', async () => {
   assert.equal(id, 'cc-pinned-deadbeef');
 });
 
-// §4.3 `compact`/`fork`: "Reuse the parent session record's run."
+// `compact`/`fork`: reuse the parent session record's run.
 for (const source of ['compact', 'fork']) {
   test(`source=${source}: reuses the parent session record's run`, async () => {
     const config = await lib('config.mjs');
@@ -314,7 +313,7 @@ for (const source of ['compact', 'fork']) {
   });
 }
 
-// §4.3 `clear`: "New run." /clear means "forget the thread"; per-directory is
+// `clear`: a new run. /clear means "forget the thread"; per-directory is
 // stable per directory, so the clear counter is what actually forgets.
 test('source=clear: produces a NEW run id with an incrementing -c<n>', async () => {
   const config = await lib('config.mjs');
@@ -451,7 +450,7 @@ test('deriveAgentId(): a payload echoing the parent id is not a subagent', async
  */
 test('deriveSubRunId(): <parent>-sub-<agentShort>, one lane per subagent', async () => {
   const runid = await lib('runid.mjs');
-  const parent = 'cc-my-project-9f2a11c4';
+  const parent = 'cc-my-project-0000abcd';
 
   const a = runid.deriveSubRunId(parent, fx.subagentStart({ agent_id: 'ab55bb82d19855fbc' }));
   const b = runid.deriveSubRunId(parent, fx.subagentStart({ agent_id: 'a0a7d24f87136bee1' }));
@@ -482,7 +481,7 @@ test('deriveSubRunId(): the poisoned literal cannot be reached through the sub f
 // `SubagentStop` — which derives from the same missing field — could never find again.
 test('deriveSubRunId(): a payload with no subagent identity answers with the parent', async () => {
   const runid = await lib('runid.mjs');
-  const parent = 'cc-my-project-9f2a11c4';
+  const parent = 'cc-my-project-0000abcd';
   const anon = fx.subagentStart();
   delete anon.agent_id;
 
@@ -507,7 +506,7 @@ test('saveSessionMap()/loadSessionMap(): the full SessionRecord round-trips', as
   const runid = await lib('runid.mjs');
   const dataDir = makeDataDir();
   const env = envFor(dataDir, makeProjectDir(), 'per-directory');
-  const rec = record({ run_id: 'cc-my-project-9f2a11c4', clear_count: 2 });
+  const rec = record({ run_id: 'cc-my-project-0000abcd', clear_count: 2 });
 
   const got = withEnv(env, () => {
     runid.saveSessionMap(fx.SESSION_ID, rec);
@@ -534,7 +533,7 @@ test('loadSessionMap(): an unknown session returns null', async () => {
   assert.equal(got, null);
 });
 
-// §4.3 + §12.1: a corrupt record is treated as "no record", never a throw.
+// A corrupt record is treated as "no record", never a throw.
 test('loadSessionMap(): a corrupt session file returns null', async () => {
   const runid = await lib('runid.mjs');
   const dataDir = makeDataDir();
@@ -619,7 +618,7 @@ test('a session record with no project_root is still reused', async () => {
   const dataDir = makeDataDir();
   const env = envFor(dataDir, makeProjectDir({ git: true }), 'per-directory');
 
-  // `record()` is the §4.3 shape as it shipped: `project_dir`, no `project_root`.
+  // `record()` is the SessionRecord shape as it shipped: `project_dir`, no `project_root`.
   withEnv(env, () => runid.saveSessionMap(fx.SESSION_ID, record({ run_id: 'cc-upgraded-deadbeef' })));
   const id = derive(config, runid, env, fx.postToolUse({ cwd: makeProjectDir({ git: true }) }));
 

@@ -16,7 +16,7 @@
  *   - `session-start` asks `POST /v2/control/lessons` for the global set. Some
  *     of those are `lesson_type: "rule"`.
  *   - `prompt-recall` asks `POST /v2/control/query` on every prompt and gets `evidence[]`
- *     back, with `entry_type: "rule"` among the five types it requests (§5.2 rung 1).
+ *     back, with `entry_type: "rule"` among the five types it requests (rung 1).
  *
  * Both write here in passing. Nothing in this module ever opens a socket, and nothing that
  * calls it does so for its sake — it is a side effect of a call that was already made.
@@ -87,7 +87,7 @@ const MAX_REF = 128;
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
- * @param {any[]} entries  `evidence[]` from the query ladder, or `lessons[]` from §5.1
+ * @param {any[]} entries  `evidence[]` from the query ladder, or `lessons[]` from `session-start`
  * @returns {number} how many rules the store holds afterwards, or 0 on any failure
  */
 export function recordRules(cfg, runId, entries) {
@@ -173,10 +173,9 @@ export function readRules(cfg, runId) {
  * | type | `origin_entry_type` ?? `entry_type` | `lesson_type` |
  * | text | `content`            | `content`             |
  *
- * `origin_entry_type` first is `lib/assemble.mjs`'s rule, verbatim from §4.10: "maps
- * entry_type (or origin_entry_type when the entry came through an overlay)". The overlay's
- * own type is bookkeeping; the origin is the type the rule actually has. Reading only
- * `entry_type` would leave this store empty on every instance that uses overlays.
+ * `origin_entry_type` first is `lib/assemble.mjs`'s rule too: when an entry carries one, it
+ * is the type the rule actually has. Reading only `entry_type` would leave this store empty
+ * whenever a response carries both.
  *
  * @param {any} e
  * @returns {{ref: string, text: string}|null}

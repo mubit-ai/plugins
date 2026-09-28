@@ -28,16 +28,13 @@
  * is on a prompt's critical path.
  *
  * ---------------------------------------------------------------------------
- * What the server does that a caller cannot see
+ * The contract, as a caller sees it
  * ---------------------------------------------------------------------------
- *   - **`value_json` is a JSON *document*, not a value.** The handler runs
- *     `serde_json::from_str(&req.value_json)` and answers `invalid_argument` on failure, so a
- *     raw string reaches the wire only to be refused. Every value is `JSON.stringify`d here,
- *     and one that cannot be is refused before a socket exists.
- *   - **`source` is matched as an exact string with a silent fallback.** The five it knows
- *     are `system | reasoning | retrieval | perception | explicit`; anything else — including
- *     a perfectly plausible `"user"` — becomes `Explicit` with no error. `system` is the one
- *     value this plugin sends, because it is the one whose meaning was verified.
+ *   - **`value_json` is a JSON *document*, not a value.** A raw string is refused with
+ *     `invalid_argument`. Every value is `JSON.stringify`d here, and one that cannot be is
+ *     refused before a socket exists.
+ *   - **`source` is one of `system | reasoning | retrieval | perception | explicit`.**
+ *     `system` is the one value this plugin sends.
  *   - **`list` returns every variable in the run, whoever wrote it.** Another client is
  *     entitled to keep its own state in the same run. `listVariables` filters to this
  *     plugin's own `cc.pin.` namespace, so there is exactly one place that decides what the
@@ -54,9 +51,8 @@ import { request } from './http.mjs';
 /**
  * The four routes. Frozen, and there is no fifth.
  *
- * The neighbouring surfaces on the same server — goals, actions, decision cycles — are
- * deprecated upstream and are not things a memory plugin has any business writing. Naming the
- * four exactly is what stops "while we are here" from turning this into an orchestrator.
+ * Other routes on the same API are not things a memory plugin has any business writing.
+ * Naming the four exactly is what stops "while we are here" from turning this into an orchestrator.
  */
 export const VARIABLE_ROUTES = Object.freeze({
   set: '/v2/control/variables/set',
@@ -85,7 +81,7 @@ export const PIN_NAMESPACE = 'cc.pin.';
  */
 const POISONED_RUN_ID = 'default';
 
-/** The one `source` whose meaning was verified against the server's own match arm. */
+/** The one `source` this plugin sends. */
 const SOURCE = 'system';
 
 // ---------------------------------------------------------------------------
@@ -229,7 +225,7 @@ export async function deleteVariable(cfg, runId, name, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * §1.3 plus §4.3, checked before anything is serialized.
+ * Required fields and the `"default"` run-id guard, checked before anything is serialized.
  *
  * `lib/http.mjs` refuses the poisoned run id too, on the request body — but its guard is
  * about what leaves the process, and this one is about what a caller meant. Answering here

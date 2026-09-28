@@ -804,7 +804,7 @@ test('the candidates never invent a host from a region', async () => {
     assert.deepEqual(endpointCandidatesFor({ region }), [DEFAULT_ENDPOINT],
       `region ${region} is a console routing hint, not a hostname this side may invent`);
   }
-  assert.equal(DEFAULT_ENDPOINT, 'https://api.mubit.ai', 'the only prod host that serves TLS');
+  assert.equal(DEFAULT_ENDPOINT, 'https://api.mubit.ai', 'the documented default endpoint');
   assert.equal(endpointCandidatesFor({ mubitEndpoint: 'https://custom.example.com' })[0],
     'https://custom.example.com', 'an explicit endpoint from the console is tried first');
   assert.equal(endpointCandidatesFor({ mubitEndpoint: 'https://custom.example.com', region: 'eu' })[0],
@@ -812,16 +812,15 @@ test('the candidates never invent a host from a region', async () => {
 });
 
 /**
- * The contract, from this side. `server/api/cli/token.post.ts` asserts the same list from
- * its own side, so the two cannot drift silently: whichever one moves, the other goes red.
+ * The contract, from this side. The console's own tests assert the same list from its side,
+ * so the two cannot drift silently: whichever one moves, the other goes red.
  *
- * This test is here because the generous fake it replaces is the entire reason the missing
- * `mubitEndpoint` survived a 1487-test suite. A double that returns more than the real thing
- * proves the parser works and nothing about the contract.
+ * A double that returns more than the real thing proves the parser works and nothing about
+ * the contract.
  */
 test('the console double returns exactly the field set the real console returns', async () => {
   const { runBrowserAuth } = await mod('bin/auth.src.mjs');
-  const console_ = await fakeConsole({ mubitEndpoint: 'https://eu.api.mubit.ai' });
+  const console_ = await fakeConsole({ mubitEndpoint: 'https://region-a.example.test' });
 
   const payload = await runBrowserAuth({
     consoleUrl: console_.url,
@@ -839,10 +838,8 @@ test('the console double returns exactly the field set the real console returns'
  * Pinning the fallback as a decision rather than an oversight.
  *
  * A console old enough not to send `mubitEndpoint` still has to work, and the default is not
- * a guess: probing production showed `api.mubit.ai` is a key-routed shared gateway —
- * `/v2/core/health` answers 200 for keys belonging to different instances — so the bearer
- * token, not the hostname, selects the instance. Making an absent endpoint fatal would break
- * users on an older console to fix nothing.
+ * a guess: `api.mubit.ai` serves every hosted instance, and the key selects which one. Making
+ * an absent endpoint fatal would break users on an older console to fix nothing.
  */
 test('an older console that sends no endpoint still gets a working default', async () => {
   const { main, DEFAULT_ENDPOINT } = await mod('bin/auth.src.mjs');
@@ -876,38 +873,27 @@ test('an older console that sends no endpoint still gets a working default', asy
  * The console may name an endpoint this side must not send a key to — and the answer is
  * not to throw the whole answer away.
  *
- * Measured on 2026-08-28, in two clusters, and they disagree in a way that decides this:
+ * A console can answer with an `http://` endpoint. Declining it outright and falling back
+ * sent the key to an endpoint that did not accept it, and the user was told "the instance
+ * rejected that key. Issue a new one in the console." There is nothing wrong with the key,
+ * and no new one will help.
  *
- *   api.eu.dev.mubit.ai   https -> 401   http -> 308 to https
- *   api.eu.mubit.ai       https -> TLS handshake fails   http -> 401
- *   api.mubit.ai          https -> 401
- *
- * Both clusters *report* `http://`, because that is what their platform-api has in
- * `MUBIT_REGIONAL_HTTP_ENDPOINT`. So a plaintext answer says nothing about whether the host
- * serves TLS: dev's does, prod's does not.
- *
- * Declining outright and falling back was wrong for dev in a way a real run showed: the key
- * went to `api.mubit.ai` — a *different cluster* — which rejected it, and the user was told
- * "the instance rejected that key. Issue a new one in the console." There is nothing wrong
- * with the key, and no new one will help.
- *
- * So the scheme is upgraded and the host is kept, and the compiled-in gateway follows it as
+ * So the scheme is upgraded and the host is kept, and the compiled-in default follows it as
  * a fallback. The key is verified against each in turn and stored against the first that
- * accepts it, which is machinery this already had. Dev works today; prod's TLS failure falls
- * through to the gateway that has always served it. Neither ever sees plaintext.
+ * accepts it, which is machinery this already had. The key never goes out in clear text.
  */
 test('a plaintext endpoint is upgraded and tried first, with the gateway behind it', async () => {
   const { endpointCandidatesFor, DEFAULT_ENDPOINT } = await mod('bin/auth.src.mjs');
 
   assert.deepEqual(
-    endpointCandidatesFor({ mubitEndpoint: 'http://api.eu.dev.mubit.ai' }),
-    ['https://api.eu.dev.mubit.ai', DEFAULT_ENDPOINT],
-    'dev serves TLS on that exact host, so the upgrade is what makes dev work at all');
+    endpointCandidatesFor({ mubitEndpoint: 'http://region-a.example.test' }),
+    ['https://region-a.example.test', DEFAULT_ENDPOINT],
+    'the named host, upgraded, is tried first');
 
   assert.deepEqual(
-    endpointCandidatesFor({ mubitEndpoint: 'http://api.eu.mubit.ai' }),
-    ['https://api.eu.mubit.ai', DEFAULT_ENDPOINT],
-    'prod has no TLS listener there yet, so this one falls through to the gateway');
+    endpointCandidatesFor({ mubitEndpoint: 'http://region-b.example.test' }),
+    ['https://region-b.example.test', DEFAULT_ENDPOINT],
+    'and the default follows it, for when the named host does not answer over TLS');
 
   assert.deepEqual(
     endpointCandidatesFor({ mubitEndpoint: 'https://custom.example.com' }),
@@ -925,8 +911,8 @@ test('no candidate ever carries the key over plaintext to a real network', async
   const { endpointCandidatesFor } = await mod('bin/auth.src.mjs');
 
   for (const named of [
-    'http://api.eu.mubit.ai', 'http://api.us.mubit.ai', 'http://internal.cluster.local:8080',
-    'api.eu.mubit.ai', 'HTTP://Api.EU.Mubit.AI',
+    'http://region-a.example.test', 'http://region-b.example.test', 'http://internal.cluster.local:8080',
+    'region-a.example.test', 'HTTP://Region-A.Example.Test',
   ]) {
     for (const candidate of endpointCandidatesFor({ mubitEndpoint: named })) {
       assert.ok(candidate.startsWith('https://'),
@@ -938,7 +924,7 @@ test('no candidate ever carries the key over plaintext to a real network', async
 /**
  * Loopback is the exception, and the only one: plaintext to 127.0.0.1 does not cross a
  * network, and there is rarely a TLS listener there to upgrade to. Local development and
- * `tests/e2e/cli-auth.spec.ts` both depend on it.
+ * the console's own end-to-end tests both depend on it.
  */
 test('a loopback endpoint is kept as-is, because plaintext there crosses nothing', async () => {
   const { endpointCandidatesFor } = await mod('bin/auth.src.mjs');
@@ -952,8 +938,8 @@ test('a loopback endpoint is kept as-is, because plaintext there crosses nothing
 });
 
 /**
- * The candidates are *verified*, not guessed between. This is the behaviour a real dev-cluster
- * run needed: the first candidate is unreachable, and the user still ends up signed in rather
+ * The candidates are *verified*, not guessed between. This is the behaviour a real sign-in
+ * needed: the first candidate is unreachable, and the user still ends up signed in rather
  * than being told their key is bad.
  */
 test('the first endpoint that accepts the key is the one stored', async () => {
@@ -1740,15 +1726,15 @@ test('no warning when the flag and the pin agree, or when nothing is pinned', as
 // ===========================================================================
 
 /**
- * Observed live: a key the console minted seconds earlier answered 401 at the
- * gateway for over a minute — edge ACLs propagate on their own clock. Declaring
+ * Observed live: a key the console minted seconds earlier can answer 401 for over a
+ * minute before it is accepted. Declaring
  * `auth_failed` there sends the user to reissue a key that was never bad, and the
  * *second* authorize flow then supersedes the first key entirely.
  *
  * The exemption is scoped to keys this flow just minted. A stored or pasted key that
  * 401s is genuinely bad, and waiting 30 seconds to say so would be pure friction.
  */
-test('the browser flow retries a fresh key through ACL lag instead of failing it', async () => {
+test('the browser flow retries a fresh key until it is accepted instead of failing it', async () => {
   const { main } = await mod('bin/auth.src.mjs');
   const { readCredentials } = await lib('credentials.mjs');
   const server = await fakeMubit({
@@ -1770,7 +1756,7 @@ test('the browser flow retries a fresh key through ACL lag instead of failing it
       openImpl: (url) => { console_.browse(url); },
     });
 
-  assert.equal(code, 0, `a lagging ACL is not a bad key:\n${lines.join('\n')}`);
+  assert.equal(code, 0, `a key that is not accepted yet is not a bad key:\n${lines.join('\n')}`);
   assert.equal(server.countOf('POST', '/v2/control/lessons'), 3,
     'two refusals, then the answer — the retry is what turned this into a sign-in');
   assert.equal(readCredentials(dataDir).apiKey, 'mbt_just_minted');
@@ -1800,8 +1786,8 @@ test('a pasted key still fails fast on 401 — the lag exemption is for fresh mi
 
 /**
  * The schedule is a contract, not an implementation detail: the skill tells the user
- * how long the command can appear to hang, and the live-run analysis sized it
- * against a measured ~70 s worst-case propagation. Pinned by export so a future edit
+ * how long the command can appear to hang, and it was sized against the longest delay
+ * seen before a fresh key was accepted. Pinned by export so a future edit
  * has to look this reasoning in the eye.
  */
 test('the retry schedule covers ~30 s and the env unit shrinks it for tests', async () => {
@@ -1811,7 +1797,7 @@ test('the retry schedule covers ~30 s and the env unit shrinks it for tests', as
     'at least two retries — one is a coin toss against a propagation delay');
   const total = AUTH_RETRY_SCHEDULE_MS.reduce((a, b) => a + b, 0);
   assert.ok(total >= 25_000 && total <= 45_000,
-    `the schedule totals ${total} ms; the measured ACL lag needs ~30 s of patience`);
+    `the schedule totals ${total} ms; a fresh key can need ~30 s of patience`);
 });
 
 // ===========================================================================

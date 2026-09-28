@@ -2,11 +2,11 @@
 /**
  * `hooks/src/session-end.mjs` — the flush has to outlive the hook process.
  *
- * Guide sections under test:
- *   §5.7  the ordered flow, unchanged, run somewhere the host cannot cancel it
- *   §4.9  `spawnDetached` — `detached: true`, `stdio: 'ignore'`, `unref()`, payload by file
- *   §4.6  `claimOnce` — one flush per session, which is what keeps a non-idempotent reflect single
- *   §1.4  reflect is the ONLY call that widens a lesson's scope past `run`
+ * Under test:
+ *   - the ordered flow, unchanged, run somewhere the host cannot cancel it
+ *   - `spawnDetached` — `detached: true`, `stdio: 'ignore'`, `unref()`, payload by file
+ *   - `claimOnce` — one flush per session, so a session reflects once
+ *   - reflect, the call that turns this session into lessons
  *
  * ---------------------------------------------------------------------------
  * The fact this file exists to protect
@@ -24,8 +24,8 @@
  * into a detached child, which is what `test 1` below actually measures: the hook is SIGKILLed
  * mid-run and the flush is required to land anyway.
  *
- * Everything else here is the price of that move — the hand-off must be fast, must keep §5.7's
- * order, must stay once-per-session, must be switchable off, and must fall back to running
+ * Everything else here is the price of that move — the hand-off must be fast, must keep the
+ * flow's order, must stay once-per-session, must be switchable off, and must fall back to running
  * inline when the hand-off itself cannot happen. The inline body is exercised verbatim by
  * `session-end.test.mjs`, which pins `MUBIT_CC_SESSION_END_DETACH=0` for exactly that reason.
  *
@@ -168,7 +168,7 @@ test('the flush survives the hook process being killed mid-run', async (t) => {
   assert.ok(marker.reflect.at > 0, 'a terminal status carries the time it was reached');
 
   assert.equal(spoolFiles(dataDir, RUN_ID).length, 0,
-    'the drain committed too: §5.7 step 2 runs in the child, ahead of the reflect');
+    'the drain committed too: it runs in the child, ahead of the reflect');
   server.assertCalled('POST', '/v2/control/ingest', 1);
 });
 
@@ -213,10 +213,10 @@ test('hands the flush to a detached child and returns immediately, marked detach
 });
 
 // ---------------------------------------------------------------------------
-// 3. §5.7's order is a property of the body, not of the process it runs in
+// 3. The flow's order is a property of the body, not of the process it runs in
 // ---------------------------------------------------------------------------
 
-// The drain commits before reflect is attempted (§1.4: a failing reflect may never cost
+// The drain commits before reflect is attempted (a failing reflect may never cost
 // captures that were already accepted), outcomes go out before reflect because
 // `include_step_outcomes` folds them into the evidence, and the idle heartbeat goes last.
 // Detaching moves all of it into another process; it must not reorder any of it.
@@ -288,7 +288,7 @@ test('two SessionEnds for one session produce exactly one reflect', async (t) =>
 // its drain for as long as the second child needs to start and decide.
 //
 // It fails without `acquireFlushLease`, with two reflects and two heartbeats. That is not a
-// slow assertion: it is a second pair of LLM calls the user is billed for, and a lesson
+// slow assertion: it is a second reflect the user pays for, and a lesson
 // restating one already stored. `reason=exit` on the heels of `reason=clear` is the ordinary
 // way a session ends this way, not an exotic one.
 test('a second SessionEnd arriving mid-flush stands down instead of reflecting again', async (t) => {
@@ -498,7 +498,7 @@ const TERMINAL_ROWS = [
     why: 'MUBIT_CC_REFLECT_ON_END=0, knowingly costing cross-session durability',
     extra: { MUBIT_CC_REFLECT_ON_END: '0' },
   },
-  { status: 'skipped:not-ingested', spool: 0, why: 'an LLM-backed call over an empty tail is pure cost' },
+  { status: 'skipped:not-ingested', spool: 0, why: 'a reflect over an empty tail is pure cost' },
   {
     status: 'skipped:undrained',
     spool: 1,
@@ -530,27 +530,26 @@ for (const row of TERMINAL_ROWS) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.7's three budgets compose, and the innermost one binds. What reflect actually gets is
+ * The three budgets compose, and the innermost one binds. What reflect actually gets is
  * `min(REFLECT_MS, BUDGET_MS − elapsed − HEARTBEAT_MS)` (`session-end.mjs:192`), measured
  * after a drain that may itself have spent `DRAIN_MS`. So a test that reads a constant proves
  * nothing: the constant is not the budget. This one makes the drain spend real time and then
- * requires the reflect to outlast a real LLM tail.
+ * requires the reflect to outlast a slow tail.
  *
- * 9000 ms is drawn from the Terminal-Bench sweep that produced this test — its slowest
- * *successful* reflect against a hosted instance took 9626 ms, against a detached slice of
- * 8000 ms. Every other test in this file asserts request counts, which is precisely why the
+ * 9000 ms is a slow reflect: longer than the detached slice of 8000 ms, so only the composed
+ * budget, not a constant, decides whether it lands. Every other test in this file asserts request counts, which is precisely why the
  * composition could be wrong without anything here going red.
  */
-const LLM_TAIL_MS = 9000;
+const SLOW_REFLECT_MS = 9000;
 
 /** Enough of a stall that the drain provably spends budget before reflect is even reached. */
 const SLOW_INGEST_MS = 1000;
 
-test('reflect outlasts a 9 s LLM tail, after the drain has already spent its share', async (t) => {
+test('reflect outlasts a 9 s tail, after the drain has already spent its share', async (t) => {
   const server = await fakeMubit({
     'POST /v2/control/ingest': { delayMs: SLOW_INGEST_MS, json: INGEST_OK },
     'POST /v2/control/reflect': {
-      delayMs: LLM_TAIL_MS,
+      delayMs: SLOW_REFLECT_MS,
       json: { lessons: [], summary: 'ok', confidence: 0.7, degraded: false, lessons_stored: 2 },
     },
   });

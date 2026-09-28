@@ -141,7 +141,7 @@ function drainLeavingRun(cfg, payload, runId) {
     log(cfg, 'debug', 'cwd-changed: draining the run being left', { run_id: runId, count });
   } catch (err) {
     // The items stay spooled. They are drained if the user walks back into that repo, and
-    // otherwise swept by §7's TTL — the same outcome as before this hook existed.
+    // otherwise swept by the TTL — the same outcome as before this hook existed.
     log(cfg, 'warn', `cwd-changed: could not drain the run being left (${messageOf(err)})`,
       { run_id: runId });
   }

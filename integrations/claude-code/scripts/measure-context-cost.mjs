@@ -39,10 +39,7 @@
  * `--server` measures a different server bundle, for the same reason it exists in
  * `mcp-probe.mjs`. What the committed server registers is what a user installing today
  * actually pays, so that is what gets declared; `curatedValue` reports the allowlisted
- * figure beside it. Until 0.9.1 the two differed — `mcp/dist/server.js` was bundled from the
- * *published* `@mubit-ai/mcp`, which predates the §8.1 allowlist patch and registered all 21
- * tools, so the declared cost was 5,382 against a curated 2,664. It is now built from the
- * in-repo package and the two agree.
+ * figure beside it.
  *
  * ## The token estimate
  *
@@ -362,7 +359,7 @@ function report(r) {
       `\nThis server registers all ${b.toolSchemas.count} tools, so \`mcpTools\` is inert and every\n`
       + `user pays for every tool. With the curated set honoured the same surface costs\n`
       + `${r.curatedValue} tokens, ${r.value - r.curatedValue} fewer.\n`
-      + 'The server is bundled from the in-repo @mubit-ai/mcp, which reads MUBIT_MCP_TOOLS.\n'
+      + 'The server is bundled from the sibling @mubit-ai/mcp, which reads MUBIT_MCP_TOOLS.\n'
       + 'A server that ignores it is a stale bundle — rebuild:\n'
       + '  npm --prefix ../mcp ci && npm --prefix ../mcp run build && npm run build\n');
   }

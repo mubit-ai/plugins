@@ -17,7 +17,7 @@
  * drain, the outcome flush and the reflect. A hook killed at the 3 s boundary therefore left
  * the session marked flushed with none of it done — and the marker is exactly what makes a
  * later attempt stand down, so nothing ever retried. The user loses the drain *and* the
- * reflect, which is the only path that promotes a lesson beyond its own run.
+ * reflect.
  *
  * What replaces it is check-early / write-late: the marker is *read* up front so a second
  * SessionEnd stands down, and *written* after the work it claims. `claimOnce`'s own docstring
@@ -44,8 +44,7 @@ const CODEX_SESSION_END_CLAMP_MS = 3000;
  *
  * Against the instant fake server every one of these hooks finishes in well under a second and
  * a 6800 ms deadline is indistinguishable from a 2300 ms one. The numbers below are ordinary
- * for a hosted instance: `codex-failure.test.mjs` already records a real reflect tail at
- * 9626 ms, and the plugin's own inline reflect budget is 4000 — larger, by itself, than the
+ * for a slow reflect, and the plugin's own inline reflect budget is 4000 — larger, by itself, than the
  * entire clamp this hook runs under.
  */
 function slowMubit(o = {}) {

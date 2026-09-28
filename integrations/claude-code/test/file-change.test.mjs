@@ -205,7 +205,7 @@ describe('fileChanges — the oracle table', () => {
     });
   }
 
-  // §4.9's rule, applied here because this runs on the capture hook's critical path: a
+  // The no-throw rule, applied here because this runs on the capture hook's critical path: a
   // hostile or simply unexpected `tool_input` costs the lane, never the item.
   it('never throws, whatever it is handed', async () => {
     const { fileChanges } = await F();

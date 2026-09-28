@@ -8,17 +8,11 @@
  * that wrote them, and whatever the instance has stamped about promotion. It is the only place
  * those answers are a number rather than an anecdote.
  *
- * ## Why this was rewritten rather than extended
- *
- * The version this replaces asked `POST /v2/control/lessons` with a deliberately empty
- * `run_id` — which is the same request that made `mubit_lessons` read across runs. The tool
- * whose whole purpose was to measure that behaviour was riding on it. It also inherited that
- * route's other property: a request for rows at a named scope comes back short against a real
- * instance, so the audit read a confident zero on an instance holding hundreds of lessons.
+ * ## Why it reads the activity feed
  *
  * A zero that means "the query was wrong" and a zero that means "nothing has ever been
  * promoted" are the same character on screen and opposite conclusions. That is the failure
- * this file exists to remove, so it goes through `lessonCensus()` instead: the activity feed
+ * this file exists to remove, so it goes through `lessonCensus()`: the activity feed
  * collects and sorts before it pages, and it reports when it gave up.
  *
  * ## Two properties that are not negotiable

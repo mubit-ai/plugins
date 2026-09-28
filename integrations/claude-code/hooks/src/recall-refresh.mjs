@@ -74,10 +74,10 @@ const REFRESH_BUDGET_MS = 10_000;
 /** The harness's hard stop sits just past the working budget, so the marker write lands. */
 const HARNESS_BUDGET_MS = REFRESH_BUDGET_MS + 2_000;
 
-/** §5.2 step 0, shared with `prompt-recall`: "ok", "go on" carry no retrievable intent. */
+/** Step 0, shared with `prompt-recall`: "ok", "go on" carry no retrievable intent. */
 const MIN_PROMPT_CHARS = 8;
 
-/** Recall quality does not improve past this, and a 40 KB paste is a slow embedding. */
+/** Recall quality does not improve past this, and a 40 KB paste is a slow query. */
 const MAX_QUERY_CHARS = 2000;
 
 /** `prompt_id` is carried as provenance only, but it is still host input. */
@@ -179,7 +179,7 @@ await runHook('recall-refresh', {
 // Small helpers
 // ---------------------------------------------------------------------------
 
-/** §4.7's closed union, asked against the export so this file cannot drift from it. */
+/** The closed ConnState union, asked against the export so this file cannot drift from it. */
 function isConnState(v) {
   return typeof v === 'string' && /** @type {readonly string[]} */ (CONN_STATES).includes(v);
 }

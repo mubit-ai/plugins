@@ -150,8 +150,8 @@ test('a subagent starts with memory: SubagentStart returns a recall block on its
     server.assertCalled('POST', '/v2/control/query', 1);
   });
 
-// The ladder is `lib/recall.mjs`'s, and rung 1 is the zero-LLM-call one. A subagent
-// spawn is not a licence to spend two LLM calls the parent's own prompt would not spend.
+// The ladder is `lib/recall.mjs`'s, and rung 1 is the primary path. A subagent spawn is not
+// a licence to take a slower path than the parent's own prompt would.
 test('recall for a subagent spends one direct_bypass query and never touches /v2/control/context',
   async (t) => {
     const server = await fakeMubit();
@@ -164,7 +164,7 @@ test('recall for a subagent spends one direct_bypass query and never touches /v2
     server.assertCalled('POST', '/v2/control/query', 1);
     server.assertNotCalled('POST', '/v2/control/context');
     assert.equal(server.lastCall('POST', '/v2/control/query').body.mode, 'direct_bypass',
-      'a fan-out of ten subagents on rung 2 would be ten routing LLM calls in front of one turn');
+      'a fan-out of ten subagents on rung 2 would be ten slow requests in front of one turn');
   });
 
 // The host prefixes the block with `SubagentStart hook additional context: ` itself — measured
@@ -207,7 +207,7 @@ test('the query is the parent turn\'s staged prompt, because the payload carries
     assert.equal(body.run_id, RUN_ID,
       'the query must read the PARENT run: a sub-run id has no memory stored against it, so '
       + 'querying one would return nothing for every subagent, forever');
-    // And the same text decides the fusion weights. The staged parent prompt is a
+    // And the same text decides `rank_by`. The staged parent prompt is a
     // diagnosis, so `auto` resolves it to `relevance`, exactly as it does for the parent's
     // own `UserPromptSubmit`. One rule, one query text, three call sites.
     assert.equal(body.rank_by, 'relevance');
@@ -542,10 +542,9 @@ test('a subagent spawn does not pay for a slow hook', async (t) => {
 // The record itself
 // ---------------------------------------------------------------------------
 
-// There is no `link_run` route in `lib/http.mjs`'s ROUTES, so a sub-run cannot be joined to
-// its parent server-side today. This file is the local half of that join, and the only thing
-// that makes the gap recoverable later rather than lost.
-test('the sub-run record carries everything a later link_run would need', async (t) => {
+// The plugin has no route that joins a sub-run to its parent, so this record is the local
+// half of that join, and the only thing that makes it recoverable later rather than lost.
+test('the sub-run record carries everything a later join would need', async (t) => {
   const server = await fakeMubit();
   t.after(() => server.close());
   const dir = makeDataDir();

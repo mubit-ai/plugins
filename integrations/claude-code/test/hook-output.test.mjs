@@ -3,17 +3,17 @@
  * `test/hook-output.test.mjs` — the HOST's hook-output contract, for every hook this plugin
  * registers.
  *
- * Every other hook test in this suite asserts the shape the design guide specifies. This one
+ * Every other hook test in this suite asserts the shape the plugin means to emit. This one
  * asserts the shape Claude Code actually accepts, and those are two different authorities:
- * the guide decides what the plugin means to say, the host decides what it is allowed to say,
+ * the plugin decides what it means to say, the host decides what it is allowed to say,
  * and only one of them is holding the parser. Where they disagree the host wins **in silence**
  * — an output that fails its schema is discarded whole, so no `additionalContext` is injected,
  * no `systemMessage` is shown, and the hook still exits 0. Nothing downstream can tell that
  * apart from a hook that chose to say nothing.
  *
- * That is not hypothetical. `checkpoint --post` emitted
- * `hookSpecificOutput.hookEventName: "PostCompact"` for its whole shipped life, and every
- * re-anchor it produced was thrown away by the host:
+ * That is not hypothetical. A `checkpoint --post` that emitted
+ * `hookSpecificOutput.hookEventName: "PostCompact"` had every re-anchor it produced thrown
+ * away by the host:
  *
  *     PostCompact [node .../hooks/dist/checkpoint.mjs --post] failed:
  *     Hook JSON output validation failed — (root): Invalid input
@@ -21,8 +21,8 @@
  * `PreCompact` never showed the problem, because it answers with `systemMessage`, which is a
  * top-level field and never reaches the `hookSpecificOutput` union at all.
  *
- * A per-hook test written against the guide cannot catch that class, because the constraint
- * does not live in the guide. So this file is a gate over **every registration in
+ * A per-hook test written against the plugin's own design cannot catch that class, because
+ * the constraint does not live there. So this file is a gate over **every registration in
  * `hooks/hooks.json`** rather than over one hook: a new hook, or a new argv mode of an
  * existing one, fails here until it has a case, and the case then pins its stdout against the
  * host. `drain.mjs` is deliberately absent — it is spawned detached by other hooks, never by
@@ -105,7 +105,7 @@ const ACCEPTED_TOP_LEVEL_KEYS = Object.freeze([
 /** One real git project for every case; run-id derivation shells out to git. */
 const PROJECT_DIR = makeProjectDir({ git: true });
 
-/** Pinned (§6.1 `static`) so a case can seed `runs/<run_id>/` before the hook runs. */
+/** Pinned (`static` strategy) so a case can seed `runs/<run_id>/` before the hook runs. */
 const RUN_ID = 'cc-hook-output-test';
 
 function env(dataDir, endpoint) {
@@ -368,7 +368,7 @@ for (const reg of registrations()) {
       args: reg.args,
     });
 
-    // §4.9 first: exit 0 and parseable stdout. The host contract below is meaningless on
+    // The hook contract first: exit 0 and parseable stdout. The host contract below is meaningless on
     // stdout the host could not parse in the first place.
     assertHookContract(r);
     assertHostContract(r.json ?? {}, reg.event, label);

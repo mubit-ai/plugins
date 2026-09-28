@@ -31,8 +31,8 @@ import { baseEnv, fakeMubit, lib, makeDataDir, makeProjectDir, readJsonDir } fro
 let _mod;
 const C = async () => (_mod ??= await lib('codex-import.mjs'));
 
-const THREAD = '01a07bb6-9c25-73d3-a2f3-cd24dd5b3e5b';
-const PARENT = '01a024f2-cb68-77b2-a34e-2dc31c7a4fc4';
+const THREAD = '0199aaaa-0000-7000-8000-00000000000a';
+const PARENT = '0199bbbb-0000-7000-8000-00000000000b';
 
 // ---------------------------------------------------------------------------
 // A rollout, built the way the host writes one
@@ -155,7 +155,7 @@ function sessionsRoot(files) {
   return root;
 }
 
-const FILE = '2026/09/07/rollout-2026-09-07T12-00-00-01a07bb6-9c25-73d3-a2f3-cd24dd5b3e5b.jsonl';
+const FILE = '2026/09/07/rollout-2026-09-07T12-00-00-0199aaaa-0000-7000-8000-00000000000a.jsonl';
 
 async function setup(o = {}) {
   const dataDir = makeDataDir();

@@ -2,8 +2,8 @@
 /**
  * `lib/spool.mjs` — the durable buffer between capture and the network.
  *
- * The module API, the state layout and the 60 s drain-lock TTL,
- * §5.4/§5.5 (capture writes, drain reads), §12.6 (the 200-concurrent-append property).
+ * The module API, the state layout and the 60 s drain-lock TTL; capture writes, drain reads;
+ * and the 200-concurrent-append property.
  *
  * Capture is synchronous, hot and network-free; drain is detached, batched and networked.
  * This module is the seam. Three rules hold throughout, exactly as in `lib/state.mjs`:
@@ -46,7 +46,7 @@ const DRAIN_LOCK_TTL_MS = 60_000;
  */
 const FLUSH_LEASE_TTL_MS = 90_000;
 
-/** §6.1 `MUBIT_CC_BATCH_MAX_ITEMS` default, used when a caller passes no usable `max`. */
+/** `MUBIT_CC_BATCH_MAX_ITEMS` default, used when a caller passes no usable `max`. */
 const DEFAULT_MAX = 32;
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -181,7 +181,7 @@ function stampOf(dir, name) {
 /**
  * Spool file names for a run, oldest first.
  *
- * `withFileTypes` is what keeps `spool/rejected/` — the §5.5 quarantine for batches the
+ * `withFileTypes` is what keeps `spool/rejected/` — the quarantine for batches the
  * server refused with a non-retryable 4xx — out of every read. Re-reading a quarantined
  * batch would retry a 422 forever, which is precisely the unbounded-spool failure the
  * quarantine exists to prevent.
@@ -304,7 +304,7 @@ function readLock(lockPath) {
     const pid = Number(j.pid);
     let ts = Number(j.ts);
     if (!Number.isFinite(ts)) {
-      // No recorded ts: fall back to the file's own age, the way §7's TTL sweep does.
+      // No recorded ts: fall back to the file's own age, the way the TTL sweep does.
       try { ts = statSync(lockPath).mtimeMs; } catch { return null; }
     }
     return { pid: Number.isFinite(pid) ? pid : 0, ts };

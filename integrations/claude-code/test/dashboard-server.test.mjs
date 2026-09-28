@@ -591,20 +591,20 @@ test('analytics: the payload carries no latency series, because none is recorded
 /**
  * The headline bug, and the only route change that fixes it.
  *
- * The page pinned every lessons call to the current run, so the instance took the
- * `nexus.list(run_id, limit)` branch instead of `list_global(limit)` and a `global` lesson
- * written by another run could not appear at all — which is the exact opposite of the question
- * the scope filter exists to answer. An empty `run` means every run, and nothing else needs to
- * be spelled: a second `allRuns` parameter would just be a second way to get this wrong again.
+ * The page pinned every lessons call to the current run, so a `global` lesson written by
+ * another run could not appear at all — which is the exact opposite of the question the scope
+ * filter exists to answer. An empty `run` is how the page asks for all runs, and nothing else
+ * needs to be spelled: a second `allRuns` parameter would just be a second way to get this
+ * wrong again.
  */
-test('lessons: with no run the census asks the instance for every run, so a lesson from another run can appear', async (t) => {
+test('lessons: with no run the census sends no run_id, so a lesson from another run can appear', async (t) => {
   const { call, upstream } = await setup(t, {
     routes: { 'POST /v2/control/activity': activityPage([lessonActivity()]) },
   });
 
   const body = await (await call('/api/lessons')).json();
   const req = upstream.lastCall('POST', '/v2/control/activity')?.body;
-  assert.ok(!('run_id' in req), `an absent run means every run; body was ${JSON.stringify(req)}`);
+  assert.ok(!('run_id' in req), `an absent run sends no run_id; body was ${JSON.stringify(req)}`);
   assert.deepEqual(req.entry_types, ['lesson']);
   assert.equal(req.projection, 'full', 'compact overwrites metadata_json and the scope is gone');
   assert.equal(body.source, 'activity');

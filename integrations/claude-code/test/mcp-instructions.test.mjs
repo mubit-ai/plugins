@@ -112,7 +112,7 @@ test('instructions say mubit_learned is for durable claims, not session narratio
     + 'memory whose every future recall is noise');
 });
 
-// §8.2 advertises four tools that all read from memory. Choosing between them is the thing
+// The plugin advertises four tools that all read from memory. Choosing between them is the thing
 // nobody was helped with, and under tool search the descriptions that would help are deferred.
 test('instructions name the retrieval tool for each shape of question', async () => {
   const { init } = await handshake();

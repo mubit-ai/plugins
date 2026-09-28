@@ -17,15 +17,11 @@
  *     with the same metadata keys, so a listing does not know the difference.
  *
  * ---------------------------------------------------------------------------
- * Open is computed here, because the server never flips `active`
+ * Open is computed here
  * ---------------------------------------------------------------------------
- * The route stamps `active: true` on every handoff it creates and nothing on the server ever
- * sets it to false — `submit_feedback` writes a separate `feedback` entry and leaves the
- * handoff as it was. There is also no list route: `/activity` is the only reader. So
+ * There is no list route: `/activity` is the only reader, and `active` is not used. So
  * `listHandoffs` fetches both entry types for the run and joins them client-side, and
- * **open means "no feedback entry names this handoff's id"**. A reader who filters on
- * `active` server-side will find every handoff ever written still open, which is why this
- * module does not.
+ * **open means "no feedback entry names this handoff's id"**.
  *
  * ---------------------------------------------------------------------------
  * Run scope

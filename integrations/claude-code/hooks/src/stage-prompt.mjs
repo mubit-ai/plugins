@@ -47,7 +47,7 @@ import {
 } from '../../lib/state.mjs';
 
 /**
- * §5.3 targets < 25 ms of work; this is the harness's hard stop, not the target. Everything
+ * The target is < 25 ms of work; this is the harness's hard stop, not the target. Everything
  * below is synchronous file I/O, so the deadline only ever matters if a filesystem hangs.
  */
 const BUDGET_MS = 250;
@@ -136,7 +136,7 @@ function stageTurn(cfg, runId, payload) {
       prompt_id: promptId,
       session_id: typeof payload?.session_id === 'string' ? payload.session_id : '',
       started_at: Number.isFinite(base.started_at) ? base.started_at : Date.now(),
-      // The other half of the §5.3 race: never overwrite ids `prompt-recall` already staged.
+      // The other half of the staging race: never overwrite ids `prompt-recall` already staged.
       recalled: Array.isArray(base.recalled) ? base.recalled : [],
       turn_number: Number.isFinite(base.turn_number) && base.turn_number > 0
         ? base.turn_number
@@ -231,7 +231,7 @@ function scorePrompt(cfg, payload) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.3 step 2. `spoolStats` is the whole trigger: `count >= batchMaxItems` says the batch is
+ * The drain trigger. `spoolStats` is the whole trigger: `count >= batchMaxItems` says the batch is
  * full, `oldestMs >= batchMaxAgeMs` says a quiet session has captures going stale. It is the
  * *oldest* item that decides the age, so a steady trickle cannot keep resetting the clock.
  *

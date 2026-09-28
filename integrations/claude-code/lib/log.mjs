@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { redactText } from './redact.mjs';
 import { resolveDataDir } from './state.mjs';
 
-/** §6.1 `MUBIT_CC_LOG_LEVEL`: error|warn|info|debug, default `warn`. */
+/** `MUBIT_CC_LOG_LEVEL`: error|warn|info|debug, default `warn`. */
 const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 
 const MAX_BYTES = 1024 * 1024;

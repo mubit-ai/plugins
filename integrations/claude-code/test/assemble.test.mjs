@@ -1,14 +1,13 @@
 // @ts-check
 /**
- * `lib/assemble.mjs` — client-side section assembly (test plan §12.5).
+ * `lib/assemble.mjs` — client-side section assembly.
  *
  * Why this module exists at all: rungs 1 and 2 of the read ladder return `evidence[]`,
- * not a preassembled `context_block`. This module does what rung 3
- * (`POST /v2/control/context`) would have done server-side — for **zero LLM calls**
- * instead of two. Every assertion below protects the property that makes that
- * substitution honest: the client must render the same shape, in the same order, with
- * the same `emptyReason` vocabulary the server would have used, so downstream code is
- * rung-agnostic.
+ * not a preassembled `context_block`. This module renders that evidence into the block
+ * rung 3 (`POST /v2/control/context`) would have returned. Every assertion below protects
+ * the property that makes that substitution honest: the client must render the same shape,
+ * in the same order, with the same `emptyReason` vocabulary as the context route, so
+ * downstream code is rung-agnostic.
  *
  * These tests are written before the implementation. Failing with
  * "lib/assemble.mjs does not exist yet" is the expected red state.
@@ -21,7 +20,7 @@ import { lib, evidence } from './helpers/harness.mjs';
 const load = () => lib('assemble.mjs');
 
 // ---------------------------------------------------------------------------
-// Reference tables, transcribed from the guide
+// Reference tables
 // ---------------------------------------------------------------------------
 
 /** The 17 LTM entry types. */
@@ -31,7 +30,7 @@ const ENTRY_TYPES = [
   'checkpoint', 'step_outcome', 'mental_model', 'workflow',
 ];
 
-/** Section keys (`control.proto`). Nothing may be invented outside this set. */
+/** The response's section keys. Nothing may be invented outside this set. */
 const SECTION_KEYS = [
   'mental_models', 'active_rules', 'lessons', 'archive_blocks', 'handoffs', 'feedback',
   'facts', 'observations', 'working_memory', 'traces', 'goals', 'checkpoints', 'logs',
@@ -39,12 +38,11 @@ const SECTION_KEYS = [
 ];
 
 /**
- * The §4.10 `entry_type → section` table, plus the two rows the handoff lane added.
+ * The `entry_type → section` table, plus the two rows handoffs added.
  *
  * NOTE for whoever implements this: the table's last row is literally "anything else →
- * `other`", so `reflection`, `log` and `workflow` land in `other` even though §1.3 defines a
- * `logs` section key. `handoff` and `feedback` fill the `handoffs` and `feedback` sections
- * §1.3 defines for them, because the resume briefing asks for `handoffs` and a section no
+ * `other`", so `reflection`, `log` and `workflow` land in `other` even though a `logs` section
+ * key exists. `handoff` and `feedback` fill the `handoffs` and `feedback` sections, because the resume briefing asks for `handoffs` and a section no
  * entry type can fill renders as nothing. If that is ever changed, change it here first —
  * this table is the spec.
  */
@@ -70,7 +68,7 @@ const SECTION_FOR = {
   workflow: 'other',
 };
 
-/** Server-fixed emission order (`control.proto`). */
+/** The context route's section order. */
 const EMISSION_ORDER = [
   'mental_models', 'active_rules', 'lessons', 'facts', 'observations',
   'working_memory', 'traces', 'goals',
@@ -104,9 +102,9 @@ function item(i, over = {}) {
 // sectionFor
 // ---------------------------------------------------------------------------
 
-// §12.5 + §4.10: every one of the 17 LTM entry types maps to a section; nothing lands in
-// `other` unless the §4.10 table genuinely has no row for it.
-test('sectionFor maps all 17 LTM entry types per the §4.10 table', async () => {
+// Every one of the 17 LTM entry types maps to a section; nothing lands in `other` unless the
+// table genuinely has no row for it.
+test('sectionFor maps all 17 LTM entry types per the table', async () => {
   const { sectionFor } = await load();
   for (const et of ENTRY_TYPES) {
     assert.equal(sectionFor(et), SECTION_FOR[et], `entry_type "${et}" mapped wrong`);
@@ -133,14 +131,14 @@ test('sectionFor folds every trace-shaped type into traces', async () => {
   }
 });
 
-// The section vocabulary is fixed by control.proto — the client may never invent a key.
+// The section vocabulary is fixed by the wire contract — the client may never invent a key.
 test('sectionFor only ever returns a documented section key', async () => {
   const { sectionFor } = await load();
   for (const et of [...ENTRY_TYPES, 'working_memory', 'goal', '', 'not_a_type', 'RULE']) {
     const s = sectionFor(et);
     assert.equal(typeof s, 'string', `sectionFor(${JSON.stringify(et)}) must return a string`);
     assert.ok(SECTION_KEYS.includes(s),
-      `sectionFor(${JSON.stringify(et)}) returned "${s}", which is not a control.proto section key`);
+      `sectionFor(${JSON.stringify(et)}) returned "${s}", which is not a documented section key`);
   }
 });
 
@@ -152,9 +150,9 @@ test('sectionFor sends unknown and blank entry types to other', async () => {
   assert.equal(sectionFor(''), 'other');
 });
 
-// "maps entry_type (or origin_entry_type when the entry came through an overlay)".
-// The overlay's own type is bookkeeping; the origin is what the user needs to read.
-test('an overlay entry routes by origin_entry_type, not entry_type', async () => {
+// An entry that carries an `origin_entry_type` routes by it: its own `entry_type` is then
+// bookkeeping, and the origin is what the user needs to read.
+test('an entry routes by origin_entry_type, not entry_type, when it has one', async () => {
   const { assembleContext } = await load();
   const r = assembleContext(
     [item(1, { entry_type: 'trace', origin_entry_type: 'rule' })],
@@ -163,15 +161,14 @@ test('an overlay entry routes by origin_entry_type, not entry_type', async () =>
   const sections = r.sections.map((s) => s.section);
   assert.ok(sections.includes('active_rules'),
     `origin_entry_type "rule" must render under active_rules; got ${JSON.stringify(sections)}`);
-  assert.ok(!sections.includes('traces'), 'the overlay type must not win');
+  assert.ok(!sections.includes('traces'), 'the bookkeeping type must not win');
 });
 
 // ---------------------------------------------------------------------------
 // Emission order
 // ---------------------------------------------------------------------------
 
-// §1.3/§4.10 (control.proto): response order is server-fixed, so a user who
-// switches rungs (or whose operator flips the instance's direct-search policy) sees the exact
+// The context route's section order is fixed, so a user who switches rungs sees the exact
 // same shape. Input order must be irrelevant.
 test('sections emit in the server-fixed order regardless of input order', async () => {
   const { assembleContext } = await load();
@@ -270,8 +267,8 @@ test('items inside a section are ordered by descending score', async () => {
   assert.deepEqual(r.sourceRefIds, ['ref_high', 'ref_mid', 'ref_low']);
 });
 
-// "prefer non-is_stale entries when trimming — the server returns stale entries for
-// transparency but marks them" (control.proto).
+// Prefer entries not marked `is_stale` when trimming: a stale entry is still returned,
+// marked.
 test('a stale entry loses to a fresh entry of equal score', async () => {
   const { assembleContext } = await load();
   const ev = [
@@ -398,8 +395,8 @@ test('sourceRefIds contains exactly the rendered items, and nothing else', async
   assert.equal(new Set(r.sourceRefIds).size, r.sourceRefIds.length, 'no duplicate reference ids');
 });
 
-// reference_id, not id — the field that RecordOutcome.entry_ids consumes
-// (control.proto). The fixture gives them different values on purpose.
+// reference_id, not id — the value an outcome's entry_ids carries. The fixture gives them
+// different values on purpose.
 test('sourceRefIds carries reference_id, never the evidence id', async () => {
   const { assembleContext } = await load();
   const r = assembleContext(
@@ -442,7 +439,7 @@ test('estimateTokens is roughly four characters per token', async () => {
 // ---------------------------------------------------------------------------
 
 /*
- * §4.10 renders one block. Nothing in it knew about the *previous* block, so a lesson that
+ * Assembly renders one block. Nothing in it knew about the *previous* block, so a lesson that
  * stays relevant for twenty prompts was rendered twenty times at full price and all twenty
  * copies sat in the transcript competing with each other.
  *
@@ -452,9 +449,9 @@ test('estimateTokens is roughly four characters per token', async () => {
  *
  * **The single most important property in this section:** a pointer still pushes its
  * `reference_id` into `sourceRefIds`. That array is what `Stop` attributes against and what
- * becomes `RecordOutcome.entry_ids` (control.proto). Dropping a repeat would silently stop
- * reinforcing precisely the memories that are helping most, which is the exact opposite of
- * what `record_outcome` is for.
+ * becomes an outcome's `entry_ids`. Dropping a repeat would silently stop crediting
+ * precisely the memories that are helping most, which is the exact opposite of what an
+ * outcome is for.
  */
 
 /** ~200 tokens — the per-memory size a 1500-token budget over six memories implies. */
@@ -662,7 +659,7 @@ test('an entry with no reference_id is never rendered as a pointer', async () =>
   assert.ok(r.block.includes('TAIL_RULE'));
 });
 
-// §4.10's ordering rules are not suspended by the seen set: two runs with the same evidence
+// The ordering rules are not suspended by the seen set: two runs with the same evidence
 // and the same seen set must still produce the same block.
 test('degrading an entry does not move it out of its section or its order', async () => {
   const { assembleContext } = await load();
@@ -721,7 +718,7 @@ test('entries lists every rendered item in render order with its type, handle an
     evidence({ id: 'e3', reference_id: 'ref_fact_1', entry_type: 'fact', score: 0.9, content: 'Port 47101 serves the fake API.' }),
     evidence({ id: 'e2', reference_id: 'ref_lesson_1', entry_type: 'lesson', score: 0.5, content: longContent('LESSON', 'l') }),
     RULE(),
-    evidence({ id: 'e4', reference_id: 'ref_over_1', entry_type: 'trace', origin_entry_type: 'Lesson', score: 0.1, content: 'Overlay lesson text here.' }),
+    evidence({ id: 'e4', reference_id: 'ref_over_1', entry_type: 'trace', origin_entry_type: 'Lesson', score: 0.1, content: 'Origin lesson text here.' }),
   ];
   const r = assembleContext(ev, { tokenBudget: 1500, seen: ['ref_lesson_1'] });
   assert.deepEqual(r.entries.map((e) => e.ref), r.sourceRefIds);

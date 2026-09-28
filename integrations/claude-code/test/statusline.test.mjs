@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * `bin/statusline.mjs` — the status line (and §16.2 for the degradation path).
+ * `bin/statusline.mjs` — the status line, and its degradation path.
  *
  * The status line is the only part of this plugin that runs on every frame of the
  * host UI. Three properties matter more than anything it prints:
@@ -43,7 +43,7 @@ function statuslineScript() {
   if (existsSync(src)) return src;
   return assert.fail(
     `bin/statusline.mjs does not exist yet (nor bin/statusline.src.mjs) under ${PLUGIN_ROOT}.\n` +
-    '  §10 defines it; §11.2 bundles statusline.src.mjs → statusline.mjs.');
+    '  The build bundles statusline.src.mjs → statusline.mjs.');
 }
 
 /**
@@ -94,7 +94,7 @@ async function derivedRunId(env) {
   return deriveRunId(loadConfig(env), {});
 }
 
-/** A complete §4.8 Marker, overridable field by field. */
+/** A complete Marker, overridable field by field. */
 function marker(runId, over = {}) {
   const now = Date.now();
   return {
@@ -121,8 +121,8 @@ function seedMarker(dataDir, runId, over = {}) {
 }
 
 /**
- * Breaker state file. §4.7 names it `breaker/<sha256(endpoint).slice(0,12)>.json`; the
- * digest encoding is not pinned in the guide, so the identical payload is written under
+ * Breaker state file, `breaker/<sha256(endpoint).slice(0,12)>.json`; the digest encoding
+ * is not pinned, so the identical payload is written under
  * every plausible spelling. All three carry the same content, so an implementation that
  * globs the directory cannot pick a "wrong" one.
  */
@@ -157,7 +157,7 @@ function env(dataDir, extra = {}) {
 function assertNoStackTrace(r) {
   assert.equal(r.code, 0, `status line must exit 0, got ${r.code}. stderr:\n${r.stderr}`);
   assert.ok(!/^\s+at\s/m.test(r.stderr),
-    `status line printed a stack trace.2: a fresh install must never see one:\n${r.stderr}`);
+    `status line printed a stack trace: a fresh install must never see one:\n${r.stderr}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ test('makes zero network requests — it only reads local state', async () => {
     const r = await runStatusline({ env: e });
     assertNoStackTrace(r);
     assert.equal(server.requests.length, 0,
-      `status line made ${server.requests.length} request(s): ${server.summary()} — §10 says it reads only status/<run_id>.json and breaker/<hash>.json`);
+      `status line made ${server.requests.length} request(s): ${server.summary()} — it may read only status/<run_id>.json and breaker/<hash>.json`);
     assert.ok(r.line.length > 0, 'expected one rendered status line');
   } finally {
     await server.close();
@@ -202,9 +202,9 @@ test('renders well inside its budget (real target < 15ms; ceiling here is genero
     async () => (await runStatusline({ env: e })).ms);
 });
 
-// The documented line. Example from the guide:
-//   ● mubit: cc-my-project-9f2a11c4 · local · recall 6/1.2k tok · saved 12t/1q · lessons 3g
-// The run id is whatever §4.3 derives for this directory, so it is substituted here.
+// The documented line, for example:
+//   ● mubit: cc-my-project-0000abcd · local · recall 6/1.2k tok · saved 12t/1q · lessons 3g
+// The run id is whatever the plugin derives for this directory, so it is substituted here.
 test('renders the documented shape: glyph, run, mode, recall, saved, lessons', async () => {
   const dataDir = makeDataDir();
   const e = env(dataDir);
@@ -254,10 +254,9 @@ test('a dry streak under the threshold does not cry wolf', async () => {
   assert.match(r.line, /recall 6\/1\.2k tok/);
 });
 
-// Reflect is the only call that widens a lesson past `run` scope, so a failed one
-// costs the session its cross-session memory. It failed 12 times over four days in silence:
-// the failure logs at `warn`, the success at `info`, so at the default level a healthy and a
-// broken instance print the same nothing.
+// A failed reflect costs the session's lessons their way into later sessions, and it fails in
+// silence: the failure logs at `warn`, the success at `info`, so at the default level a
+// healthy and a broken instance print the same nothing.
 test('a failed reflect is named on the line', async () => {
   const dataDir = makeDataDir();
   const e = env(dataDir);
@@ -308,7 +307,7 @@ test('a marker predating dry_streak renders unchanged', async () => {
 // ---------------------------------------------------------------------------
 
 /**
- * §10 precedence, worst first:
+ * Precedence, worst first:
  *   ○ not configured > ✖ auth failed > ✖ unreachable > ▲ server error > ◌ slow > ◍ warming
  *   > ● ready
  *
@@ -370,18 +369,18 @@ test('cold start renders ◍ warming rather than a failure glyph', async () => {
 });
 
 // The question the design left open, now settled and recorded here: cold start suppresses
-// `not_responding` as well. §10 ranks ◍ warming *below* ◌ slow; §4.7 says failures inside the
-// grace window do not show a failure glyph at all. §4.7 wins, because the two sections answer
-// different questions — §10 ranks two simultaneous facts, §4.7 decides whether a fact is a
-// verdict yet, and that is asked first.
+// `not_responding` as well. The glyph precedence ranks ◍ warming *below* ◌ slow; the grace
+// window says failures inside it do not show a failure glyph at all. The grace window wins,
+// because the two rules answer different questions — precedence ranks two simultaneous facts,
+// the grace window decides whether a fact is a verdict yet, and that is asked first.
 //
-// The suite settles it either way: the test above pins that `unreachable` — which §10 ranks
+// The suite settles it either way: the test above pins that `unreachable` — which ranks
 // strictly WORSE than `not_responding` — is suppressed to ◍. Letting the milder symptom through
 // while hiding the worse one would show the scarier glyph for the healthier server. And a
 // timeout is the single most likely thing to happen while Mubit spends its first ten seconds
 // still warming up, so the other reading would make ◌ the normal cold-start display and leave
 // ◍ nearly unreachable — inverting the point of the grace window.
-test('cold start suppresses not_responding too — the ◌/◍ pair §10 and §4.7 disagree on', async () => {
+test('cold start suppresses not_responding too — the ◌/◍ pair the two rules disagree on', async () => {
   const dataDir = makeDataDir();
   const e = env(dataDir);
   const runId = await derivedRunId(e);
@@ -407,7 +406,7 @@ test('cold start beats ready in the precedence order', async () => {
 });
 
 // auth_failed is sticky and pins the status line: it is the one error the user can
-// actually fix, so cold start must not hide it. This is also the top of the §10 table.
+// actually fix, so cold start must not hide it. This is also the top of the precedence table.
 test('auth_failed outranks cold start — the one error the user can fix is never hidden', async () => {
   const dataDir = makeDataDir();
   const e = env(dataDir);
@@ -496,8 +495,8 @@ test('a closed breaker adds no paused suffix', async () => {
   assert.ok(!/paused/.test(r.line), `closed breaker must not print a paused suffix, got: ${r.line}`);
 });
 
-// Rung 1 is the free path (0 LLM calls). Rung 2 spends one LLM call per
-// prompt and rung 3 spends two. The user is entitled to know that without reading a log.
+// Rung 1 is the primary path and needs no label. A prompt served by rung 2 or 3 took a
+// slower path, and the user is entitled to know that without reading a log.
 for (const { rung, expected } of [
   { rung: 1, expected: null },
   { rung: 2, expected: ' · rung 2' },
@@ -518,7 +517,7 @@ for (const { rung, expected } of [
         `rung 1 is the free path and needs no label, got: ${r.line}`);
     } else {
       assert.ok(r.line.includes(expected),
-        `expected "${expected.trim()}" — rung ${rung} means the instance is spending LLM calls on every prompt, got: ${r.line}`);
+        `expected "${expected.trim()}" — rung ${rung} means every prompt takes a slower path, got: ${r.line}`);
     }
   });
 }
@@ -578,7 +577,7 @@ test('survives an empty data dir skeleton with no marker: prints nothing, exits 
   assert.equal(r.stdout, '', `no marker means nothing to say, got: ${JSON.stringify(r.stdout)}`);
 });
 
-// §4.9 discipline applied to the status line: a half-written marker (the process died
+// Fail-open discipline applied to the status line: a half-written marker (the process died
 // mid-rename) must degrade to silence, never to a parse error on the user's prompt line.
 test('survives a corrupt marker file: no throw, exit 0', async () => {
   const dataDir = makeDataDir();

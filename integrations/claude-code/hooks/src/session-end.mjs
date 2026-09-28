@@ -6,17 +6,13 @@
  * ---------------------------------------------------------------------------
  * Why the reflect call at the end of this file is not optional
  * ---------------------------------------------------------------------------
- * Mubit extracts lessons on its own as it ingests, but those keep the scope they were
- * extracted at, and a `run`-scoped lesson is invisible to the next session. Widening scope is
- * reserved for the explicit reflect path. So **`POST /v2/control/reflect` here is the only
- * thing in the entire system that lets a lesson outlive the run that produced it**. It
- * is required, not optional, and `MUBIT_CC_REFLECT_ON_END=0` is an opt-out that knowingly
- * costs cross-session durability.
+ * **`POST /v2/control/reflect` at session end is what makes this session's lessons available
+ * to later sessions.** It is required, not optional, and `MUBIT_CC_REFLECT_ON_END=0` is an
+ * opt-out that knowingly costs cross-session durability.
  *
- * It is also not sufficient: a lesson still has to establish itself before it travels, and
- * rules never travel at all. This hook therefore reports a count and claims nothing — a marker
- * promising durability would be a lie the user only discovers two sessions later, when the
- * lesson is not there.
+ * It is also not a promise that any one lesson is shown later. This hook therefore reports a
+ * count and claims nothing — a marker promising durability would be a lie the user only
+ * discovers two sessions later, when the lesson is not there.
  *
  * ---------------------------------------------------------------------------
  * Order is the whole design
@@ -26,11 +22,11 @@
  *   → marker → claimOnce → release → pruneStale
  * ```
  *
- * **The drain commits before reflect is even attempted.** §1.4 says a session that ends
- * without reflecting loses scope promotion for that session's lessons — not the lessons
- * themselves — so a failing reflect may never be allowed to cost captures that were already
- * accepted. Outcomes go out before reflect for the opposite reason: `include_step_outcomes`
- * folds those signals into the evidence, and the negative ones produce the best lessons.
+ * **The drain commits before reflect is even attempted.** A session that ends without
+ * reflecting loses cross-session reach for its lessons — not the captures themselves — so a
+ * failing reflect may never be allowed to cost captures that were already accepted. Outcomes
+ * go out before reflect for the opposite reason: `include_step_outcomes` lets reflect read
+ * them.
  *
  * The drain runs **inline within this body**, not as a further `spawnDetached('drain')`: one
  * hand-off is enough, and a second child would only race the first for the drain lock. It
@@ -47,7 +43,7 @@
  * `reflect: {at: 0, status: ""}` — the request went out and the hook was killed before it
  * could say so.
  *
- * So the ordered body above lives in a **detached child** (§4.9's `spawnDetached`, the same
+ * So the ordered body above lives in a **detached child** (`spawnDetached`, the same
  * mechanism `drain.mjs` already uses), and this process does exactly four things: stamp the
  * marker `handoff`, stash the payload, stamp it `detached`, spawn. The child is not on the
  * host's 8 s clock, because nothing is waiting on it.
@@ -114,12 +110,12 @@ import {
 } from '../../lib/state.mjs';
 
 /**
- * §5.7 budgets, in the two lifetimes this hook has.
+ * Budgets, in the two lifetimes this hook has.
  *
  * In the process the host started, `hooks.json` allows 8 s and the internal deadline sits
  * inside that with room to still emit stdout and exit 0 — though the hand-off spends
  * milliseconds of it. In the detached child the ceiling stops applying the moment nothing is
- * waiting on us, so the body gets `drain.mjs`-class headroom for an LLM-backed reflect.
+ * waiting on us, so the body gets `drain.mjs`-class headroom for a slow reflect.
  *
  * The detached numbers are sized for the reflect below rather than for tidiness: they have to
  * leave `REFLECT_MS` intact *after* a full `DRAIN_MS` and the heartbeat reserve, because these
@@ -138,8 +134,8 @@ const DETACHED = process.env.MUBIT_CC_DETACHED === '1';
  * 4000), so the arithmetic that carves the deadline up hands the drain a window that has
  * already expired and the process is killed mid-reflect with the captures still on disk.
  *
- * Scaled rather than disabled, and scaled around the drain: a lost reflect costs scope
- * promotion, a lost drain costs the session. This binds only the `sessionEndDetach: false`
+ * Scaled rather than disabled, and scaled around the drain: a lost reflect costs
+ * cross-session reach, a lost drain costs the session. This binds only the `sessionEndDetach: false`
  * path — the default hands the whole body to a detached child that no host ceiling reaches,
  * which is precisely why it is the default on this host.
  */
@@ -150,7 +146,7 @@ const BUDGET_MS = DETACHED ? 55_000 : (CODEX_INLINE ? 2300 : 6800);
 /** "until empty or 3500 ms elapse" — or as much of that as the clamp allows. */
 const DRAIN_MS = CODEX_INLINE ? 1100 : 3500;
 /**
- * The reflect is LLM-backed, so it gets the largest single slice — and inside a
+ * The reflect is the slowest call, so it gets the largest single slice — and inside a
  * detached child that slice is what the extra headroom above is *for*. 4000 ms is not enough:
  * the first `--print` session ever to reach this call recorded `POST /v2/control/reflect:
  * aborted after 4000ms`. The inline value is left exactly where it was, because there the
@@ -186,7 +182,7 @@ const REFLECT_ATTEMPTS = 2;
 const OUTCOME_MS = CODEX_INLINE ? 400 : 1500;
 const HEARTBEAT_MS = CODEX_INLINE ? 300 : 1000;
 
-/** Bounds the reflection to the most recent items of the run (`control.proto`). */
+/** Bounds the reflection to the most recent items of the run. */
 const REFLECT_LAST_N = 200;
 
 /** `runs/<run_id>/jobs.json` keeps the last 20, for the doctor skill. */
@@ -225,15 +221,15 @@ await runHook('session-end', {
       return SUPPRESS;
     }
 
-    // §5.7 step 1, split into two halves: the claim is READ here and RECORDED after the work
+    // The flush claim, split into two halves: the claim is READ here and RECORDED after the work
     // it claims, at the end of this body.
     //
     // It used to be a single `claimOnce` on this line, which marked the session flushed before
     // the drain, the outcome flush and the reflect had happened. Under Codex this hook is
     // killed at a 3-second ceiling, so a session could be marked flushed with none of it done
     // — and the marker is exactly what makes every later attempt stand down, so nothing ever
-    // retried. The user lost the captures *and* the reflect, which is the only path that
-    // promotes a lesson beyond its own run.
+    // retried. The user lost the captures *and* the reflect, which is what carries a lesson
+    // beyond its own run.
     const sessionId = safeSegment(payload?.session_id) || 'nosession';
     const claim = `flushed-${sessionId}`;
     if (claimHeld(cfg, runId, claim)) {
@@ -246,8 +242,8 @@ await runHook('session-end', {
     // above is recorded only after the work it claims, so between two concurrent flushes it
     // reads false for both — and `reason=exit` arriving on the heels of `reason=clear` hands
     // the detached children of both to the machine at once. The drain lock keeps that from
-    // being a double drain; nothing kept it from being a double reflect, which is a second
-    // pair of LLM calls and a lesson restating one already stored.
+    // being a double drain; nothing kept it from being a double reflect, which is wasted
+    // work and a lesson restating one already stored.
     const lease = acquireFlushLease(cfg, runId, sessionId);
     if (!lease) {
       log(cfg, 'debug', 'session-end: another flush holds this session; standing down',
@@ -257,7 +253,7 @@ await runHook('session-end', {
 
     try {
       // Inline, ignoring the batch-size trigger. Commits BEFORE anything below
-      // can fail: a lost reflect costs scope promotion, never the captures themselves.
+      // can fail: a lost reflect costs cross-session reach, never the captures themselves.
       const drained = await drainInline(cfg, {
         runId,
         agentId,
@@ -298,7 +294,7 @@ await runHook('session-end', {
       });
 
       // The agent is not gone, it is idle; re-registering it next session is
-      // noise the control plane reconciles.
+      // only noise.
       const beatBudget = budgetFor(HEARTBEAT_MS);
       if (beatBudget > 0) {
         const res = await heartbeat(cfg, { run_id: runId, agent_id: agentId, status: 'idle' },
@@ -320,13 +316,13 @@ await runHook('session-end', {
         ...(reflect.error ? { last_error: reflect.error.slice(0, 200) } : {}),
       });
 
-      // §5.7 step 1, second half. The work above is done, so record the claim that says so —
+      // The flush claim, second half. The work above is done, so record the claim that says so —
       // and only now. A hook killed anywhere above this line leaves no marker, which is what
       // lets the next SessionEnd, or a later drain, pick the session up instead of standing
       // down in front of work that never happened.
       claimOnce(cfg, runId, claim);
 
-      // §7's TTL sweep runs only from here and from `drain.mjs` — never on a blocking hook's
+      // The TTL sweep runs only from here and from `drain.mjs` — never on a blocking hook's
       // critical path — and is itself gated to at most once an hour.
       try { pruneStale(cfg); } catch { /* a sweep is never worth a failure */ }
 
@@ -381,7 +377,7 @@ function handOff(cfg, payload, runId) {
 
   const child = spawnDetached(cfg, 'session-end', [], path);
   if (!child) {
-    try { unlinkSync(path); } catch { /* §7's tmp sweep gets it */ }
+    try { unlinkSync(path); } catch { /* the tmp sweep gets it */ }
     log(cfg, 'info', 'session-end: could not spawn the flush; running it inline instead',
       { run_id: runId });
     return false;
@@ -676,9 +672,9 @@ async function flushCorrections(cfg, o) {
 // ---------------------------------------------------------------------------
 
 /**
- * `POST /v2/control/reflect`, the only call that can widen a lesson's scope past `run`
- *. Skipped on exactly two conditions, both documented: `MUBIT_CC_REFLECT_ON_END=0`,
- * and nothing having been ingested — an LLM-backed call over an empty tail is pure cost.
+ * `POST /v2/control/reflect`, the call that carries this run's lessons past the run. Skipped
+ * on exactly two conditions, both documented: `MUBIT_CC_REFLECT_ON_END=0`, and nothing
+ * having been ingested — a reflect over an empty tail is pure cost.
  *
  * A failure is logged and recorded as `reflect: failed`, never surfaced as a blocking error.
  *
@@ -729,8 +725,7 @@ async function maybeReflect(cfg, o) {
   const reflectBody = {
     run_id: o.runId,
     include_linked_runs: false,
-    // `include_step_outcomes` folds outcome signals into the evidence
-    // (`control.proto`) — the NEGATIVE ones produce the highest-value lessons.
+    // `include_step_outcomes`: the outcomes posted above are part of what reflect reads.
     include_step_outcomes: true,
     // `last_n_items` bounds the evidence to the most recent items of the run, of every kind
     // and including those outcomes. A session end is the tail of its run, so that bound is
@@ -738,7 +733,7 @@ async function maybeReflect(cfg, o) {
     last_n_items: REFLECT_LAST_N,
     // `record: false`, because a deadline this client chose is not evidence about the server.
     // `lib/http.mjs` already exempts callers who dial *tighter* than the configured default;
-    // this one is the mirror image and the exemption misses it — the reflect is LLM-backed
+    // this one is the mirror image and the exemption misses it — the reflect is slow
     // and dials deliberately wide, so its abort would be filed as `not_responding` against an
     // instance that was still composing an answer. Five of those inside the window open the
     // breaker, and the breaker gates the ingest *drain*: a merely slow reflection would
@@ -818,7 +813,7 @@ async function maybeReflect(cfg, o) {
 // ---------------------------------------------------------------------------
 
 /**
- * §5.5 step 2, as a pure read. `allowRequest()` is not used here on purpose: while the
+ * The breaker check, as a pure read. `allowRequest()` is not used here on purpose: while the
  * breaker is open it consumes the single half-open probe, and `lib/http.mjs` asks for it
  * again on the way to the socket.
  * @param {Record<string, any>} cfg

@@ -2,11 +2,10 @@
 /**
  * `lib/http.mjs` — "the only network primitive".
  *
- * Guide sections under test: §4.2 (the module), §1.1 (routes and the per-route 256 KiB cap
- * on /v2/control/query), §1.2 (auth, and which call precedes a configured key),
- * §1.3 (required fields — a missing one is a 422, not a silent default), §1.8 + §5.2 (the
- * `mode` literal and what a typo costs), §4.3 (the `"default"` run-id guard), §4.7 (the
- * breaker is consulted before dialing).
+ * Under test: the routes and the per-route 256 KiB cap on /v2/control/query; auth, and which
+ * call precedes a configured key; required fields — a missing one is a 422, not a silent
+ * default; the `mode` literal and what a typo costs; the `"default"` run-id guard; and the
+ * breaker being consulted before dialing.
  *
  * The load-bearing property of this module is that it NEVER throws. Every hook in the
  * plugin exits 0 in every failure mode, and that is only affordable because the
@@ -277,8 +276,8 @@ test('request: a server failure is recorded on the breaker', async (t) => {
 // health()
 // ---------------------------------------------------------------------------
 
-// `GET /v2/core/health` returns the literal bare string `OK`
-//. JSON.parse there is a guaranteed false negative — it
+// `GET /v2/core/health` returns the literal bare string `OK`.
+// JSON.parse there is a guaranteed false negative — it
 // would report every healthy server as unhealthy and the plugin would never dial again.
 test('health: reads the body as TEXT and succeeds against the literal "OK"', async (t) => {
   const { server, cfg, http } = await setup(t, { routes: { 'GET /v2/core/health': { text: 'OK' } } });
@@ -419,7 +418,7 @@ test('auth: a missing key sends no Authorization header at all', async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// Pre-flight guards.1 cap, §5.2 mode literal, §4.3 "default"
+// Pre-flight guards — the size cap, the mode literal, the "default" run id
 // ---------------------------------------------------------------------------
 
 // /v2/control/query has a per-route 256 KiB cap; everything
@@ -453,10 +452,8 @@ test('postQuery: a body just under 256 KiB is sent', async (t) => {
   server.assertCalled('POST', '/v2/control/query', 1);
 });
 
-// Only "direct_bypass" and "direct" select the direct lane; EVERY other value
-// silently falls through to the routed lane with no error. A typo therefore costs an LLM
-// call per prompt, forever,
-// invisibly. Catch it client-side.
+// Only three mode literals are legal, and a typo gets no error back — it silently takes a
+// different retrieval path on every prompt, forever, invisibly. Catch it client-side.
 test('postQuery: a mistyped mode literal is rejected pre-flight and logged at error', async (t) => {
   const { server, cfg, dataDir, http } = await setup(t);
 
@@ -480,9 +477,9 @@ test('postQuery: mode is case-sensitive — "DIRECT_BYPASS" is rejected', async 
   assert.equal(server.requests.length, 0);
 });
 
-// §1.8 rung 1 and its documented alias.
+// Rung 1 and its documented alias.
 for (const mode of ['direct_bypass', 'direct']) {
-  test(`postQuery: mode "${mode}" reaches DirectBypass and is sent`, async (t) => {
+  test(`postQuery: mode "${mode}" is rung 1 and is sent`, async (t) => {
     const { server, cfg, http } = await setup(t);
     const r = await http.postQuery(cfg, { run_id: RUN, query: 'why', evidence_only: true, mode });
     assert.equal(r.ok, true);
@@ -491,9 +488,9 @@ for (const mode of ['direct_bypass', 'direct']) {
   });
 }
 
-// §1.8 rung 2 is a deliberate 1-LLM-call fallback entered only after a 403 on rung 1, so
-// `agent_routed` is the third and last legal literal. The rejected class is "anything
-// else", precisely because anything else *becomes* agent_routed without saying so.
+// Rung 2 is a deliberate fallback entered only after a 403 on rung 1, so `agent_routed` is
+// the third and last legal literal. The rejected class is "anything else", precisely because
+// anything else would change the path without saying so.
 test('postQuery: mode "agent_routed" is legal — it is rung 2, not a typo', async (t) => {
   const { server, cfg, http } = await setup(t);
   const r = await http.postQuery(cfg, { run_id: RUN, query: 'why', evidence_only: true, mode: 'agent_routed' });
@@ -544,7 +541,7 @@ test('request: a run_id that merely contains "default" is allowed', async (t) =>
 });
 
 // ---------------------------------------------------------------------------
-// Required fields.3 (a missing field is a 422, not a silent default)
+// Required fields (a missing field is a 422, not a silent default)
 // ---------------------------------------------------------------------------
 
 const ingestItem = () => spoolItem();
@@ -572,7 +569,7 @@ const REJECT_ROWS = [
   ['postOutcome requires run_id', (h, c) => h.postOutcome(c, { reference_id: 'global', outcome: 'success' })],
   // POST /v2/control/outcome — reference_id must be present…
   ['postOutcome requires reference_id', (h, c) => h.postOutcome(c, { run_id: RUN, outcome: 'success' })],
-  // …and NON-EMPTY (§1.3: pass "global" for run-level attribution, never "").
+  // …and NON-EMPTY (pass "global" for run-level attribution, never "").
   ['postOutcome rejects an empty reference_id',
     (h, c) => h.postOutcome(c, { run_id: RUN, reference_id: '', outcome: 'success', entry_ids: ['ref_1'] })],
   // POST /v2/control/agents/register — run_id, agent_id
@@ -665,8 +662,7 @@ test('getIngestJob: puts run_id on the query string, not in a body', async (t) =
   assert.equal(call.raw, '', 'a GET carries no body');
 });
 
-// `intent` is set on every item the plugin writes — omitting it costs one LLM
-// round trip per item server-side. The wrapper must pass it through
+// `intent` is set on every item the plugin writes. The wrapper must pass it through
 // untouched rather than dropping unknown fields.
 test('postIngest: forwards item_id, content_type and intent verbatim', async (t) => {
   const { server, cfg, http } = await setup(t);
@@ -683,7 +679,7 @@ test('postIngest: forwards item_id, content_type and intent verbatim', async (t)
 });
 
 // ---------------------------------------------------------------------------
-// Retries.2 ("one, only for not_responding, only when the caller asks")
+// Retries (one, only for not_responding, only when the caller asks)
 // ---------------------------------------------------------------------------
 
 // A 5xx is not retried. The server answered; hammering it is how a memory layer
@@ -762,7 +758,7 @@ test('breaker: with the breaker open, request() short-circuits and dials nothing
 });
 
 // ---------------------------------------------------------------------------
-// Timeouts.2 (`opts.timeoutMs ?? cfg.timeoutMs`, default 4000)
+// Timeouts (`opts.timeoutMs ?? cfg.timeoutMs`, default 4000)
 // ---------------------------------------------------------------------------
 
 // MUBIT_CC_TIMEOUT_MS default 4000.
@@ -859,5 +855,5 @@ test('breaker: an abort on the full configured budget is still recorded', async 
 
   const b = readBreaker(cfg);
   assert.equal(b.timeoutStreak, 3, 'a timeout on the whole budget is a verdict and must count');
-  assert.equal(b.state, 'not_responding', '§4.7: three in a row escalate');
+  assert.equal(b.state, 'not_responding', 'three in a row escalate');
 });

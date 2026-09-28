@@ -85,10 +85,10 @@ function writeProjectConfig(projectDir, json) {
 }
 
 // ===========================================================================
-// §4.1 precedence — one test per level, highest first
+// Precedence — one test per level, highest first
 // ===========================================================================
 
-// §4.1 level 1: userConfig wins. It is the user's deliberate per-install choice
+// Level 1: userConfig wins. It is the user's deliberate per-install choice
 // and where the keychain-backed apiKey lives.
 test('precedence: CLAUDE_PLUGIN_OPTION_* beats MUBIT_* env', async () => {
   const config = await lib('config.mjs');
@@ -104,7 +104,7 @@ test('precedence: CLAUDE_PLUGIN_OPTION_* beats MUBIT_* env', async () => {
   assert.equal(cfg.endpoint, 'http://option.example.com:3000');
 });
 
-// §4.1 level 2: MUBIT_* env beats everything below it.
+// Level 2: MUBIT_* env beats everything below it.
 test('precedence: MUBIT_* env beats ${CLAUDE_PROJECT_DIR}/.mubit-cc.json', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -118,7 +118,7 @@ test('precedence: MUBIT_* env beats ${CLAUDE_PROJECT_DIR}/.mubit-cc.json', async
   assert.equal(cfg.endpoint, 'http://env.example.com:3000');
 });
 
-// §4.1 level 3: the credentials store `/mubit-memory:auth` writes.
+// Level 3: the credentials store `/mubit-memory:auth` writes.
 //
 // It sits *below* the environment so a CI job exporting MUBIT_API_KEY still wins over
 // whatever a developer once authenticated as on that machine, and *above* the project
@@ -154,7 +154,7 @@ test('precedence: the credentials store beats .mubit-cc.json', async () => {
   assert.equal(cfg.apiKey, 'mbt_from_auth');
 });
 
-// The store holds `userConfig` keys, so it must reach the env-only §6.1 rows too —
+// The store holds `userConfig` keys, so it must reach the env-only rows too —
 // `only()` and `pick()` are two lookups over one store, not two stores.
 test('precedence: the credentials store is honoured by userConfig and env-only keys alike', async () => {
   const config = await lib('config.mjs');
@@ -246,7 +246,7 @@ test('a cached config still resolves the API key on the way out', async () => {
     'not caching the key must not mean losing it — it is re-read on every cache hit');
 });
 
-// §4.1 level 3: the project file beats the built-in default.
+// Level 3: the project file beats the built-in default.
 test('precedence: .mubit-cc.json beats the built-in default', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -264,7 +264,7 @@ test('precedence: .mubit-cc.json beats the built-in default', async () => {
   assert.equal(cfg.recallTokenBudget, 700);
 });
 
-// §4.1 level 4: nothing set anywhere — the built-in default stands.
+// Level 4: nothing set anywhere — the built-in default stands.
 test('precedence: the built-in default is the floor', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
@@ -288,7 +288,7 @@ test('precedence: a corrupt .mubit-cc.json falls through to the default', async 
 });
 
 // ===========================================================================
-// §6.3 optionValue — both spellings, in the documented order
+// optionValue — both spellings, in the documented order
 // ===========================================================================
 
 // The host's exact env-name transform is undocumented, so both spellings
@@ -365,7 +365,7 @@ test('a set-but-blank key at a higher rung deliberately shadows a stored one', a
 });
 
 // ===========================================================================
-// §4.1 connection mode
+// Connection mode
 // ===========================================================================
 
 /*
@@ -406,10 +406,10 @@ test('the endpoint is used verbatim, whatever host it names', async () => {
 });
 
 // ===========================================================================
-// §1.2 authHeaders
+// authHeaders
 // ===========================================================================
 
-// Header is `Authorization: Bearer <key>`; §12.1 depends on it being
+// Header is `Authorization: Bearer <key>`; the tests depend on it being
 // absent (not empty) when no key is configured, so a 401 is unambiguous.
 test('authHeaders(): {} when there is no key', async () => {
   const config = await lib('config.mjs');
@@ -425,7 +425,7 @@ test('authHeaders(): Bearer <key> when there is one', async () => {
 });
 
 // ===========================================================================
-// §4.1 envTags — Mubit's TYPE:NAME[:VERSION] form
+// envTags — Mubit's TYPE:NAME[:VERSION] form
 // ===========================================================================
 
 /** Language is detected from lockfiles at the project root. */
@@ -515,7 +515,7 @@ test('envTags(): caps at 8 tags', async () => {
 });
 
 // ===========================================================================
-// §6.2 userConfig key → env var mapping, one row per §3.1 key
+// userConfig key → env var mapping, one row per key
 // ===========================================================================
 
 /**
@@ -586,12 +586,12 @@ for (const row of USER_CONFIG_ROWS) {
 }
 
 // ===========================================================================
-// §6.1 defaults and §4.1 immutability
+// Defaults and immutability
 // ===========================================================================
 
 // The default table, verbatim. These numbers are the plugin's cost and
 // latency contract; drifting one silently changes what a user pays per prompt.
-test('loadConfig(): the §6.1 defaults, exactly', async () => {
+test('loadConfig(): the defaults, exactly', async () => {
   const config = await lib('config.mjs');
   const dataDir = makeDataDir();
   const projectDir = makeProjectDir();
@@ -631,7 +631,7 @@ test('loadConfig(): the §6.1 defaults, exactly', async () => {
   assert.equal(cfg.outcomeReview, 'stop');
   assert.equal(cfg.reflectOnEnd, true);
   // On, because the hook it governs is cancelled by the host on the way out and everything
-  // left inside it — the last drain and the only call that promotes a lesson — dies there.
+  // left inside it — the last drain and the end-of-session reflect — dies there.
   assert.equal(cfg.sessionEndDetach, true);
   assert.equal(cfg.statusLine, true);
   // Off. This is the one setting that can put text in front of a tool call, so nothing
@@ -639,8 +639,8 @@ test('loadConfig(): the §6.1 defaults, exactly', async () => {
   // how often it fires" a safe thing to run.
   assert.equal(cfg.preToolWarnings, false);
   // On, and the only opt-in feature in this table that ships on. The three above it are off
-  // because each costs something on EVERY prompt; this costs one detached process and two LLM
-  // calls once per session, at the one moment the model knows least about what it is walking
+  // because each costs something on EVERY prompt; this costs one detached process once per
+  // session, at the one moment the model knows least about what it is walking
   // into. A session that has none of it is the status quo this feature exists to end.
   assert.equal(cfg.resumeBlock, true);
   // Environment-only. Lower than `recallTokenBudget` because the two are spent in the
@@ -660,8 +660,8 @@ test('loadConfig(): the §6.1 defaults, exactly', async () => {
   assert.ok(cfg.mcpTools.length > 0, 'a blank MUBIT_MCP_TOOLS means the curated set, not none');
   assert.equal(cfg.mcpLessonScope, 'session',
     'the ceiling on an agent-written lesson defaults to `session`, which is what the tool\n'
-    + 'that writes it tells the model it does. At `run` an agent-written lesson has no path\n'
-    + 'out of its own run at all: reflect stamps `run` too, measured against a live instance.');
+    + 'that writes it tells the model it does. At `run` an agent-written lesson is never read\n'
+    + 'outside its own run.');
   assert.ok(Array.isArray(cfg.denyGlobs), 'denyGlobs must be an array');
 });
 
@@ -678,7 +678,7 @@ test('loadConfig(): the Config object is frozen', async () => {
 });
 
 // MUBIT_CC_CAPTURE_DENY extras join the built-in denylist rather than
-// replacing it's denylist is a floor.
+// replacing it — the denylist is a floor.
 test('loadConfig(): MUBIT_CC_CAPTURE_DENY extras are appended to denyGlobs', async () => {
   const config = await lib('config.mjs');
   const cfg = load(config, envOf(makeDataDir(), makeProjectDir(), {
@@ -689,7 +689,7 @@ test('loadConfig(): MUBIT_CC_CAPTURE_DENY extras are appended to denyGlobs', asy
 });
 
 // ===========================================================================
-// §7 config.json — cached resolved config, 300 s TTL, keyed by an input hash
+// config.json — cached resolved config, 300 s TTL, keyed by an input hash
 // ===========================================================================
 
 // The cache exists so PostToolUse does not re-`git rev-parse` per tool call.
@@ -778,7 +778,7 @@ test('loadConfig(): a corrupt config.json is ignored', async () => {
 });
 
 // ===========================================================================
-// §8.2 mcpLessonScope — the ceiling on what an MCP write may claim
+// mcpLessonScope — the ceiling on what an MCP write may claim
 // ===========================================================================
 
 // The config layer's fallback is the DEFAULT, exactly as it is for every other enum here.
