@@ -33,6 +33,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as h from '../../../claude-code/test/helpers/harness.mjs';
+import { recordingName } from './codex-record.mjs';
 
 /** Absolute path to `integrations/codex/`. */
 export const CODEX_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -126,8 +127,9 @@ export function isOutputTitle(title) {
 /**
  * The recorded payload for one event, or `null` if that event has no recording.
  *
- * `null` is a real answer here rather than an error: five of the eleven events do not fire in
- * a scripted one-turn session, so their absence is expected and documented. What must never
+ * `null` is a real answer here rather than an error: four of the eleven registered events —
+ * `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop` — do not fire in any session
+ * the recorder drives, so their absence is expected and documented. What must never
  * happen is the whole corpus going missing and every check below passing vacuously — which is
  * why `codex-payload.test.mjs` asserts the covered set by name.
  */
@@ -139,12 +141,12 @@ export function observedPayload(event) {
   return parsed;
 }
 
-/** Every event with a recording, sorted. */
+/** Every event with a recording, sorted; `PostToolUse.mcp.json` counts as `PostToolUse`. */
 export function observedEvents() {
   const dir = join(OBSERVED_DIR, 'payloads');
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith('.json'))
-    .map((f) => f.slice(0, -'.json'.length)).sort();
+  const events = readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.split('.')[0]);
+  return [...new Set(events)].sort();
 }
 
 /** The host's recorded verdicts on outputs a hook returned. */
@@ -163,6 +165,13 @@ export function outputAcceptance() {
  * actually makes. It caught `permission_mode` on the first draft of `preCompact()` and
  * `tool_use_id` on `permissionRequest()`.
  *
+ * An event can have more than one recording: `PostToolUse.json` is a shell call and
+ * `PostToolUse.mcp.json` an MCP one, whose arguments are other keys. A value is held to the
+ * recording its own shape is filed under (`recordingName()`), so a shell call cannot pass by
+ * borrowing an MCP call's arguments, or the reverse. Only a value the recorder files nowhere —
+ * an MCP call's `PreToolUse`, say — falls back to **any** recording of its event, and then the
+ * errors reported are those against the recording it comes closest to.
+ *
  * Nested objects are walked one level, which is as deep as any Codex payload goes.
  *
  * @param {string} event
@@ -170,20 +179,31 @@ export function outputAcceptance() {
  * @returns {string[]} empty when nothing was invented
  */
 export function observedKeyErrors(event, value) {
-  const seen = observedPayload(event);
-  if (!seen || value === null || typeof value !== 'object') return [];
-  const errs = [];
-  for (const k of Object.keys(value)) {
-    if (!(k in seen)) { errs.push(`$.${k}: the host has never been recorded sending this field`); continue; }
-    const a = value[k];
-    const b = seen[k];
-    if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
-      for (const k2 of Object.keys(a)) {
-        if (!(k2 in b)) errs.push(`$.${k}.${k2}: the host has never been recorded sending this field`);
+  if (value === null || typeof value !== 'object') return [];
+  const own = recordingName(value);
+  const filed = own.split('.')[0] === event ? observedPayload(own) : null;
+  const dir = join(OBSERVED_DIR, 'payloads');
+  const variants = filed ? [filed] : (existsSync(dir)
+    ? readdirSync(dir).filter((f) => f.endsWith('.json') && f.split('.')[0] === event).sort()
+      .map((f) => observedPayload(f.slice(0, -'.json'.length)))
+    : []);
+  let best = null;
+  for (const seen of variants) {
+    const errs = [];
+    for (const k of Object.keys(value)) {
+      if (!(k in seen)) { errs.push(`$.${k}: the host has never been recorded sending this field`); continue; }
+      const a = value[k];
+      const b = seen[k];
+      if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+        for (const k2 of Object.keys(a)) {
+          if (!(k2 in b)) errs.push(`$.${k}.${k2}: the host has never been recorded sending this field`);
+        }
       }
     }
+    if (!errs.length) return [];
+    if (!best || errs.length < best.length) best = errs;
   }
-  return errs;
+  return best ?? [];
 }
 
 /**
@@ -390,6 +410,22 @@ export function userPromptSubmit(over = {}) {
   };
 }
 
+/**
+ * `UserPromptSubmit` for a message typed while a turn is still running.
+ *
+ * Observed in the interactive TUI on codex-cli 0.154.0: the host fires `UserPromptSubmit`
+ * again, with the **running** turn's `turn_id`, and the turn still ends in a single `Stop`.
+ * Nothing else in the payload marks it as queued — it is key-for-key a fresh prompt — so the
+ * repeated `turn_id` is the only way a hook can tell. `codex exec` cannot type mid-turn, so
+ * `observed/payloads/UserPromptSubmit.queued.json` was recorded by hand.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function queuedPrompt(over = {}) {
+  return userPromptSubmit({ prompt: 'Also append the word SECOND to your reply.', ...over });
+}
+
 /** `PreToolUse`. Codex renames its shell tool to `Bash`, with Claude Code's exact shape. */
 export function preToolUse(over = {}) {
   return {
@@ -406,18 +442,20 @@ export function preToolUse(over = {}) {
 /**
  * `PermissionRequest` — the one event Claude Code has no counterpart for.
  *
- * It carries `tool_name` and `tool_input` but **no `tool_use_id`**, which is the field that
- * would let a capture correlate it with the `PreToolUse` for the same call. That absence is
- * why the plugin treats this event as read-only: there is nothing here to attribute against
- * that `PreToolUse` does not already carry.
+ * Recorded on codex-cli 0.154.0 as the ask for a call to the plugin's own MCP tool, which is
+ * the call `codex exec` puts to approval. It carries `tool_name` and the call's arguments in
+ * `tool_input`, but **no `tool_use_id`**, which is the field that would let a capture
+ * correlate it with the `PreToolUse` for the same call. That absence is why the plugin treats
+ * this event as read-only: there is nothing here to attribute against that `PreToolUse` does
+ * not already carry.
  */
 export function permissionRequest(over = {}) {
   return {
     ...base(),
     turn_id: TURN_ID,
     hook_event_name: 'PermissionRequest',
-    tool_name: 'mcp__mubit__mubit_recall',
-    tool_input: { query: 'how do we build the plugin' },
+    tool_name: 'mcp__mubit__mubit_outcome',
+    tool_input: { reference_id: 'global', outcome: 'success', entry_ids: ['entry-1'] },
     ...over,
   };
 }
@@ -432,6 +470,32 @@ export function postToolUse(over = {}) {
     tool_input: { command: "sed -n '1,240p' README.md" },
     tool_response: 'hello probe repo\n',
     tool_use_id: TOOL_USE_ID,
+    ...over,
+  };
+}
+
+/**
+ * `PostToolUse` for a call to one of the plugin's own MCP tools.
+ *
+ * Observed on codex-cli 0.154.0: `tool_name` is `mcp__mubit__<tool>`, `tool_input` is the
+ * arguments verbatim, there is a `tool_use_id`, and `tool_response` is the MCP result
+ * **object** — `{content: [{type: 'text', text}]}` — where a shell call's is a bare string. A
+ * call that is declined, or fails approval, produces no `PostToolUse` at all.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function mcpPostToolUse(over = {}) {
+  return {
+    ...base(),
+    turn_id: TURN_ID,
+    hook_event_name: 'PostToolUse',
+    tool_name: 'mcp__mubit__mubit_outcome',
+    tool_input: { reference_id: 'global', outcome: 'success', entry_ids: ['entry-1'] },
+    tool_response: { content: [{ type: 'text', text: 'Outcome recorded.' }] },
+    // Codex gives an MCP call an `exec-` id like a shell call's, but not the same one: this is
+    // a second call in the turn, and a join on the shell call's id must not find it.
+    tool_use_id: 'exec-7c1e0a52-3d4b-4f6e-9a21-b8d5c0e4f713',
     ...over,
   };
 }
@@ -493,6 +557,40 @@ export function stop(over = {}) {
     last_assistant_message: 'README.md says: "hello probe repo."',
     ...over,
   };
+}
+
+/**
+ * The `Stop` that follows a `Stop` answered with `{"decision":"block","reason":…}`.
+ *
+ * Observed on codex-cli 0.154.0: the model carries on in the **same** turn. The next `Stop`
+ * has `stop_hook_active: true`, the same `turn_id`, and a `last_assistant_message` holding only
+ * the continuation. No `UserPromptSubmit` fires for the reason, and the host puts no cap on how
+ * many times a hook may block.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function stopContinuation(over = {}) {
+  return stop({
+    stop_hook_active: true,
+    last_assistant_message: 'Done: the README is one line long.',
+    ...over,
+  });
+}
+
+/**
+ * `Interrupt` — what the host sends when the user presses Esc mid-turn.
+ *
+ * Observed in the interactive TUI on codex-cli 0.154.0: `Stop` does not fire for an
+ * interrupted turn; `Interrupt` does, carrying the running turn's `turn_id` and no reply.
+ * `hooks.json` does not register it, which is why it is not in `CODEX_EVENTS`. `codex exec`
+ * cannot press Esc, so `observed/payloads/Interrupt.json` was recorded by hand.
+ *
+ * @param {Record<string, any>} [over]
+ * @returns {Record<string, any>}
+ */
+export function interrupt(over = {}) {
+  return { ...base(), turn_id: TURN_ID, hook_event_name: 'Interrupt', ...over };
 }
 
 /**

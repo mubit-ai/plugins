@@ -5,38 +5,101 @@ Nothing here was read out of it.
 
 | | |
 | --- | --- |
-| host | `codex-cli 0.149.0` |
-| recorded | 2026-08-24 |
-| regenerate | `node test/helpers/codex-record.mjs --update` |
+| host | `codex-cli 0.154.0` |
+| recorded | 2026-09-28 |
+| regenerate | `node test/helpers/codex-record.mjs --update --probe <name>` — see below |
 
 ## `payloads/`
 
-One file per event, exactly as the host wrote it to a hook's stdin, with the values that
-differ per run replaced by `{{PLACEHOLDER}}` tokens — ids, the transcript path and the working
-directory. Every field name and every nested shape is verbatim.
+What the host wrote to a hook's stdin, exactly, with the values that differ per run replaced
+by `{{PLACEHOLDER}}` tokens — ids, the transcript path and the working directory. Every field
+name and every nested shape is verbatim.
+
+`<Event>.json` is the plain case of an event. `<Event>.<variant>.json` is the same event in a
+shape the plain one does not show, and the session scorecard and the outcome review read
+exactly these:
+
+| File | What it shows |
+| --- | --- |
+| `PostToolUse.mcp.json` | a call to the `mubit` MCP server: `tool_input` is the arguments, and `tool_response` is the MCP result object — `{"content":[{"type":"text",…}]}` — where a shell call's is a bare string |
+| `Stop.continuation.json` | the Stop after a hook answered `{"decision":"block","reason":…}`: `stop_hook_active` is `true`, the turn is the same one, and `last_assistant_message` holds only what the model said after the block |
+| `UserPromptSubmit.queued.json` | a message typed while a turn was running: the running turn's `turn_id`, and nothing else that marks it |
 
 These are the oracle for `codex-payload.test.mjs`. The point of having one at all is that a
 fixture written beside an implementation cannot falsify that implementation: whatever shape
 the code reads, the fixture will have. A recording can, because the host wrote it.
 
+### Re-recording with `codex exec`
+
+```bash
+node test/helpers/codex-record.mjs --update --probe suppressOutput
+node test/helpers/codex-record.mjs --update --probe systemMessage
+node test/helpers/codex-record.mjs --update --probe block-once
+```
+
+Each run is one `codex exec` session in a throwaway `CODEX_HOME`: a recorder on every event,
+a tiny stdio MCP server named `mubit` exposing `mubit_outcome`, and a prompt to run one shell
+command and make one call to that tool. The recorder answers the MCP call's permission ask
+with an allow, so the call runs and both its ask and its result are recorded. The real
+`~/.codex` is only read, for the credential, which is copied in and deleted with the home.
+
+Run `block-once` last. It is the only session that blocks a Stop, so the only one that reaches
+the continuation, and a `suppressOutput` session answers the permission ask with its probe,
+so the call is refused there and records no MCP result.
+
+## Recorded by hand in the TUI
+
+Two recordings come from interactive TUI sessions, because `codex exec` can neither type
+while a turn is running nor press Esc. `--update` never regenerates them:
+
+- `UserPromptSubmit.queued.json` — a second message typed while the first turn was still
+  running. The host fired UserPromptSubmit again with the running turn's `turn_id`, and the
+  turn ended in a single Stop.
+- `Interrupt.json` — Esc pressed while a tool call was running. No Stop fired for that turn;
+  Interrupt did, with the running turn's `turn_id` and no reply.
+
+Both were captured on `codex-cli 0.154.0` in a throwaway `CODEX_HOME` carrying a recorder on
+every event, Interrupt included, and then put through the recorder's own placeholder
+substitution (`normalizePayload()`) on the way in — the same substitution `--update` applies —
+so they carry placeholders, not the session's ids and paths. To re-record them:
+
+```bash
+node test/helpers/codex-record.mjs --tui-home      # prints the CODEX_HOME to start the TUI in
+node test/helpers/codex-record.mjs --import <capture> --as UserPromptSubmit.queued
+node test/helpers/codex-record.mjs --import <capture> --as Interrupt
+```
+
+Delete the printed home afterwards: it holds a copy of the credential.
+
 ## `output-acceptance.json`
 
 What the host did with an output a hook returned, per event. `codex exec` reports
-`hook: <Event> Completed` or `hook: <Event> Failed`, which is the verdict.
+`hook: <Event> Completed`, `… Blocked` or `… Failed`, which is the verdict: `Failed` is the
+host refusing the output.
+
+- `suppressOutput` answers every event with `{"suppressOutput": true}`.
+- `systemMessage` answers the first Stop with a multi-line `systemMessage` string, the shape a
+  scorecard would be delivered in. The host takes it; the TUI shows it under the reply with
+  its line breaks kept, and `codex exec` never prints it.
+- `block-once` answers the first Stop with `decision:block` and a reason. The host takes it
+  (`hook: Stop Blocked`) and the model continues the same turn.
 
 This is the externally-verified subset of `../codex-output-rules.json`. That file states the
 constraints this plugin holds its own output to; this one records the ones a real session has
 confirmed, and `codex-payload.test.mjs` cross-checks them so the two cannot drift apart
 silently.
 
+On 0.154.0 `codex exec` runs the SessionEnd hook — its payload is recorded — but prints no
+verdict line for it, so there is no SessionEnd verdict here. On 0.149.0 there was one, and it
+was an accept.
+
 ## What is not covered
 
-Five of the eleven events do not fire in a scripted one-turn session, so there is no recording
-of them:
+Four of the eleven events the plugin registers do not fire in any session the recorder
+drives, so there is no recording of them:
 
 | Event | What it would take |
 | --- | --- |
-| `PermissionRequest` | an approval the sandbox actually refuses; `--approve-for-me` resolves it without asking |
 | `PreCompact`, `PostCompact` | a context window full enough to compact |
 | `SubagentStart`, `SubagentStop` | a spawned subagent |
 

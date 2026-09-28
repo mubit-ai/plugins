@@ -6,10 +6,21 @@
   "hook_event_name": "PostToolUse",
   "model": "gpt-6-astra",
   "permission_mode": "bypassPermissions",
-  "tool_name": "Bash",
+  "tool_name": "mcp__mubit__mubit_outcome",
   "tool_input": {
-    "command": "head note.txt"
+    "reference_id": "global",
+    "outcome": "success",
+    "entry_ids": [
+      "entry-1"
+    ]
   },
-  "tool_response": "hello\n",
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Outcome recorded."
+      }
+    ]
+  },
   "tool_use_id": "{{TOOL_USE_ID}}"
 }
