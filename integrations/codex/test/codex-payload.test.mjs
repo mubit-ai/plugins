@@ -302,8 +302,7 @@ test(`the recordings were made on ${HOST_VERSION}`, () => {
   const host = observedReadme().match(/^\|\s*host\s*\|\s*`([^`]+)`\s*\|/m);
   assert.equal(host?.[1], HOST_VERSION,
     'the `host` row of observed/README.md must name the build the payloads were recorded on. '
-    + 'The scorecard and review tickets build their tests on these recordings, and a reader '
-    + 'has to know which host said so.');
+    + 'Other tests are built on these recordings, and a reader has to know which host said so.');
 
   assert.equal(outputAcceptance()._provenance?.codex_version, HOST_VERSION,
     'output-acceptance.json must record the build its verdicts came from. A verdict is only '
@@ -385,8 +384,8 @@ test('the recorder registers itself on Interrupt as well as the eleven', () => {
 
 test('the recorder\'s list of the events it reaches is the events `codex exec` recorded', () => {
   // RECORDED_EVENTS is where codex-record.mjs says what a scripted session reaches. It is the
-  // list the ticket says changes: PermissionRequest joins it, and Interrupt does not, because
-  // only a hand in the TUI reaches that one.
+  // list PermissionRequest is on and Interrupt is not, because only a hand in the TUI reaches
+  // that one.
   const byExec = [...new Set(RECORDINGS.filter((r) => r.made === 'exec').map((r) => r.event))];
   assert.deepEqual([...RECORDER_REACHES].sort(), byExec.sort(),
     'codex-record.mjs RECORDED_EVENTS disagrees with the recordings `codex exec` made. A reader '
@@ -640,10 +639,10 @@ test('interrupt(): the running turn, and nothing a Stop would carry', () => {
 });
 
 test('assertValid takes every recorded variant of an event, and still refuses an invented field', () => {
-  // assertValid is how the rest of the suite asks "does the host send this?". The tickets that
-  // follow build MCP calls and continuation Stops and check them with it, so it has to know an
-  // event can have more than one recording: held only to PostToolUse.json, an MCP call's
-  // arguments read as fields the host never sent.
+  // assertValid is how the rest of the suite asks "does the host send this?". MCP calls and
+  // continuation Stops are checked with it too, so it has to know an event can have more than
+  // one recording: held only to PostToolUse.json, an MCP call's arguments read as fields the
+  // host never sent.
   for (const { event, build } of RECORDINGS.filter((r) => CODEX_EVENTS.includes(r.event))) {
     const title = `${schemaSlug(event)}.command.input`;
     assert.doesNotThrow(() => assertValid(build(), title, `${build.name}()`),
