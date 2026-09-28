@@ -196,7 +196,7 @@ Start a new session in a real project and just work. You do not invoke anything.
 | When | What the plugin does |
 | --- | --- |
 | Session starts | Derives a run id from your directory, registers the agent, pulls up to 5 standing (`global`) lessons, and injects a short block telling the model memory is active and which tool to reach for |
-| Every prompt you send | Queries memory and injects what is relevant, within a 1500 ms budget and a 1500-token cap. Zero LLM calls — assembly is local |
+| Every prompt you send | Queries memory and injects what is relevant, within a 1500 ms budget and a 1500-token cap. Assembled locally |
 | Every tool call | Redacts and spools it. Zero network on the hot path. `apply_patch` is recorded with the files it touched |
 | A permission request | Recorded as the attempt it was — the only record a denial leaves. Never decided |
 | A subagent starts | Given the parent run's pins and a recalled block of its own — the only memory it will ever see |
@@ -392,7 +392,7 @@ unset it raises a config error rather than quietly deriving a different run.
 
 `MUBIT_CC_SESSION_END_DETACH`, default `1`. Codex clamps a `SessionEnd` hook to three seconds
 and kills it there, whatever the registration asks for. The end-of-session drain and the
-reflect — the only thing promoting a lesson beyond its run — do not reliably fit, so the hook
+reflect — which carries lessons into later sessions — do not reliably fit, so the hook
 hands them to a detached process. Turning this off costs you reflections. A detached child can
 still be reaped with the terminal; if that matters, run `mubit-memory:reflect` at the end of a
 long session.

@@ -16,11 +16,11 @@ Read these now and you will skip the three most common support questions.
 1. **After installing, you must start a *new* session.** `/reload-plugins` loads the code but
    does not fire the `SessionStart` hook, so there is no run id, no status line, and nothing on
    disk. It looks broken. It is not.
-2. **An accepted write is not yet a stored memory.** Ingest returns `queued` and indexing
-   finishes a moment later, so a recall issued immediately after a capture can legitimately come
+2. **An accepted write is not yet a stored memory.** Ingest returns `queued` and the write
+   lands a moment later, so a recall issued immediately after a capture can legitimately come
    back empty. `/mubit-memory:doctor` shows you the job states.
-3. **Memory becomes cross-session only at `SessionEnd`.** That is the one path that promotes a
-   lesson beyond the run it was learned in. Kill the terminal and you lose the promotion.
+3. **Memory becomes cross-session only at `SessionEnd`.** Lessons learned in a run reach later
+   sessions only after the reflect at session end. Kill the terminal and that reflect never runs.
 
 ---
 
@@ -240,7 +240,7 @@ What happens on its own:
 | --- | --- |
 | Session starts | Derives a run id from your directory, registers the agent, pulls up to 5 standing (`global`) lessons, and tells the model memory is active |
 | You `cd` into another repo | Moves the session to that repo's run, and flushes what the run you left had spooled. A `cd` inside one repo changes nothing |
-| Every prompt you send | Queries memory and injects what is relevant, within a 1500 ms budget and a 1500-token cap. **Zero LLM calls** — assembly is local |
+| Every prompt you send | Queries memory and injects what is relevant, within a 1500 ms budget and a 1500-token cap. Assembled locally |
 | Every tool call | Redacts and spools it. Zero network on the hot path |
 | Every tool failure | Captured — these produce the most useful lessons |
 | Every turn ends | Writes the `Q: … / A: …` pair, flushes the spool, credits the memories the reply actually used, and — on turns that showed a lesson — asks Claude to review those lessons and prints the [session scorecard](#the-session-scorecard) |
@@ -253,13 +253,13 @@ costs you a memory, never a turn.
 ### The status line
 
 ```
-● mubit: cc-my-project-9f2a11c4 · local · recall 6/1.2k tok · saved 12t/1q · lessons 3g
+● mubit: cc-my-project-<hash8> · local · recall 6/1.2k tok · saved 12t/1q · lessons 3g
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `●` | Connection state — see [Part 8](#part-8--when-it-looks-broken) |
-| `cc-my-project-9f2a11c4` | Your run id — the memory scope this session writes to |
+| `cc-my-project-<hash8>` | Your run id — the memory scope this session writes to |
 | `local` | Derived mode |
 | `recall 6/1.2k tok` | 6 memories injected this turn, costing 1.2k tokens |
 | `saved 12t/1q` | 12 tool calls and 1 turn captured |
@@ -386,7 +386,7 @@ is why `state` is `unreachable` and `last_error` is set:
 
 ```json
 {
-  "run_id": "cc-my-project-9f2a11c4",
+  "run_id": "cc-my-project-<hash8>",
   "mode": "hosted",
   "state": "unreachable",
   "captured": { "tools": 0, "turns": 0, "pending": 1 },
@@ -675,7 +675,7 @@ sizes only, never content.
 
 ### Keep this on
 
-`reflectOnEnd`, default `true`. It is the only path that promotes a lesson beyond its own run.
+`reflectOnEnd`, default `true`. Lessons learned in a run reach later sessions only through it.
 Turning it off to save a few seconds at exit trades away cross-session memory entirely.
 
 ### How lessons from other sessions reach you
@@ -687,11 +687,11 @@ knowing before you conclude that cross-session memory is not working.
 | Path | Default | What it costs |
 | --- | --- | --- |
 | The **session-start** standing set — up to 5, in the opening context | **on** | one request, inside the 900 ms slice of session start |
-| The **per-prompt** cross-run lane — lessons from other runs alongside this turn's recall | declines | it is the most expensive part of a recall, and at the shipped budget there is no room for it |
-| The **detached refresh** that would pay for that lane out of band | off | a second process on every prompt |
+| The **per-prompt** cross-run request — lessons from other runs alongside this turn's recall | declines | it makes recall slower, and at the shipped budget there is no room for it |
+| The **detached refresh** that would fetch them out of band | off | a second process on every prompt |
 
 The second one is `recallCrossRun`, default `auto`. `auto` reads the budget the caller already
-passed and spends the lane only where there is room; at the shipped `recallBudgetMs` of
+passed and asks for them only where there is room; at the shipped `recallBudgetMs` of
 `1500` there is not, so it declines every time. Two ways to change that, and they are a pair:
 
 ```bash
@@ -920,5 +920,5 @@ shape of the on-disk status marker. Every expected-output block above is a trans
 Not verified: a fresh clone-and-install from GitHub. The transcripts above were produced from a
 local directory marketplace, so the install path most people take — `/plugin marketplace add
 mubit-ai/plugins` — is exercised by its parts and not end to end here. Also unverified is
-any behaviour that needs a running Mubit: recall content, reflection output, and lesson
-promotion — those need a live instance and are covered separately.
+any behaviour that needs a running Mubit: recall content, reflection output, and lessons
+reaching later sessions — those need a live instance and are covered separately.

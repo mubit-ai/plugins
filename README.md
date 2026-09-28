@@ -308,7 +308,7 @@ mubit_memory_health   what is actually stored
 ```
 
 A Codex turn on the same demo service, after the suite passed. The model credits the lesson
-that was injected for the task (`mubit_outcome`, which raised its confidence to 0.6) and
+that was injected for the task (`mubit_outcome`) and
 stores what it learned (`mubit_learned`, accepted and queued). Neither call was asked for.
 
 <p align="center">
