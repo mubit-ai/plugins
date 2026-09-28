@@ -19,11 +19,15 @@
  *   - with the review `off`, or capture off, it does not. With capture off the session log
  *     that turns an id back into its entry is never written, so an id passed back resolves to
  *     nothing;
+ *   - the review setting is read the way every other reader of it reads it: through
+ *     `loadConfig`, so a value it does not recognise falls back to the host default and its
+ *     case does not matter. `outcomeMode: off` does not remove the sentence, exactly as it
+ *     does not remove the per-prompt nudge (`prompt-recall.mjs`, gated on the review alone);
  *   - the sentence appears exactly once, on every source and whether or not standing lessons
  *     came back;
  *   - it costs one short sentence, measured on the rendered block;
- *   - the blocks that say no memory will be injected (unconfigured, offline) do not explain ids
- *     that will never appear;
+ *   - the blocks that say no memory will be injected (unconfigured, unauthenticated, offline)
+ *     do not explain ids that will never appear;
  *   - skill references keep the Codex spelling, `mubit-memory:<name>`, with no leading slash;
  *   - the Claude Code session-start output is byte-identical to what it was before this
  *     sentence existed, because that host already gets it from the MCP instructions.
@@ -31,9 +35,10 @@
  * The wording is the implementer's. These tests pin the facts the sentence has to carry (a
  * bracketed id, `entry_ids`, `mubit_outcome`), not its prose.
  *
- * `MUBIT_CC_OUTCOME_REVIEW` is set explicitly in every case, because the Codex default for it
- * is due to move from `nudge` to `stop`, and a test that leant on the default would change
- * meaning when it does.
+ * `MUBIT_CC_OUTCOME_REVIEW` is set explicitly in every case but one, because the Codex default
+ * for it is due to move from `nudge` to `stop`, and a test that leant on the default would
+ * change meaning when it does. The one case that leaves it unset asserts only what holds under
+ * either default: both of them carry the sentence.
  */
 
 import test from 'node:test';
@@ -136,12 +141,13 @@ function seedCheckpoint(dataDir) {
  *
  * @param {object} o
  * @param {'codex'|'claude-code'} [o.host]
- * @param {'off'|'nudge'|'stop'} o.review   always explicit, see the header
+ * @param {string|null} o.review   always explicit, see the header; `null` leaves it unset
  * @param {keyof typeof LESSONS} [o.lessons]
  * @param {string} [o.source]
  * @param {boolean} [o.capture]
  * @param {Record<string, any>} [o.routes]  extra fake-server routes
  * @param {string} [o.endpoint]             overrides the fake server, `''` for none
+ * @param {Record<string, string>} [o.env]  extra environment
  */
 async function start(o) {
   const host = o.host ?? 'codex';
@@ -161,8 +167,9 @@ async function start(o) {
       extra: {
         MUBIT_CC_RUN_STRATEGY: 'static',
         MUBIT_CC_RUN_ID: RUN_ID,
-        MUBIT_CC_OUTCOME_REVIEW: o.review,
+        ...(o.review === null ? {} : { MUBIT_CC_OUTCOME_REVIEW: o.review }),
         ...(o.capture === false ? { MUBIT_CC_CAPTURE: '0' } : {}),
+        ...(o.env ?? {}),
       },
     });
     const source = o.source ?? 'startup';
@@ -282,6 +289,40 @@ for (const review of /** @type {const} */ (['nudge', 'stop'])) {
 }
 
 // ===========================================================================
+// How the setting is read
+// ===========================================================================
+
+// Through `loadConfig`, like every other reader of it. A value it does not recognise, or no
+// value at all, falls back to the host default. On Codex that is `nudge` today and `stop`
+// once the defaults move, and both carry the sentence, so these cases hold across that change.
+for (const [label, review] of /** @type {const} */ ([['unset', null], ['unrecognised', 'sometimes']])) {
+  test(`outcomeReview ${label}: the host default applies, and it carries the sentence`, async () => {
+    const { ctx } = await start({ review });
+    assertActiveCodexBlock(ctx, `outcomeReview ${label}`);
+    assertIdSentence(ctx, `outcomeReview ${label}`);
+  });
+}
+
+// `loadConfig` reads the setting case-insensitively, so `OFF` is `off`. A check made against
+// the raw environment instead would put the sentence back for a user who switched it off.
+test('outcomeReview=OFF: read as off, so the block does not explain the ids', async () => {
+  const { ctx } = await start({ review: 'OFF' });
+  assertActiveCodexBlock(ctx, 'outcomeReview=OFF');
+  assertNoIdSentence(ctx, 'outcomeReview=OFF',
+    'the user switched the outcome review off, in capitals, and the setting is not case-sensitive');
+});
+
+// `outcomeMode` decides whether the plugin posts outcomes of its own. It does not stop a
+// mubit_outcome call the model makes, and it does not silence the per-prompt nudge, which
+// `prompt-recall.mjs` gates on `outcomeReview` alone. The sentence is that nudge's standing
+// counterpart, so it follows the same rule: only `outcomeReview: off` (or capture off) drops it.
+test('outcomeMode=off, outcomeReview=nudge: the sentence is still there, as the per-prompt nudge is', async () => {
+  const { ctx } = await start({ review: 'nudge', env: { MUBIT_CC_OUTCOME_MODE: 'off' } });
+  assertActiveCodexBlock(ctx, 'outcomeMode=off');
+  assertIdSentence(ctx, 'outcomeMode=off');
+});
+
+// ===========================================================================
 // Exactly once
 // ===========================================================================
 
@@ -361,13 +402,27 @@ test('the id sentence costs one short sentence, and the block stays within its b
 // The blocks that inject nothing
 // ===========================================================================
 
-// These two blocks tell the model that no memory will be injected this session. An id sentence
-// in either would describe lines that are never going to appear.
+// These three blocks tell the model that no memory will be injected this session. An id
+// sentence in any of them would describe lines that are never going to appear.
 test('an unconfigured install does not explain the ids', async () => {
   const { r, ctx } = await start({ review: 'stop', endpoint: '' });
   assert.match(ctx, /not configured/i,
     `with no endpoint the hook should inject the "not configured" block. Got:\n${r.stdout}`);
   assertNoIdSentence(ctx, 'unconfigured',
+    'no memory will be injected this session, so there are no ids to pass back');
+});
+
+test('a rejected API key does not explain the ids', async () => {
+  const { r, ctx } = await start({
+    review: 'stop',
+    routes: {
+      'POST /v2/control/agents/register': { status: 401, json: { error: 'invalid api key' } },
+      'POST /v2/control/activity': { status: 401, json: { error: 'invalid api key' } },
+    },
+  });
+  assert.match(ctx, /not authenticated/i,
+    `with the key rejected the hook should inject the "not authenticated" block. Got:\n${r.stdout}`);
+  assertNoIdSentence(ctx, 'unauthenticated',
     'no memory will be injected this session, so there are no ids to pass back');
 });
 
