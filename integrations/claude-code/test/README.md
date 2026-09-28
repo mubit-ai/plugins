@@ -89,6 +89,7 @@ under ~10 seconds.
 | `dashboard-data.test.mjs` | the local reader: run enumeration from `status/`, the redact-on-render path a `redact: false` cannot switch off, the tri-state `used` signal, and the rollup's cap and confinement |
 | `dashboard-api.test.mjs` | the upstream proxy: `{record: false}` proved by the absent breaker file, the `id`/`lesson_id`/`reference_id` trap, the lessons↔activity join and its two ways of coming up empty |
 | `dashboard-server.test.mjs` | the loopback server's nine invariants — 401 before any work, the key in no response, local routes offline, `safeSegment` on every id, typed-confirm delete, idle shutdown, `--stop` against a real detached child |
+| `chrome-launch.test.mjs` | the browser helper's failed launch: the browser killed, its profile removed, and the file still able to exit |
 | `skills.test.mjs` | frontmatter, tool prefixes, load-bearing prose |
 | `failure.test.mjs` | the cross-cutting failure surface, twenty-nine cases end to end |
 
