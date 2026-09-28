@@ -38,7 +38,7 @@ import { log } from '../../lib/log.mjs';
 import { redactText } from '../../lib/redact.mjs';
 import { deriveRunId } from '../../lib/runid.mjs';
 import { installFetchGuard, resolveCeiling } from './egress.mjs';
-import { INSTRUCTIONS, installInstructionsGuard } from './instructions.mjs';
+import { alwaysLoadFor, INSTRUCTIONS, installInstructionsGuard } from './instructions.mjs';
 import { installResultsGuard } from './results.mjs';
 
 /**
@@ -198,7 +198,10 @@ function prepare(env) {
   // field), so the launcher fills it into the outbound `initialize` frame. Same ordering
   // rule as the guard above, and for the same reason: `StdioServerTransport` takes
   // `process.stdout` as a constructor default and holds it from then on.
-  installInstructionsGuard({ instructions: INSTRUCTIONS });
+  //
+  // The same guard marks the outcome loop's write tools always-loaded, so crediting memory does
+  // not cost a ToolSearch round trip before the call.
+  installInstructionsGuard({ instructions: INSTRUCTIONS, alwaysLoad: alwaysLoadFor(cfg) });
   // The seen-set the guard reads is one conversation's (`lib/seen.mjs`), so it is keyed by
   // the same host session id. Without one every result renders in full and nothing is marked.
   installResultsGuard({

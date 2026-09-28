@@ -633,3 +633,193 @@ test('guardIngest carries the stamp as its own field and never as a change', asy
   assert.equal(off.stamped, false);
   assert.equal(off.changed, false);
 });
+
+// ---------------------------------------------------------------------------
+// Memory handles — the short ids on injected lines, resolved on the way out
+// ---------------------------------------------------------------------------
+//
+// Injected memory lines start with `[mxxxx]`, a hash of the entry's reference id, because a
+// 36-character UUID on every line costs ~20 tokens. The model credits entries by that handle,
+// so `mubit_outcome` and `mubit_dereference` would send ids the server has never heard of
+// unless the guard turns them back into reference ids. The mapping comes from the session
+// scorecard log, which records every ref a session was shown.
+
+const REF_A = '0a0a0a0a-0000-4000-8000-00000000000a';
+const REF_B = '0b0b0b0b-0000-4000-8000-00000000000b';
+const REF_C = '0c0c0c0c-0000-4000-8000-00000000000c';
+
+const H = () => mod('lib/handles.mjs');
+const LOG = () => mod('lib/scorecard-log.mjs');
+
+/** A session log showing `refs`, the way prompt-recall writes it. */
+async function showRefs(dataDir, sessionId, refs) {
+  const { appendScoreRow } = await LOG();
+  appendScoreRow({ dataDir }, sessionId, { kind: 'shown', prompt_id: 'p1', lessons: {}, refs, tokens: 10 });
+}
+
+test('resolveOutcomeBody maps handles in reference_id and entry_ids, and leaves real ids alone', async () => {
+  const { resolveOutcomeBody } = await E();
+  const { handleFor } = await H();
+  const body = {
+    run_id: RUN, reference_id: `[${handleFor(REF_A)}]`, outcome: 'success',
+    entry_ids: [handleFor(REF_B), REF_C, 'global'],
+  };
+  const out = resolveOutcomeBody(body, [REF_A, REF_B, REF_C]);
+  assert.equal(out.changed, true);
+  assert.equal(out.body.reference_id, REF_A);
+  assert.deepEqual(out.body.entry_ids, [REF_B, REF_C, 'global']);
+  assert.deepEqual(out.unresolved, []);
+  assert.equal(out.body.outcome, 'success');
+  assert.equal(body.reference_id, `[${handleFor(REF_A)}]`, 'the input body was mutated');
+});
+
+test('resolveOutcomeBody never rewrites "global", and passes a body with no handles through by identity', async () => {
+  const { resolveOutcomeBody } = await E();
+  for (const body of [
+    { reference_id: 'global', outcome: 'success', entry_ids: [REF_A] },
+    { reference_id: REF_A, outcome: 'failure' },
+    { reference_id: 'global', outcome: 'neutral', entry_ids: 'not-an-array' },
+  ]) {
+    const out = resolveOutcomeBody(body, [REF_A]);
+    assert.equal(out.changed, false);
+    assert.equal(out.body, body, 'an untouched body must come back by identity');
+  }
+  for (const junk of [null, undefined, 'x', [1], 42]) {
+    const out = resolveOutcomeBody(junk, [REF_A]);
+    assert.equal(out.changed, false);
+    assert.equal(out.body, junk);
+  }
+});
+
+test('resolveOutcomeBody leaves a handle nothing in the session produced as typed, and reports it', async () => {
+  const { resolveOutcomeBody } = await E();
+  const { handleFor } = await H();
+  const stranger = handleFor('never-shown');
+  const out = resolveOutcomeBody({ reference_id: 'global', outcome: 'success', entry_ids: [stranger, handleFor(REF_A)] }, [REF_A]);
+  assert.equal(out.changed, true);
+  assert.deepEqual(out.body.entry_ids, [stranger, REF_A]);
+  assert.deepEqual(out.unresolved, [stranger]);
+});
+
+test('resolveDereferenceBody maps the one reference_id a dereference carries', async () => {
+  const { resolveDereferenceBody } = await E();
+  const { handleFor } = await H();
+  const out = resolveDereferenceBody({ run_id: RUN, reference_id: handleFor(REF_B) }, [REF_A, REF_B]);
+  assert.equal(out.changed, true);
+  assert.equal(out.body.reference_id, REF_B);
+  const same = { run_id: RUN, reference_id: REF_B };
+  assert.equal(resolveDereferenceBody(same, [REF_B]).body, same);
+});
+
+test('knownRefsFor reads this session last, so its refs win a handle collision', async () => {
+  const { knownRefsFor } = await E();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, 'other-session', [REF_C, REF_A]);
+  await showRefs(dataDir, SID, [REF_B]);
+  const refs = knownRefsFor({ dataDir }, SID);
+  assert.deepEqual(refs.slice(-1), [REF_B]);
+  assert.ok(refs.includes(REF_A) && refs.includes(REF_C));
+  const anon = knownRefsFor({ dataDir }, '');
+  assert.deepEqual([...anon].sort(), [REF_A, REF_B, REF_C].sort(), 'no session id still reads recent logs');
+  assert.deepEqual(knownRefsFor({ dataDir: makeDataDir() }, SID), []);
+});
+
+/**
+ * Install the guard in THIS process and dial a fake through it — the guard itself, from
+ * source, end to end. The shipped bundle is covered by the wire test further down.
+ */
+async function guarded(t, o = {}) {
+  const { installFetchGuard } = await E();
+  const server = await fakeMubit({
+    'POST /v2/control/dereference': { json: { reference_id: 'echo', content: 'the entry' } },
+    ...(o.routes ?? {}),
+  });
+  const before = globalThis.fetch;
+  installFetchGuard({ ceiling: 'run', runId: RUN, pinRun: true, cfg: { dataDir: o.dataDir }, sessionId: o.sessionId ?? '' });
+  t.after(() => { globalThis.fetch = before; return server.close(); });
+  const post = async (path, body) => {
+    const res = await globalThis.fetch(new URL(path, server.url), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+    return { res, json: await res.json().catch(() => null) };
+  };
+  return { server, post };
+}
+
+test('the guard resolves handles on an outcome before it leaves', async (t) => {
+  const { handleFor } = await H();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, SID, [REF_A, REF_B]);
+  const { server, post } = await guarded(t, { dataDir, sessionId: SID });
+  const { res } = await post('/v2/control/outcome', {
+    run_id: RUN, reference_id: 'global', outcome: 'success', entry_ids: [`[${handleFor(REF_A)}]`, handleFor(REF_B)],
+  });
+  assert.equal(res.status, 200);
+  const wire = server.lastCall('POST', '/v2/control/outcome').body;
+  assert.equal(wire.reference_id, 'global');
+  assert.deepEqual(wire.entry_ids, [REF_A, REF_B]);
+});
+
+test('without a host session id (Codex) handles still resolve from the recent session logs', async (t) => {
+  const { handleFor } = await H();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, 'codex-session', [REF_C]);
+  const { server, post } = await guarded(t, { dataDir, sessionId: '' });
+  await post('/v2/control/outcome', { run_id: RUN, reference_id: handleFor(REF_C), outcome: 'failure' });
+  assert.equal(server.lastCall('POST', '/v2/control/outcome').body.reference_id, REF_C);
+});
+
+test('the guard resolves the handle on a dereference too', async (t) => {
+  const { handleFor } = await H();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, SID, [REF_B]);
+  const { server, post } = await guarded(t, { dataDir, sessionId: SID });
+  await post('/v2/control/dereference', { run_id: RUN, reference_id: `[${handleFor(REF_B)}]` });
+  assert.equal(server.lastCall('POST', '/v2/control/dereference').body.reference_id, REF_B);
+});
+
+test('an outcome naming a handle the session never showed says so in the response', async (t) => {
+  const { handleFor } = await H();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, SID, [REF_A]);
+  const { server, post } = await guarded(t, { dataDir, sessionId: SID });
+  const stranger = handleFor('never-shown');
+  const { json } = await post('/v2/control/outcome', { run_id: RUN, reference_id: 'global', outcome: 'success', entry_ids: [stranger] });
+  assert.deepEqual(server.lastCall('POST', '/v2/control/outcome').body.entry_ids, [stranger], 'left as typed');
+  assert.equal(json.success, true, 'the server\'s own answer is still there');
+  assert.deepEqual(json.mubit_handles?.unresolved, [stranger]);
+});
+
+test('an outcome that needed no resolving goes out byte for byte and is not annotated', async (t) => {
+  const dataDir = makeDataDir();
+  const { server, post } = await guarded(t, { dataDir, sessionId: SID });
+  const raw = JSON.stringify({ run_id: RUN, reference_id: REF_A, outcome: 'success', entry_ids: [REF_B] });
+  const { json } = await post('/v2/control/outcome', raw);
+  assert.equal(server.lastCall('POST', '/v2/control/outcome').raw, raw);
+  assert.equal(json.mubit_handles, undefined);
+});
+
+test('handle-shaped strings on other routes, and unparseable bodies, go out untouched', async (t) => {
+  const { handleFor } = await H();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, SID, [REF_A]);
+  const { server, post } = await guarded(t, { dataDir, sessionId: SID, routes: { 'POST /v2/control/query': { json: { evidence: [] } } } });
+  const q = JSON.stringify({ run_id: RUN, query: handleFor(REF_A) });
+  await post('/v2/control/query', q);
+  assert.equal(server.lastCall('POST', '/v2/control/query').raw, q);
+  await post('/v2/control/outcome', '{ not json');
+  assert.equal(server.lastCall('POST', '/v2/control/outcome').raw, '{ not json');
+});
+
+// The shipped bundle. Passes once `mcp/dist/index.js` is rebuilt from this source.
+test('mubit_outcome with a handle reaches the wire as the reference id (shipped bundle)', async (t) => {
+  const { handleFor } = await H();
+  const dataDir = makeDataDir();
+  await showRefs(dataDir, SID, [REF_A]);
+  const { server, out } = await callStamped(t, 'mubit_outcome',
+    { reference_id: 'global', outcome: 'success', entry_ids: [`[${handleFor(REF_A)}]`] }, { dataDir });
+  assert.equal(out.isError, false, out.text);
+  assert.deepEqual(server.lastCall('POST', '/v2/control/outcome').body.entry_ids, [REF_A],
+    'the handle went out as typed — rebuild mcp/dist/index.js: MUBIT_CC_BUILD_SKIP_SERVER=1 npm run build');
+});
