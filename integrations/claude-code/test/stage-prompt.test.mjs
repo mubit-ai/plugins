@@ -383,6 +383,30 @@ test('stage-prompt: a slash command is marked slash and is never a correction', 
   assert.equal(correctSpawns(file).length, 0);
 });
 
+// A prompt that opens with a Codex skill mention (`$name`, `$plugin:name`) is addressed to the
+// skill, like a slash command, whether a space or punctuation follows the name. The rule names
+// no host, so it holds on a Claude Code payload too, and only the first word counts: a `$`
+// further in leaves the prompt judged as usual. The table is `correction.test.mjs`; this is the
+// hook reading it.
+test('stage-prompt: a $skill prompt is never a correction on Claude Code either; a $ further in changes nothing', async (t) => {
+  const prompts = ["$recall no, that's wrong", "$review, no that's wrong", "no, that's wrong — use $HOME/.cache"];
+  const got = [];
+  for (const prompt of prompts) {
+    const dataDir = makeDataDir();
+    const server = await mubit(t);
+    holdDrainLock(dataDir);
+    seedLog(dataDir, [{ kind: 'prompt', prompt_id: PREV, correction: false, slash: false }, prevTurn()]);
+    await runHook('stage-prompt', userPromptSubmit({ prompt }), { env: staticEnv(dataDir, server) });
+    got.push([prompt, logRows(dataDir).at(-1)?.correction]);
+  }
+  assert.deepEqual(got, [
+    ["$recall no, that's wrong", false],
+    ["$review, no that's wrong", false],
+    ["no, that's wrong — use $HOME/.cache", true],
+  ], 'a prompt addressed to a skill was logged as a correction, so the previous turn\'s lesson is '
+    + 'failed for words said to the skill; or a real correction with a `$` inside it was excused.');
+});
+
 test('stage-prompt: a correction of a turn that used memory spawns drain --correct for it', async (t) => {
   const dataDir = makeDataDir();
   const server = await mubit(t);
