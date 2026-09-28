@@ -40,9 +40,9 @@
  * `mubit_outcome`), not its prose, so the wording can change without a test changing.
  *
  * `MUBIT_CC_OUTCOME_REVIEW` is set explicitly in every case but one, because the Codex default
- * for it is due to move from `nudge` to `stop`, and a test that leant on the default would
- * change meaning when it does. The one case that leaves it unset asserts only what holds under
- * either default: both of them carry the sentence.
+ * for it has moved once already, from `nudge` to `stop`, which it is now, and a test that leant
+ * on the default would change meaning if it moved again. The one case that leaves it unset
+ * asserts only what holds under either value: both of them carry the sentence.
  */
 
 import test from 'node:test';
@@ -297,8 +297,8 @@ for (const review of /** @type {const} */ (['nudge', 'stop'])) {
 // ===========================================================================
 
 // Through `loadConfig`, like every other reader of it. A value it does not recognise, or no
-// value at all, falls back to the host default. On Codex that is `nudge` today and `stop`
-// once the defaults move, and both carry the sentence, so these cases hold across that change.
+// value at all, falls back to the host default. On Codex that is `stop`, which replaced
+// `nudge`, and both carry the sentence, so these cases hold whichever of the two it is.
 for (const [label, review] of /** @type {const} */ ([['unset', null], ['unrecognised', 'sometimes']])) {
   test(`outcomeReview ${label}: the host default applies, and it carries the sentence`, async () => {
     const { ctx } = await start({ review });

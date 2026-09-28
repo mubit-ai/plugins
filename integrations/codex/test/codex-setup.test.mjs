@@ -34,13 +34,18 @@
  * The section after it holds two promises the approval step rests on. Every setting the user
  * wrote is still theirs after a run, however TOML lets them write it: an `approval_mode` under
  * a quoted key, a decision made inline or as a dotted key inside `[mcp_servers.mubit]`, a
- * table in a CRLF file with a comment on its header, and the server's own settings such as
- * `startup_timeout_sec`, which `codex mcp remove` deletes along with the rest of the table.
+ * table in a CRLF file with a comment on its header, the server's own settings such as
+ * `startup_timeout_sec`, which `codex mcp remove` deletes along with the rest of the table,
+ * and the user's own entries in `[mcp_servers.mubit.env]` beside the two setup writes there.
  * And the file is always one the host loads: a failed `codex mcp add` puts back the file as
  * it was, and a write the host refuses is undone, reported, and ends the run with exit 1.
+ * Undone means the whole file as it was before setup ran, the text read before
+ * `codex mcp remove`: the file as `codex mcp add` left it has already lost whatever setup
+ * could not carry. The report names no line of the text setup threw away.
  * What setup prints about the two tools matches what it did ("already approved", "kept"), and
  * the first `config.toml.before-mubit` is never overwritten by a later run. Those tests read
  * the result through the host's own `config/read`, which parses the file the way Codex will.
+ * The user guide's setup transcript is the one a fresh `--no-trust` run prints.
  */
 
 import test from 'node:test';
@@ -931,7 +936,7 @@ test('a config.toml the host will not load is never left behind: setup puts it b
   // defeats that: here a multi-line array inside a mubit tools table, one of whose lines starts
   // with `[` and so reads as a table header. Whatever setup writes, a file the host refuses
   // means Codex does not start at all, so setup checks the file loads after its write, puts
-  // back the text it had before that write when it does not, says so, and exits 1: the tools
+  // back the file as it was before setup ran when it does not, says so, and exits 1: the tools
   // were not set up as asked, and a caller that reads 0 as done would say they were.
   const before = [
     'model = "gpt-5.6-sol"',
@@ -969,6 +974,78 @@ test('a config.toml the host will not load is never left behind: setup puts it b
   assert.equal(readFileSync(join(home, 'config.toml.before-mubit'), 'utf8'), before,
     'config.toml.before-mubit does not hold the file as the user had it, and it is the only copy '
     + 'of the table setup could not carry: restoring it would not bring that table back.');
+});
+
+test('a failed load check puts back the whole file as it was before setup ran, not as `codex mcp add` left it', needsCodex, async () => {
+  // A re-run over a file an earlier run wrote, to which the user has since added a mubit_recall
+  // table setup cannot carry: a line of its multi-line array opens with `[`, and a line-based
+  // reading takes that for a table header. The write fails the load check. The text just before
+  // that write is the file as `codex mcp add` left it, and `codex mcp remove` had already taken
+  // the user's table out of it; putting that back loses the setting for good, since
+  // config.toml.before-mubit is the first run's copy and never held it. The text setup read
+  // before its remove is the file the user had, and the one that goes back.
+  const home = makeHome({ 'config.toml': 'model = "m"\n' });
+  const first = await runSetup(home);
+  assert.equal(first.code, 0, `the first run exited ${first.code}, so there is no earlier setup to re-run over:\n${first.stdout}\n${first.stderr}`);
+  const before = `${readToml(home).replace(/\s+$/, '')}\n\n${[
+    '[mcp_servers.mubit.tools.mubit_recall]',
+    'approval_mode = "prompt"',
+    'note = [',
+    '  [1],',
+    ']',
+    '',
+  ].join('\n')}`;
+  writeFileSync(join(home, 'config.toml'), before);
+  const was = await hostView(home);
+  assert.equal(hostApproval(was, 'mubit_recall'), 'prompt',
+    `the input does not load with mubit_recall at "prompt", so this test proves nothing:\n${was.said}\n${before}`);
+
+  const r = await runSetup(home);
+  assert.equal(r.code, 1,
+    `setup exited ${r.code}, so the load check never refused its write and this test proves nothing. If setup `
+    + `now carries this table, the test needs an input setup cannot carry:\n${r.stdout}\n${r.stderr}`);
+  assert.equal(readToml(home), before,
+    'the load check failed and config.toml is not the file the user had before this run: setup put back the '
+    + 'file as `codex mcp add` left it, which `codex mcp remove` had already stripped of the user`s mubit_recall '
+    + 'table, so their "prompt" on it is gone and config.toml.before-mubit, from the first run, never held it.');
+  assert.match(printed(r), /\b(?:restor(?:e|ed|ing)|put(?:s|ting)? back)\b/i,
+    `setup put config.toml back without saying so, so the user believes the run landed:\n${printed(r)}`);
+  assert.match(printed(r), /\bregistration\b[^\n]*\b(?:not (?:been )?updated|unchanged|not changed)\b/i,
+    'setup did not say the MCP registration was left as it was, so the user believes the server is now '
+    + `registered at this install's path when Codex still launches the one from before:\n${printed(r)}`);
+});
+
+test('the load-check report names no line of the text setup threw away', needsCodex, async () => {
+  // The host's refusal gives a line and column in the text setup wrote. Setup then puts other
+  // text back, so the user who opens config.toml at that line finds some other line, or none,
+  // and goes looking for a fault in their own file that is not there.
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    OLD_REGISTRATION,
+    '[mcp_servers.mubit.tools.mubit_outcome]',
+    'approval_mode = "prompt"',
+    'note = [',
+    '  "why I ask first",',
+    '["see", "the thread"],',
+    ']',
+    '',
+  ].join('\n');
+  const home = makeHome({ 'config.toml': before });
+  const r = await runSetup(home);
+  assert.equal(r.code, 1,
+    `setup exited ${r.code}, so the load check never refused its write and there is no report to read:\n${printed(r)}`);
+  const out = printed(r);
+  for (const [form, re] of /** @type {const} */ ([
+    ['`line <n>`', /\bline \d+/i],
+    ['`column <n>`', /\bcolumn \d+/i],
+    ['`config.toml:<line>:<column>`', /config\.toml:\d+/],
+    ['a numbered source excerpt', /^\s*\d+\s*\|/m],
+  ])) {
+    assert.doesNotMatch(out, re,
+      `setup's report cites a position in the text it discarded (${form}). The file on disk is not that `
+      + `text, so the position sends the user to a line that is not the fault:\n${out}`);
+  }
 });
 
 test('a failed registration leaves config.toml exactly as it was, and says the registration is unchanged', needsCodex, async () => {
@@ -1186,6 +1263,82 @@ test('the user`s other settings on [mcp_servers.mubit] survive setup', needsCode
       `${run}: the user's tool_timeout_sec on [mcp_servers.mubit] is gone, so a long call times out at the `
       + `host default again:\n${after}`);
   }
+});
+
+test('the user`s own entries in [mcp_servers.mubit.env] survive setup, and setup`s two take this run`s values', needsCodex, async () => {
+  // `[mcp_servers.mubit.env]` is the server's environment. Setup writes two keys there,
+  // MUBIT_CC_DATA_DIR and MUBIT_CC_PLUGIN_ROOT; a user who chose the server's tools with
+  // MUBIT_MCP_TOOLS, or set any other variable it reads, wrote that in the same table.
+  // `codex mcp remove` deletes the table and `codex mcp add` writes back only setup's two, so
+  // the user's entries have to be read first and put back, on every run and under
+  // `--no-trust` alike. Setup's own two carry this run's values, not an earlier install's.
+  const pinned = realpathSync(mkdtempSync(join(tmpdir(), 'mubit-pinned-data-')));
+  const before = [
+    'model = "gpt-5.6-sol"',
+    '',
+    ...OLD_SERVER_LINES,
+    '',
+    '[mcp_servers.mubit.env]',
+    'MUBIT_CC_DATA_DIR = "/opt/old-data"',
+    'MUBIT_MCP_TOOLS = "mubit_recall"',
+    'MUBIT_CC_PLUGIN_ROOT = "/opt/old-install"',
+    'MUBIT_MCP_LESSON_SCOPE = "run"',
+    '',
+  ].join('\n');
+  const was = await hostView(makeHome({ 'config.toml': before }));
+  assert.equal(was.mubit?.env?.MUBIT_MCP_TOOLS, 'mubit_recall',
+    `the input does not load with the user's MUBIT_MCP_TOOLS, so this test proves nothing:\n${was.said}`);
+
+  const home = makeHome({ 'config.toml': before });
+  for (const args of [[], ['--no-trust']]) {
+    const run = args.length ? 'the --no-trust re-run' : 'a normal run';
+    const r = await runSetup(home, [...args, `--data-dir=${pinned}`]);
+    const after = readToml(home);
+    const seen = await hostView(home);
+    assert.ok(seen.ok, `${run}: Codex cannot load the config.toml setup left:\n${seen.said}\n${after}`);
+    assert.equal(r.code, 0, `${run}: setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+    const env = seen.mubit?.env ?? {};
+    assert.equal(env.MUBIT_MCP_TOOLS, 'mubit_recall',
+      `${run}: the user's MUBIT_MCP_TOOLS in [mcp_servers.mubit.env] is gone, so the server offers its `
+      + `default tools again rather than the list the user chose:\n${after}`);
+    assert.equal(env.MUBIT_MCP_LESSON_SCOPE, 'run',
+      `${run}: the user's MUBIT_MCP_LESSON_SCOPE in [mcp_servers.mubit.env] is gone, so a lesson the model `
+      + `writes may claim a wider scope than the user allowed:\n${after}`);
+    assert.equal(env.MUBIT_CC_DATA_DIR, pinned,
+      `${run}: MUBIT_CC_DATA_DIR is not the directory this run pinned, so the server reads another data `
+      + `directory than the hooks and writes into a run pre-prompt recall never reads:\n${after}`);
+    assert.equal(env.MUBIT_CC_PLUGIN_ROOT, CODEX_ROOT,
+      `${run}: MUBIT_CC_PLUGIN_ROOT is not this install's root, so the server cannot recognise its own `
+      + `install path as self-referential:\n${after}`);
+  }
+});
+
+// ===========================================================================
+// The user guide's transcript
+// ===========================================================================
+
+test('the user guide`s setup transcript is what a fresh --no-trust run prints', needsCodex, async () => {
+  // The guide shows what a first run prints, so a user can tell their run went as it should by
+  // comparing the two. A line there that setup does not print sends them looking for a fault
+  // that is not there, or past one that is. The paths are the user's own and differ; the guide
+  // writes $CODEX_HOME as ~/.codex and shows a sample data directory, and those stand in here.
+  const guide = readFileSync(join(CODEX_ROOT, 'docs', 'user-guide.md'), 'utf8');
+  const block = [...guide.matchAll(/^```\n([\s\S]*?)^```$/gm)].map((m) => m[1])
+    .find((b) => b.includes('skipping trust (--no-trust)'));
+  assert.ok(block, 'the user guide no longer shows the --no-trust setup transcript, so a user has nothing '
+    + 'to compare a first run against.');
+  const shownData = /^data directory: (.+)$/m.exec(block)?.[1];
+  assert.ok(shownData, `the guide's transcript has no \`data directory:\` line, the first thing setup prints:\n${block}`);
+
+  const home = makeHome();
+  const data = realpathSync(mkdtempSync(join(tmpdir(), 'mubit-guide-data-')));
+  const r = await runSetup(home, ['--no-trust', `--data-dir=${data}`]);
+  assert.equal(r.code, 0, `setup exited ${r.code}:\n${r.stdout}\n${r.stderr}`);
+  const lines = (/** @type {string} */ s) => s.split('\n').map((l) => l.replace(/\s+$/, '')).filter(Boolean);
+  const ran = lines(r.stdout.split(data).join(shownData).split(home).join('~/.codex'));
+  assert.deepEqual(lines(block), ran,
+    'the user guide`s setup transcript is not what a fresh --no-trust run prints, so a user comparing '
+    + 'their first run against it sees a difference that is not a fault, or trusts one that is.');
 });
 
 // ===========================================================================
