@@ -23,17 +23,22 @@
  * checked against the Codex output contract:
  *
  *   - **First Stop.** A turn that showed lessons blocks once, listing each lesson by its short
- *     id, in the only block shape the host was recorded accepting. The implicit outcome waits.
+ *     id, without the card and without ending the turn. The implicit outcome waits.
  *   - **The pending review is on disk.** Every hook is its own process, so the continuation
  *     can only know it is one from the turn file.
  *   - **Continuation Stop.** Never blocks; prints the card; use is measured on the first answer
- *     plus the continuation with its "Memory review:" line stripped; the first answer is what
- *     is stored; the review line never is.
+ *     only, as on Claude Code. The block reason lists the lessons by title, so whatever the
+ *     model writes after it echoes their vocabulary, and measuring it would count lessons as
+ *     used that the answer never touched. The first answer is what is stored; the continuation
+ *     and its "Memory review:" line never are. The one exception is a message typed during
+ *     the continuation: its answer is a real answer, and is measured and stored as such.
  *   - **The loop guard.** However many Stops Codex sends for one `turn_id`, and whatever
  *     `stop_hook_active` says on them (true, false, or absent), there is exactly one block and
  *     one implicit outcome.
  *   - **A later Stop of a reviewed turn is its continuation**, whatever `stop_hook_active` says:
- *     its review line is neither measured nor stored, and the first answer's measurement stands.
+ *     the turn file records that a review was asked for, and that record, not the flag, is what
+ *     makes a Stop a follow-up. Its reply is neither measured nor stored, and the first
+ *     answer's measurement stands.
  *   - **No block** when nothing was shown in full or used, when `outcomeMode` is `off`, when
  *     `outcomeReview` is `nudge` or `off`, when capture is off, or on a subagent's Stop.
  *   - **Crediting in the continuation.** `mubit_outcome` calls there settle those lessons: the
@@ -94,7 +99,7 @@ const PROMPT = 'why does the test runner hang?';
 const ANSWER_A = 'Switch vitest to --pool=forks: the threads pool deadlocks on the native module.';
 /** Uses A and C, and nothing of B. */
 const ANSWER_AC = `${ANSWER_A} Postgres listens on 5433 here, so point the test config at that port.`;
-/** Continuation text that uses C, and nothing of A or B. */
+/** Text that uses C, and nothing of A or B: continuation prose, or the answer to a queued message. */
 const BODY_C = 'Postgres listens on 5433 here, so point the test config at that port.';
 /** A closing review line carrying B's vocabulary, which must never count as using B. */
 const REVIEW_LINE = `Memory review: credited [${hA}]; the migrations and seeding lesson did not apply.`;
@@ -107,17 +112,33 @@ const NOT_ON_CODEX = /** @type {const} */ (['CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN
 
 /**
  * Loaded into every node process the hooks start, through `NODE_OPTIONS`, so a test can wait
- * for the detached drains to finish rather than guess. It records a start and an exit per
- * process; a drain that is still running is one with a start and no exit.
+ * for the detached drains to finish rather than guess. Three records:
+ *
+ *   - `spawn`, written by the process that launches a drain, synchronously, before `spawn`
+ *     returns. The hook has exited by the time `runHook` resolves, so every drain it launched
+ *     is already on file, however long the child then takes to boot;
+ *   - `start` and `exit`, written by the drain itself.
+ *
+ * All drains are done when each spawn has started and each start has exited. No quiet window,
+ * so a slow machine makes a test slower, never wrong. The spawn is patched on the builtin and
+ * pushed to its ESM view, which is how `lib/hook.mjs` (and the bundles) import it.
  */
 const SCRATCH = tempDir('mubit-codex-review-');
 const SPY = join(SCRATCH, 'drain-spy.cjs');
 writeFileSync(SPY, `const fs = require('node:fs');
+const path = require('node:path');
 const out = process.env.MUBIT_TEST_SPY_FILE;
 if (out) {
-  const rec = (ev) => { try { fs.appendFileSync(out, JSON.stringify({ ev, pid: process.pid, argv: process.argv.slice(1) }) + '\\n'); } catch {} };
-  rec('start');
-  process.on('exit', () => rec('exit'));
+  const rec = (ev, argv) => { try { fs.appendFileSync(out, JSON.stringify({ ev, pid: process.pid, argv }) + '\\n'); } catch {} };
+  rec('start', process.argv.slice(1));
+  process.on('exit', () => rec('exit', process.argv.slice(1)));
+  const cp = require('node:child_process');
+  const spawn = cp.spawn;
+  cp.spawn = function (cmd, args, ...rest) {
+    if (Array.isArray(args) && path.basename(String(args[0] ?? '')) === 'drain.mjs') rec('spawn', args.map(String));
+    return spawn.call(this, cmd, args, ...rest);
+  };
+  require('node:module').syncBuiltinESMExports();
 }
 `);
 
@@ -129,19 +150,16 @@ function drainRows(file) {
 }
 
 /**
- * Wait until every drain the hooks have started has exited, and has stayed that way for a
- * moment: a drain spawned just before a hook returned may not have started yet.
+ * Wait until every drain the hooks launched has started and exited. Call it only once the
+ * hooks in question have returned, which every caller here does.
  *
  * @param {Session} s
  */
 async function drainsIdle(s) {
-  let quietSince = 0;
   await waitFor(() => {
     const rows = drainRows(s.spy);
-    const running = rows.filter((r) => r.ev === 'start').length - rows.filter((r) => r.ev === 'exit').length;
-    if (running > 0) { quietSince = 0; return false; }
-    if (!quietSince) quietSince = Date.now();
-    return Date.now() - quietSince >= 400;
+    const count = (/** @type {string} */ ev) => rows.filter((r) => r.ev === ev).length;
+    return count('start') >= count('spawn') && count('exit') === count('start');
   }, 15_000);
 }
 
@@ -409,9 +427,10 @@ test('first Stop: a turn that showed lessons blocks once, listing each by the id
     + `credit them:\n${JSON.stringify(r.json)}`);
   assert.equal(typeof r.json.reason, 'string');
   assert.ok(r.json.reason.trim(), 'a block without a reason is refused by Codex');
-  assert.deepEqual(Object.keys(r.json).sort(), ['decision', 'reason'],
-    '`{decision, reason}` is the one block shape codex-cli 0.154.0 was recorded accepting '
-    + '(observed/output-acceptance.json); anything beside it is a guess about the host.');
+  assert.notEqual(r.json.continue, false,
+    '`continue: false` ends the turn, so the model never reads the reason it was blocked with');
+  assert.equal(r.json.systemMessage, undefined,
+    'the card waits for the reviewed turn; printed here too, it would show twice for one turn');
   assert.deepEqual(sorted(handlesIn(r.json.reason)), sorted([hA, hB, hC]),
     'the reason must list every lesson shown this turn by the short id the model saw, and '
     + `nothing else, or the model credits ids that name nothing:\n${r.json.reason}`);
@@ -491,8 +510,12 @@ test('the pending review is on disk, so the continuation Stop, a process of its 
   // Every "exactly once" below waits on this watcher; if it stopped seeing drains they would
   // be counted before the drain that posts a duplicate had run.
   const drains = drainRows(s.spy);
-  assert.ok(drains.some((r) => r.ev === 'start' && r.argv.includes('--with-outcome')),
-    'the drain watcher saw no drain start, so the waits for "every drain finished" wait on nothing');
+  for (const ev of ['spawn', 'start']) {
+    assert.ok(drains.some((r) => r.ev === ev && r.argv.includes('--with-outcome')),
+      `the drain watcher saw no drain ${ev}, so the waits for "every drain finished" wait on nothing`);
+  }
+  assert.equal(drains.filter((r) => r.ev === 'start').length, drains.filter((r) => r.ev === 'spawn').length,
+    'a drain started that the watcher never saw launched, so a wait could end before it does');
   assert.equal(drains.filter((r) => r.ev === 'exit').length, drains.filter((r) => r.ev === 'start').length);
 });
 
@@ -500,11 +523,13 @@ test('the pending review is on disk, so the continuation Stop, a process of its 
 // The continuation Stop
 // ===========================================================================
 
-test('continuation Stop (the recorded payload): no block, the card, and use measured on the answer plus the continuation without its review line', async (t) => {
+test('continuation Stop (the recorded payload): no block, the card, and use measured on the first answer only', async (t) => {
   const s = await codexSession(t, { review: 'stop', score: 'full' });
   await typePrompt(s, TURN);
   assert.equal((await firstStop(s, TURN, ANSWER_A)).json.decision, 'block');
 
+  // The continuation says more than the review line, and what it says is C's vocabulary: the
+  // reason put C's title in front of the model, so this is an echo, not a use.
   const r = await continuationStop(s, TURN, `${BODY_C}\n\n${REVIEW_LINE}`);
 
   assert.equal(r.json.decision, undefined,
@@ -515,12 +540,21 @@ test('continuation Stop (the recorded payload): no block, the card, and use meas
   const outcomes = await settledOutcomes(s, TURN);
   assert.equal(outcomes.length, 1,
     `the turn's implicit outcome must go out exactly once, after the review; saw: ${s.server.summary()}`);
-  assert.deepEqual(sorted(outcomes[0].body.entry_ids ?? []), sorted([REF_A, REF_C]),
-    'use is measured on the first answer (which used A) plus the continuation (which used C). '
-    + 'B appears only in the "Memory review:" line, which is stripped before measuring. '
+  assert.deepEqual(outcomes[0].body.entry_ids, [REF_A],
+    'use is measured on the first answer alone, which used A. C appears only in the '
+    + 'continuation and B only in its "Memory review:" line; the block reason had just listed '
+    + 'both by title, so counting either would credit an echo of the reason as a use. '
     + `Posted: ${JSON.stringify(outcomes[0].body.entry_ids)}`);
+  const entries = turnFile(s, TURN)?.used_evidence?.entries ?? {};
+  assert.deepEqual([entries[REF_A]?.used, entries[REF_B]?.used === true, entries[REF_C]?.used === true],
+    [true, false, false],
+    `the turn's recorded evidence is not the first answer's:\n${JSON.stringify(entries)}`);
 
   assertFirstAnswerStored(s, TURN, ANSWER_A);
+  const echoed = turnItems(s, TURN).filter((i) => String(i.text).includes('5433'));
+  assert.deepEqual(echoed.map((i) => i.item_id), [],
+    'the continuation was stored as an answer; it is the model responding to the review, not '
+    + 'to the user');
 });
 
 test('continuation holding only the review line: the first answer is what is measured and stored', async (t) => {
@@ -768,6 +802,8 @@ test('a message typed during the continuation joins the turn and starts no secon
   assert.match(String(r.json.systemMessage ?? ''), /lessons on 1 of 1 prompt/,
     `the queued message was counted as a prompt of its own rather than joining the turn:\n${r.json.systemMessage}`);
 
+  // The one continuation text that is measured: it answers the user, not the review, which is
+  // how Claude Code treats a message queued during its review too.
   const outcomes = await settledOutcomes(s, TURN);
   assert.equal(outcomes.length, 1, `saw: ${s.server.summary()}`);
   assert.deepEqual(sorted(outcomes[0].body.entry_ids ?? []), sorted([REF_A, REF_C]),
