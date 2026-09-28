@@ -23,8 +23,9 @@
  * no entry the plugin was ever shown. Nothing anywhere reports it.
  *
  * Where the server looks, so that a seeded file is the file it reads:
- *   - the data dir is `MUBIT_CC_DATA_DIR`. Setup pins it into the Codex registration, and the
- *     harness sets it the same way;
+ *   - the data dir is `MUBIT_CC_DATA_DIR`. Setup pins it into the Codex registration, and it is
+ *     the only name here that points at the test's data dir: the Claude Code names the shared
+ *     harness also fills in are blanked, for the server and for the hooks, as Codex leaves them;
  *   - a session log is `<dataDir>/scorecard/<session_id>.jsonl`, keyed by session and not by
  *     run, and every log younger than a week is read;
  *   - the run is the launcher's derived run id. It is pinned `static` here, as everywhere else
@@ -125,8 +126,15 @@ function writeTurn(dataDir, runId, turn) {
 }
 
 /**
- * Call one tool on the committed Codex bundle against a live fake, the way Codex starts it:
- * no session id in the environment.
+ * The names Codex never gives a plugin process. The shared harness fills them in for Claude
+ * Code; blanking them leaves `MUBIT_CC_DATA_DIR` as the only road to the data dir, which is
+ * the one Codex has.
+ */
+const NOT_ON_CODEX = /** @type {const} */ (['CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA', 'CLAUDE_PROJECT_DIR']);
+
+/**
+ * Call one tool on the committed Codex bundle against a live fake, the way `codex mcp add`
+ * registers it: `MUBIT_CC_DATA_DIR` and `MUBIT_CC_PLUGIN_ROOT`, and no session id.
  *
  * `CLAUDE_CODE_SESSION_ID` is blanked rather than left to the harness, which inherits nothing
  * but `PATH`. If the harness ever inherited the developer's own environment, a session id
@@ -145,9 +153,28 @@ async function callCodex(t, name, args, o = {}) {
     endpoint: server.url,
     dataDir: o.dataDir ?? makeDataDir(),
     runId: RUN,
-    extra: { CLAUDE_CODE_SESSION_ID: '' },
+    extra: {
+      ...Object.fromEntries(NOT_ON_CODEX.map((k) => [k, ''])),
+      MUBIT_CC_PLUGIN_ROOT: CODEX_ROOT,
+      CLAUDE_CODE_SESSION_ID: '',
+    },
   });
   return { server, out };
+}
+
+/**
+ * The environment a Codex hook runs with: what setup pins into its registration, and none of
+ * the Claude Code names, which `lib/boot.mjs` has to synthesise.
+ *
+ * @param {{dataDir: string, projectDir: string, endpoint: string}} o
+ * @returns {Record<string, string>}
+ */
+function codexHookEnv(o) {
+  const env = baseEnv({
+    ...o, extra: { MUBIT_CC_RUN_STRATEGY: 'static', MUBIT_CC_RUN_ID: RUN },
+  });
+  for (const k of NOT_ON_CODEX) delete env[k];
+  return env;
 }
 
 /**
@@ -254,6 +281,42 @@ test('a short id in reference_id resolves too', async (t) => {
   assertNeverSent(server, hA);
 });
 
+test('whitespace around a short id, inside or outside its brackets, does not stop it resolving', async (t) => {
+  const dataDir = makeDataDir();
+  writeLog(dataDir, SESSION, [REF_A, REF_B]);
+  const hA = handleFor(REF_A);
+  const hB = handleFor(REF_B);
+
+  const { server, wire, note } = await outcome(t, {
+    reference_id: 'global', outcome: 'success', entry_ids: [` [${hA}] `, `[ ${hB} ]`, ` ${hA}`],
+  }, { dataDir });
+
+  assert.deepEqual(wire.entry_ids, [REF_A, REF_B, REF_A],
+    'a short id with a stray space around it went out unresolved. The model copied the right '
+    + `id and the credit named no entry.\n  sent: ${JSON.stringify(wire.entry_ids)}`);
+  assertNeverSent(server, hA);
+  assertNeverSent(server, hB);
+  assert.equal(note, undefined, 'every id resolved, so no unresolved note may ride back.');
+});
+
+test('an upper-case short id is not a short id, and is sent as typed rather than guessed at', async (t) => {
+  const dataDir = makeDataDir();
+  writeLog(dataDir, SESSION, [REF_A]);
+  const upper = `[${handleFor(REF_A).toUpperCase()}]`;
+
+  // Short ids are lower case by definition (`handles.test.mjs` pins `M…` as not one), so
+  // this is any other string the model typed. What must not happen is a case-folded match
+  // that credits an entry on a guess the shared resolver does not make.
+  const { server, wire } = await outcome(t,
+    { reference_id: 'global', outcome: 'success', entry_ids: [upper] }, { dataDir });
+
+  assert.deepEqual(wire.entry_ids, [upper],
+    'the Codex bundle treated an upper-case id differently from the shared definition of a '
+    + `short id.\n  sent: ${JSON.stringify(wire.entry_ids)}`);
+  assert.ok(!server.requests.some((r) => String(r.raw ?? '').includes(REF_A)),
+    'an upper-case id was folded into the entry its lower-case twin names.');
+});
+
 // ===========================================================================
 // No session id: the run's latest session
 // ===========================================================================
@@ -327,6 +390,26 @@ test('a turn in another run does not choose the session', async (t) => {
   assert.deepEqual(wire.entry_ids, [TWIN_OLDER],
     "a turn in another project's run chose which session this server reads last. Credit "
     + 'given in one project resolved against what a different project was shown.');
+});
+
+test("a newer session in another run does not outrank this run's own", async (t) => {
+  const dataDir = makeDataDir();
+  const now = Date.now();
+  // This run's session showed one twin. Another project's session in the same data dir showed
+  // the other twin later: its log is the newer file and its turn started last. Logs are kept
+  // by session, not run, so the other log is still read; it may not be read last.
+  writeLog(dataDir, SESSION_OLDER, [TWIN_OLDER], { mtimeMs: now - 5 * MINUTE });
+  writeLog(dataDir, SESSION_NEWER, [TWIN_NEWER], { mtimeMs: now - MINUTE });
+  writeTurn(dataDir, RUN, { turnId: 'turn-here', sessionId: SESSION_OLDER, startedAt: now - 10 * MINUTE });
+  writeTurn(dataDir, 'codex-handles-other-run',
+    { turnId: 'turn-elsewhere', sessionId: SESSION_NEWER, startedAt: now - MINUTE });
+
+  const { wire } = await outcome(t,
+    { reference_id: 'global', outcome: 'success', entry_ids: [`[${handleFor(TWIN_OLDER)}]`] }, { dataDir });
+
+  assert.deepEqual(wire.entry_ids, [TWIN_OLDER],
+    "another project's more recent session won a shared short id over the session this run "
+    + 'is serving, so the credit went to an entry this model was never shown.');
 });
 
 // ===========================================================================
@@ -410,7 +493,7 @@ test('an empty entry_ids credits nothing, even with a session log to hand', asyn
   assert.equal(note, undefined, 'there was nothing to resolve, so nothing may be reported.');
 });
 
-test('with no session log at all, a short id is sent as typed and reported', async (t) => {
+test('with no session log at all, a bracketed short id goes out bare and is reported', async (t) => {
   // A fresh install, or a session whose hooks never ran because they were never trusted.
   const dataDir = makeDataDir();
   const hA = handleFor(REF_A);
@@ -418,14 +501,15 @@ test('with no session log at all, a short id is sent as typed and reported', asy
   const { wire, note, out } = await outcome(t,
     { reference_id: 'global', outcome: 'success', entry_ids: [`[${hA}]`] }, { dataDir });
 
-  assert.equal(wire.entry_ids?.length, 1,
-    `the short id was dropped rather than sent as typed:\n  sent: ${JSON.stringify(wire.entry_ids)}`);
-  assert.equal(bare(wire.entry_ids[0]), hA,
-    'with nothing to resolve against, the short id must go out as the model typed it, not as '
-    + `a guess.\n  sent: ${JSON.stringify(wire.entry_ids)}`);
-  assert.deepEqual((note?.unresolved ?? []).map(bare), [hA],
-    'no session log means nothing resolved, and the model must be told so. Silence reads as '
-    + `a credit that landed:\n${out.text}`);
+  // The brackets are how the id is displayed, not part of it. An unknown id goes out as the
+  // bare short id, the same string the note names, so the model can match one to the other
+  // (`resolveHandles` in the shared `lib/handles.mjs`).
+  assert.deepEqual(wire.entry_ids, [hA],
+    'with nothing to resolve against, the short id must go out as the bare id the model typed, '
+    + `neither dropped nor guessed at.\n  sent: ${JSON.stringify(wire.entry_ids)}`);
+  assert.deepEqual(note?.unresolved, [hA],
+    'no session log means nothing resolved, and the model must be told so, naming the id as it '
+    + `went out. Silence reads as a credit that landed:\n${out.text}`);
 });
 
 test('a torn last line in the session log costs only itself', async (t) => {
@@ -444,12 +528,46 @@ test('a torn last line in the session log costs only itself', async (t) => {
   assert.equal(wire.entry_ids?.[0], REF_A,
     'one torn line made the whole session log unreadable, so every id the session was shown '
     + `stopped resolving.\n  sent: ${JSON.stringify(wire.entry_ids)}`);
-  assert.equal(bare(wire.entry_ids?.[1]), hB,
+  assert.equal(wire.entry_ids?.[1], hB,
     'an entry named only by the torn line resolved to something. A partial row cannot say '
-    + 'which entry it named.');
-  assert.deepEqual((note?.unresolved ?? []).map(bare), [hB],
+    + `which entry it named.\n  sent: ${JSON.stringify(wire.entry_ids)}`);
+  assert.deepEqual(note?.unresolved, [hB],
     'the id only the torn line knew must be reported unresolved, and the one before it must not.');
   assertNeverSent(server, hA);
+});
+
+// ===========================================================================
+// mubit_dereference
+// ===========================================================================
+
+test('mubit_dereference resolves a short id too, and reports one that matches nothing', async (t) => {
+  const dataDir = makeDataDir();
+  writeLog(dataDir, SESSION, [REF_A]);
+  const hA = handleFor(REF_A);
+  const stranger = handleFor(NEVER_SHOWN);
+  const server = await fakeMubit({
+    'POST /v2/control/dereference': { json: { reference_id: REF_A, content: 'the entry' } },
+  });
+  t.after(() => server.close());
+
+  // Fetching the full text behind an injected line is the other call a model makes with the
+  // short id it was shown.
+  const known = await callCodex(t, 'mubit_dereference', { reference_id: `[${hA}]` }, { dataDir, server });
+  assert.equal(known.out.isError, false, `mubit_dereference failed:\n${known.out.text}`);
+  const sent = server.calls('POST', '/v2/control/dereference');
+  assert.equal(sent.length, 1, `expected exactly one dereference on the wire; saw: ${server.summary()}`);
+  assert.equal(sent[0].body?.reference_id, REF_A,
+    'the Codex bundle sent a dereference for the short id rather than the entry it names, so '
+    + 'the model cannot open a line it was shown.');
+  assertNeverSent(server, hA);
+  assert.equal(known.out.json?.mubit_handles, undefined, 'the id resolved, so nothing may be reported.');
+
+  server.reset();
+  const unknown = await callCodex(t, 'mubit_dereference', { reference_id: `[${stranger}]` }, { dataDir, server });
+  assert.equal(server.lastCall('POST', '/v2/control/dereference')?.body?.reference_id, stranger,
+    'an unknown short id on a dereference must go out as the bare id, not dropped or guessed at.');
+  assert.deepEqual(unknown.out.json?.mubit_handles?.unresolved, [stranger],
+    `a dereference by an unknown short id came back without saying so:\n${unknown.out.text}`);
 });
 
 // ===========================================================================
@@ -531,10 +649,7 @@ test('the id a Codex hook shows the model resolves through the Codex bundle', as
   t.after(() => server.close());
   const dataDir = makeDataDir();
   const projectDir = makeProjectDir();
-  const env = baseEnv({
-    dataDir, projectDir, endpoint: server.url,
-    extra: { MUBIT_CC_RUN_STRATEGY: 'static', MUBIT_CC_RUN_ID: RUN },
-  });
+  const env = codexHookEnv({ dataDir, projectDir, endpoint: server.url });
   const prompt = userPromptSubmit({ session_id: SESSION, cwd: projectDir });
 
   await runHook('stage-prompt', prompt, { env });
@@ -553,5 +668,48 @@ test('the id a Codex hook shows the model resolves through the Codex bundle', as
     + 'and the server disagree about where the session log is or what it says, and every '
     + `credit a Codex model gives names nothing.\n  shown: ${tag}\n  sent:  ${JSON.stringify(wire.entry_ids)}`);
   assertNeverSent(server, bare(tag));
+  assert.equal(note, undefined, 'the id was shown this session, so it cannot be unresolved.');
+});
+
+test('an id shown only on a "(seen earlier)" pointer resolves through the Codex bundle', async (t) => {
+  // A lesson the conversation was already given renders as a one-line pointer: the mark, the
+  // short id, and the first clause. The model can credit that line like any other, so the
+  // turn that showed only the pointer has to have logged the entry behind it. Here nothing
+  // else in the session log names it: the seen-set says it was shown, and no row does.
+  const server = await fakeMubit({
+    'POST /v2/control/query': {
+      json: queryResponse({
+        evidence: [evidence({
+          id: 'e1', reference_id: REF_A, entry_type: 'lesson', score: 0.9,
+          content: 'Rebuild the Codex bundle after editing the shared launcher. The committed '
+            + 'bundle is what Codex runs, so a stale one quietly ignores the fix.',
+        })],
+      }),
+    },
+  });
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  const projectDir = makeProjectDir();
+  const { markSeen } = await lib('seen.mjs');
+  assert.ok(markSeen({ dataDir }, RUN, [REF_A], SESSION),
+    'could not mark the entry as already shown, so this test would render it in full.');
+  const env = codexHookEnv({ dataDir, projectDir, endpoint: server.url });
+  const prompt = userPromptSubmit({ session_id: SESSION, cwd: projectDir });
+
+  await runHook('stage-prompt', prompt, { env });
+  const recall = await runHook('prompt-recall', prompt, { env });
+  const shown = String(recall.json?.hookSpecificOutput?.additionalContext ?? '');
+  const tag = shown.match(/\(seen earlier\) \[(m[a-z0-9]{4})\]/)?.[1];
+  assert.equal(tag, handleFor(REF_A),
+    `prompt-recall did not render the entry as a pointer carrying its short id:\n${shown}`);
+
+  server.reset();
+  const { wire, note } = await outcome(t,
+    { reference_id: 'global', outcome: 'success', entry_ids: [`[${tag}]`] }, { dataDir, server });
+
+  assert.deepEqual(wire.entry_ids, [REF_A],
+    'the short id on a "(seen earlier)" line did not resolve. The pointer turn did not log the '
+    + `entry it pointed at, so a pointer is a line the model can read but never credit.\n  sent: ${JSON.stringify(wire.entry_ids)}`);
+  assertNeverSent(server, tag);
   assert.equal(note, undefined, 'the id was shown this session, so it cannot be unresolved.');
 });
