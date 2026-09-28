@@ -72,8 +72,14 @@ const MAX_PROMPT_CHARS = 4096;
  * Anchored at the start of a block. A user who *quotes* one of these mid-sentence is still a
  * user, and a block is filtered whole rather than trimmed because the host writes each as its
  * own content block.
+ *
+ * Stop-hook feedback is the one entry matched whole rather than by its opening. When a Stop
+ * hook blocks with a reason, Codex (seen on 0.154) writes the reason as a `user` record that is
+ * a single `<hook_prompt …>REASON</hook_prompt>` element, and nobody typed it. A person asking
+ * about the tag is likely to open a message with it, so only a block that is one complete
+ * element — whitespace around it aside — is the host's.
  */
-export const INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|turn_aborted|user_shell_command|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
+export const INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|turn_aborted|user_shell_command|skill|image)\b|# AGENTS\.md instructions|# Files mentioned|<hook_prompt(?:\s[^>]*)?>(?:(?!<\/hook_prompt>)[\s\S])*<\/hook_prompt>\s*$)/;
 
 /** @param {any} text @returns {boolean} */
 export function isInjectedUserText(text) {
