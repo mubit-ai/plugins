@@ -82,7 +82,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { askHost, codexVersion } from './codex-oracle.mjs';
+import { askHost } from './codex-oracle.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -371,11 +371,22 @@ const PROMPT = 'Do exactly these steps and nothing else. 1) Use the shell tool t
  * A `$CODEX_HOME` of our own, with one recorder on every event, trust already granted, and the
  * `mubit` MCP server configured. The caller removes it: it holds a copy of the credential.
  *
- * @returns {Promise<{home: string, granted: number}>}
+ * Every `codex` this script starts runs inside it, `codex --version` included: even that
+ * writes scratch files under its `CODEX_HOME`, and the real one is only ever read.
+ *
+ * @returns {Promise<{home: string, granted: number, version: string}>}
  */
 async function seedRecorderHome() {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'mubit-record-home-')));
   try {
+    const v = spawnSync('codex', ['--version'], {
+      encoding: 'utf8', env: { ...process.env, CODEX_HOME: home },
+    });
+    if (v.error || v.status !== 0) {
+      throw new Error('no `codex` on PATH — this script records against the real host.');
+    }
+    const version = String(v.stdout || '').trim();
+
     const recorder = join(home, 'recorder.mjs');
     const server = join(home, 'mcp-server.mjs');
     writeFileSync(recorder, RECORDER);
@@ -401,7 +412,7 @@ async function seedRecorderHome() {
     }
     lines.push('[mcp_servers.mubit]', 'command = "node"', `args = [${JSON.stringify(server)}]`, '');
     writeFileSync(join(home, 'config.toml'), lines.join('\n'));
-    return { home, granted: answer.hooks.length };
+    return { home, granted: answer.hooks.length, version };
   } catch (err) {
     rmSync(home, { recursive: true, force: true });
     throw err;
@@ -459,15 +470,12 @@ function fileVerdict(output, verdict, version, probeName) {
 
 /** `--update [--probe <name>] [--verbose]`: one scripted session, recorded. */
 async function update(probeName, verbose) {
-  const v = codexVersion();
-  if (!v.ok) throw new Error('no `codex` on PATH — this script records against the real host.');
   const probe = probeName ? probeOf(probeName) : null;
-
-  const { home, granted } = await seedRecorderHome();
+  const { home, granted, version } = await seedRecorderHome();
   const project = seedProject();
   try {
     const out = join(home, 'recorded');
-    process.stderr.write(`[record] ${v.version}, ${granted} handlers trusted\n`);
+    process.stderr.write(`[record] ${version}, ${granted} handlers trusted\n`);
     const run = spawnSync('codex', [
       'exec', '-s', 'read-only', '--skip-git-repo-check', '-C', project, PROMPT,
     ], {
@@ -499,7 +507,7 @@ async function update(probeName, verbose) {
       if (silent.length) {
         process.stderr.write(`[record] fired with no verdict printed: ${silent.sort().join(', ')}\n`);
       }
-      fileVerdict(probe.output, verdict, v.version, probeName);
+      fileVerdict(probe.output, verdict, version, probeName);
     }
   } finally {
     rmSync(project, { recursive: true, force: true });
@@ -509,10 +517,10 @@ async function update(probeName, verbose) {
 
 /** `--tui-home`: a recorder home to drive by hand, left in place for the caller. */
 async function tuiHome() {
-  const { home, granted } = await seedRecorderHome();
+  const { home, granted, version } = await seedRecorderHome();
   const project = seedProject();
   process.stderr.write([
-    `[record] ${codexVersion().version}, ${granted} handlers trusted`,
+    `[record] ${version}, ${granted} handlers trusted`,
     '',
     'Start the interactive TUI in the recorder home:',
     '',
