@@ -304,7 +304,9 @@ function capture(rawPayload, cfg, mode) {
       if (mode === 'stop-failure' || (followUp && !answered)) return null;
       if (mode === 'permission') return buildPermissionItem(payload, cfg);
       if (answered) {
-        return buildTurnItem({ ...payload, last_assistant_message: afterReview }, cfg, runId, mode, 'queued');
+        // One id per queued message: under a shared id a second answer replaces the first in ingest.
+        return buildTurnItem({ ...payload, last_assistant_message: afterReview }, cfg, runId, mode,
+          `queued-${idPart(String(turn?.queued_at ?? ''))}`);
       }
       return mode === 'stop' || mode === 'subagent'
         ? buildTurnItem(payload, cfg, runId, mode)
@@ -320,7 +322,8 @@ function capture(rawPayload, cfg, mode) {
   //    moment its attribution can be recorded. Every other mode drains only on a trigger,
   //    because one detached node process per tool call is the cost this design avoids.
   if (mode === 'stop') {
-    const closed = attempt(() => closeTurn(cfg, runId, payload, { followUp, answered, continued }), null);
+    const closed = attempt(() => closeTurn(cfg, runId, payload,
+      { followUp, answered, continued, queuedAt: Number(turn?.queued_at) }), null);
     const summary = closed ? attempt(() => foldScorecard(closed.rows, closed.promptId), null) : null;
     const review = attempt(() => reviewFor(cfg, payload, closed, summary), null);
     if (review) {
@@ -618,7 +621,7 @@ function buildPermissionItem(payload, cfg) {
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {'stop'|'subagent'} mode
- * @param {string} [suffix]  set for the answer to a message queued during the outcome review
+ * @param {string} [suffix]  set for the answer to a message queued after the outcome review was asked for
  * @returns {Record<string, any>|null}
  */
 function buildTurnItem(payload, cfg, runId, mode, suffix = '') {
@@ -911,16 +914,17 @@ function readTurn(cfg, runId, promptId) {
  *
  * `apiError` is `StopFailure`'s half: it turns the used-signal off. `followUp` is a Stop
  * after the outcome review: the reply is the review line, so the first Stop's measurement is
- * kept and only the verdicts are merged. `answered` is a follow-up whose continuation also
- * answered a queued message: that answer is measured and merged into the first. `continued`
- * is the Stop after another hook's block: its use is merged into the first reply's.
- * `reviewError` is a review round trip that ended on an API error.
+ * kept and only the verdicts are merged. `answered` is a follow-up that also answered a
+ * queued message: that answer is measured and merged into the first, and `queuedAt`, the
+ * message's `queued_at`, is recorded as answered. `continued` is the Stop after another
+ * hook's block: its use is merged into the first reply's. `reviewError` is a review round
+ * trip that ended on an API error.
  *
  * @param {Record<string, any>} cfg
  * @param {string} runId
  * @param {Record<string, any>} payload
  * @param {{apiError?: string, followUp?: boolean, answered?: boolean, continued?: boolean,
- *   reviewError?: string}} [opts]
+ *   queuedAt?: number, reviewError?: string}} [opts]
  * @returns {{turn: Record<string, any>, rows: Record<string, any>[], promptId: string}|null}
  */
 function closeTurn(cfg, runId, payload, opts = {}) {
@@ -981,6 +985,8 @@ function closeTurn(cfg, runId, payload, opts = {}) {
     ...(apiError ? { [API_ERROR_KEY]: apiError } : {}),
     ...(explicit.ids.length ? { explicit_ids: explicit.ids, explicit: explicit.byRef } : {}),
     ...(followUp ? { review_closed_at: Date.now() } : {}),
+    // The answered message's own stamp, so a message queued while this Stop ran stays pending.
+    ...(answered ? { queued_answered_at: Number(opts.queuedAt) || Date.now() } : {}),
     ...(reviewError ? { review_error: reviewError } : {}),
     ended_with_question: endedWithQuestion,
     ended_at: Date.now(),
@@ -1153,12 +1159,13 @@ function reviewPending(turn) {
 }
 
 /**
- * A message queued after the review was asked for and after it last closed.
+ * A message queued after the review was asked for and not answered yet, whether or not the
+ * review has closed since.
  * @param {Record<string, any>|null} turn @returns {boolean}
  */
 function queuedSinceReview(turn) {
   const q = Number(turn?.queued_at);
-  return q > Number(turn?.review_requested_at) && q > (Number(turn?.review_closed_at) || 0);
+  return q > Number(turn?.review_requested_at) && q > (Number(turn?.queued_answered_at) || 0);
 }
 
 // ---------------------------------------------------------------------------
