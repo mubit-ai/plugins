@@ -71,14 +71,14 @@ recorder home to drive, and `--import <file> --as <Event>[.<variant>]` files a c
 | `codex-boot.test.mjs` | env-before-import: what the shim fills in, what it refuses to overwrite, and the ordering assertion over every entry point |
 | `codex-hooks.test.mjs` | end to end, one per event: real subprocess, real Codex payload, the emitted `hookEventName`, and zero HTTP where the contract says zero |
 | `codex-runid.test.mjs` | the cross-harness claim — one directory, two harnesses, one run — the four-value `source` table, and `turnKey` |
-| `codex-transcript.test.mjs` | `checkpoint.mjs`'s reader on a rollout fixture: same rendering, redacted, a real tail, and the Claude Code envelope still working |
+| `codex-transcript.test.mjs` | `checkpoint.mjs`'s reader on a rollout fixture: same rendering, redacted, a real tail, Stop-hook feedback (`<hook_prompt>`, one element or several in a block) and the host preamble never rendered as a user turn, a shell command the user ran and an interrupted turn kept, and the Claude Code envelope still working |
 | `codex-classify.test.mjs` | `shell`, `apply_patch`, `update_plan`, `view_image`, `web_search`, `collaborationspawn_agent`, `mcp__mubit__*` → real intents, never `unclassified` |
 | `codex-skills.test.mjs` | Codex frontmatter (`name`, `description`, and none of the keys Codex does not read), `mcp__mubit__` prefixes, and the content guards |
 | `codex-mcp.test.mjs` | real stdio `tools/list` against the committed bundle, the `instructions` frame, and that the two copies of the vendored server are byte-identical |
 | `codex-failure.test.mjs` | unparseable stdin, absent env, unwritable data dir, a misbehaving endpoint, hostile payloads, the three-second SessionEnd → exit 0, a JSON object on stdout, **never exit 2** |
 | `codex-file-change.test.mjs` | the structured file-change lane on a real `apply_patch`: add/update/delete from the markers, the merged per-run index, a `.env` patch dropped whole, no `files` on a shell command, and the ingest body after `Stop` |
 | `codex-handoff-cli.test.mjs` | the committed `bin/handoff.mjs`, spawned with no host in its environment: the sender is `codex`, the default action, the client-side open join, feedback, and the three refusals by name |
-| `codex-import-cli.test.mjs` | the committed `bin/import.mjs`: the default source is the Codex rollouts, a dry run dials nothing, `--send` tags `tool:codex` with the live item id, a re-run sends nothing, both sources, and the reviewer thread and injected preamble skipped |
+| `codex-import-cli.test.mjs` | the committed `bin/import.mjs`: the default source is the Codex rollouts, a dry run dials nothing, `--send` tags `tool:codex` with the live item id, a re-run sends nothing, both sources, and the reviewer thread, injected preamble and Stop-hook feedback skipped |
 | `codex-pin-cli.test.mjs` | the committed `bin/pin.mjs`: the `variables/*` bodies, the cache the hooks read, a failed write leaving nothing, the run from the marker or `--run`, never the key, and the store setup pinned found with nothing on the command line |
 | `codex-activity-cli.test.mjs` | the committed `bin/activity.mjs`: rows on stdout and the summary on stderr, `--jsonl`, an export that owns stdout and writes no file, `--run`, and never the key |
 | `codex-admin-cli.test.mjs` | the committed `bin/admin.mjs`: the census through `/activity` and never the lessons route, a checkpoint verbatim, the SessionEnd reflect body, exit 2 without dialling, and an unconfigured install told to run `auth` |
@@ -112,6 +112,10 @@ server and the contract assertions are identical across the two hosts, and a for
 be a second thing to keep true.
 
 `rolloutJsonl()` builds a Codex rollout transcript, envelopes and all, for the checkpoint tests.
+A `text` given as an array writes one content block per string on the one record.
+An entry of `{hookPrompt: reason}` writes what a blocked Stop hook leaves in it instead: the
+reason wrapped in `<hook_prompt>` on a `user` record, and the `HookPrompt` item beside it
+(`rolloutHookPrompt()`, in the shape observed on codex-cli 0.154.0).
 
 ## House rules, in addition to the sibling's
 

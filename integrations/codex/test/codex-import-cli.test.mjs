@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { fakeMubit, makeDataDir, makeProjectDir } from './helpers/codex-fixtures.mjs';
+import { fakeMubit, makeDataDir, makeProjectDir, rolloutHookPrompt } from './helpers/codex-fixtures.mjs';
 import { assertInertOnImport, cliEnv, runBundle } from './helpers/codex-cli.mjs';
 
 const RUN_ID = 'codex-import-run';
@@ -231,6 +231,57 @@ test('the injected preamble never becomes a prompt', async (t) => {
   }
 });
 
+// When a Stop hook blocks, Codex (0.154.0) stores the reason as a `user` record wrapped in
+// `<hook_prompt …>`. The committed bundle carries its own copy of the rollout reader, so this is
+// the case that proves the artifact a user runs, not just the shared source, skips it.
+const STOP_REVIEW = 'Before you finish: say which of the lessons in context helped.';
+
+test('Stop-hook feedback in a rollout never becomes a prompt', async (t) => {
+  const { server, run } = await harness(t, {
+    extra: [
+      { type: 'response_item', payload: { type: 'message', id: 'msg_1', role: 'user',
+        content: [{ type: 'input_text', text: 'what does the drain do on a 500?' }] } },
+      { type: 'response_item', payload: { type: 'message', id: 'msg_2', role: 'assistant',
+        content: [{ type: 'output_text', text: 'It leaves the spool in place and stops.' }] } },
+      ...rolloutHookPrompt(STOP_REVIEW).map((line) => JSON.parse(line)),
+      { type: 'response_item', payload: { type: 'message', id: 'msg_3', role: 'assistant',
+        content: [{ type: 'output_text', text: 'Reviewed: the drain lesson helped.' }] } },
+    ],
+  });
+  const r = await run(['--send', '--json']);
+  assert.equal(r.code, 0, r.err);
+  const items = server.calls('POST', '/v2/control/ingest').flatMap((c) => c.body.items);
+  const turns = items.filter((i) => String(i.text ?? '').startsWith('Q:'));
+  assert.equal(turns.length, 1,
+    'the feedback was imported as a turn of its own, so the review is stored as a question the '
+    + `user asked: ${turns.map((i) => String(i.text).slice(0, 100)).join(' | ')}`);
+  assert.match(String(turns[0].text), /^Q: what does the drain do on a 500\?/);
+  for (const i of items) {
+    assert.ok(!String(i.text ?? '').includes('hook_prompt') && !String(i.text ?? '').includes(STOP_REVIEW),
+      `an imported item carries the Stop-hook feedback as the user's words: ${i.item_id}`);
+  }
+});
+
+test('a prompt that mentions hook_prompt mid-sentence is still imported as the user\'s', async (t) => {
+  // No run id in the mention: the import redacts, and a path in one reads as high-entropy.
+  const said = 'why does my rollout show a <hook_prompt hook_run_id="stop:0"> line after every turn?';
+  const { server, run } = await harness(t, {
+    extra: [
+      { type: 'response_item', payload: { type: 'message', id: 'msg_1', role: 'user',
+        content: [{ type: 'input_text', text: said }] } },
+      { type: 'response_item', payload: { type: 'message', id: 'msg_2', role: 'assistant',
+        content: [{ type: 'output_text', text: 'That is how Codex stores Stop-hook feedback.' }] } },
+    ],
+  });
+  const r = await run(['--send', '--json']);
+  assert.equal(r.code, 0, r.err);
+  const items = server.calls('POST', '/v2/control/ingest').flatMap((c) => c.body.items);
+  const turn = items.find((i) => String(i.text ?? '').startsWith('Q:'));
+  assert.ok(turn, 'a user asking about the wrapper lost their turn. Only a block that is one whole '
+    + '<hook_prompt …>…</hook_prompt> element is the host\'s.');
+  assert.ok(String(turn.text).startsWith(`Q: ${said}`), String(turn.text).slice(0, 160));
+});
+
 test('the approval reviewer\'s thread contributes nothing, even under --all', async (t) => {
   const { server, run, env } = await harness(t);
   const day = join(env.MUBIT_CC_CODEX_SESSIONS_ROOT, '2026', '09', '08');
@@ -246,7 +297,7 @@ test('the approval reviewer\'s thread contributes nothing, even under --all', as
   const r = await run(['--send', '--all', '--json']);
   assert.equal(r.code, 0, r.err);
   const items = server.calls('POST', '/v2/control/ingest').flatMap((c) => c.body.items);
-  // § `--all`, so scope cannot be what excluded it: the reviewer's thread is skipped for what
+  // `--all`, so scope cannot be what excluded it: the reviewer's thread is skipped for what
   //   it is, not where it ran. Its prompts are other threads' transcripts, and importing them
   //   would file every reviewed session twice under a reviewer's words.
   assert.ok(!items.some((i) => i.item_id === 'cc-exec-reviewer'),

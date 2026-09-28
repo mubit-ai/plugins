@@ -62,6 +62,8 @@
 
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 
+import { stripInjectedBlocks } from './codex-rollout.mjs';
+
 /** How much is read per `readSync`. Big enough that a 1 MB file is a handful of syscalls. */
 export const CHUNK_BYTES = 256 * 1024;
 
@@ -323,7 +325,10 @@ export function renderEntry(line, opts = {}) {
   if (!entry) return s;
 
   const message = messageRecord(entry);
-  const body = messageText(message.content ?? entry.content ?? entry.text, opts);
+  let content = message.content ?? entry.content ?? entry.text;
+  // The filter is Codex's; Claude Code records render unchanged.
+  if (message === entry.payload && str(message.role) === 'user') content = stripInjectedBlocks(content, { keepUserActions: true });
+  const body = messageText(content, opts);
   if (!body.trim()) return '';
 
   const role = str(message.role) || str(entry.role) || str(entry.type) || 'message';

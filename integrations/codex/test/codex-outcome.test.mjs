@@ -451,3 +451,66 @@ test('a subagent with no readable transcript falls back to the parent`s turn', a
     'with no readable agent transcript the parent`s staged prompt is the best available '
     + 'context, and it is what was stored before any of this. Silence must not cost the item.');
 });
+
+// When a Stop hook blocks, Codex (0.154.0) writes the reason into the rollout as a `user` record
+// wrapped in `<hook_prompt …>`. `firstUserText` is what reads a subagent's task out of its own
+// rollout, so without a filter a subagent is stored as having been asked the review.
+const STOP_REVIEW = 'Before you finish: say which of the lessons in context helped.';
+
+/** One `capture --subagent` over an agent rollout of `messages`, and the item it spooled. */
+async function subagentItem(t, messages, agentId) {
+  const server = await fakeMubit();
+  t.after(() => server.close());
+  const dataDir = makeDataDir();
+  const env = baseEnv({
+    dataDir,
+    projectDir: makeProjectDir({ git: true }),
+    endpoint: server.url,
+    extra: {
+      MUBIT_CC_RUN_STRATEGY: 'static',
+      MUBIT_CC_RUN_ID: RUN_ID,
+      MUBIT_CC_BATCH_MAX_ITEMS: '999',
+      MUBIT_CC_BATCH_MAX_AGE_MS: '600000',
+    },
+  });
+  const turnId = '0a0a0a0a-0000-4000-8000-00000000000e';
+  await runHook('stage-prompt',
+    userPromptSubmit({ turn_id: turnId, prompt: 'PARENT PROMPT: the staged turn' }), { env });
+
+  const s = await runHook('capture', subagentStop({
+    turn_id: turnId,
+    agent_id: agentId,
+    agent_transcript_path: rolloutFile([rolloutJsonl(messages).trim()]),
+    last_assistant_message: 'Reviewed.',
+  }), { env, args: ['--subagent'] });
+  assert.equal(s.code, 0, s.stderr);
+
+  const spooled = spoolFiles(dataDir, RUN_ID).map((f) => readJsonFile(f))
+    .find((it) => String(it?.item_id ?? '').includes(agentId.slice(0, 8)));
+  assert.ok(spooled, `no item spooled for ${agentId}`);
+  return spooled;
+}
+
+test('a subagent whose rollout opens with Stop-hook feedback is stored against its task', async (t) => {
+  const item = await subagentItem(t, [
+    { hookPrompt: STOP_REVIEW },
+    { role: 'user', text: 'SUBAGENT TASK: list the manifests' },
+    { role: 'assistant', text: 'Two manifests.' },
+  ], 'cc0a0a0a-0000-4000-8000-000000000004');
+  assert.match(item.text, /SUBAGENT TASK: list the manifests/,
+    `the subagent was stored against the Stop-hook feedback, not its task.\n  got: ${item.text.slice(0, 200)}`);
+  assert.ok(!item.text.includes('hook_prompt') && !item.text.includes(STOP_REVIEW),
+    'the review request is in the stored question. Nobody asked the subagent that.');
+});
+
+test('a subagent whose only user text is Stop-hook feedback falls back to the parent`s turn', async (t) => {
+  const item = await subagentItem(t, [
+    { hookPrompt: STOP_REVIEW },
+    { role: 'assistant', text: 'Reviewed.' },
+  ], 'dd0a0a0a-0000-4000-8000-000000000005');
+  assert.match(item.text, /PARENT PROMPT/,
+    'with no typed task in the rollout the staged prompt is the best available question; the '
+    + `feedback is not one.\n  got: ${item.text.slice(0, 200)}`);
+  assert.ok(!item.text.includes('hook_prompt') && !item.text.includes(STOP_REVIEW),
+    'the review request was stored as the question.');
+});

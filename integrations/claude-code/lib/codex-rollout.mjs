@@ -66,18 +66,50 @@ const MAX_PROMPT_CHARS = 4096;
  * on `event_msg/user_message` and never reached a `role: "user"` record, which is why
  * `firstUserText` — the `Q:` of every Codex subagent capture — was right until 0.149 and has
  * been returning a plugin listing since. The other entries are the remaining envelopes the
- * host puts in a user's voice: an aborted turn, a shell command the user ran outside the
- * model, a skill body, an image, the `AGENTS.md` and mentioned-files preambles.
+ * host puts in a user's voice: a skill body, an image, the `AGENTS.md` and mentioned-files
+ * preambles. An aborted turn and a shell command the user ran outside the model are
+ * `USER_ACTION_RE`'s.
  *
  * Anchored at the start of a block. A user who *quotes* one of these mid-sentence is still a
  * user, and a block is filtered whole rather than trimmed because the host writes each as its
  * own content block.
  */
-export const INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|turn_aborted|user_shell_command|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
+export const INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
 
-/** @param {any} text @returns {boolean} */
-export function isInjectedUserText(text) {
-  return typeof text === 'string' && INJECTED_USER_RE.test(text);
+/** Host text recording what the user did; only the checkpoint keeps it (`keepUserActions`). */
+const USER_ACTION_RE = /^\s*<(?:turn_aborted|user_shell_command)\b/;
+
+const HOOK_PROMPT_OPEN_RE = /\s*<hook_prompt(?:\s[^>]*)?>/y;
+const HOOK_PROMPT_CLOSE = '</hook_prompt>';
+
+/**
+ * Stop-hook feedback: a block that is nothing but whole `<hook_prompt …>…</hook_prompt>` elements.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isHookFeedback(text) {
+  const end = text.trimEnd().length;
+  let at = 0;
+  do {
+    HOOK_PROMPT_OPEN_RE.lastIndex = at;
+    if (!HOOK_PROMPT_OPEN_RE.test(text)) return false;
+    const close = text.indexOf(HOOK_PROMPT_CLOSE, HOOK_PROMPT_OPEN_RE.lastIndex);
+    if (close === -1) return false;
+    at = close + HOOK_PROMPT_CLOSE.length;
+  } while (at < end);
+  return true;
+}
+
+/**
+ * @param {any} text
+ * @param {{keepUserActions?: boolean}} [opts]
+ * @returns {boolean}
+ */
+export function isInjectedUserText(text, opts) {
+  if (typeof text !== 'string') return false;
+  if (INJECTED_USER_RE.test(text) || isHookFeedback(text)) return true;
+  return !opts?.keepUserActions && USER_ACTION_RE.test(text);
 }
 
 /**
@@ -86,12 +118,13 @@ export function isInjectedUserText(text) {
  * returned as it came, for `messageText` to refuse on its own terms.
  *
  * @param {any} content
+ * @param {{keepUserActions?: boolean}} [opts]
  * @returns {any}
  */
-export function stripInjectedBlocks(content) {
-  if (typeof content === 'string') return isInjectedUserText(content) ? '' : content;
+export function stripInjectedBlocks(content, opts) {
+  if (typeof content === 'string') return isInjectedUserText(content, opts) ? '' : content;
   if (!Array.isArray(content)) return content;
-  return content.filter((b) => !(b && typeof b === 'object' && !Array.isArray(b) && isInjectedUserText(b.text)));
+  return content.filter((b) => !(b && typeof b === 'object' && !Array.isArray(b) && isInjectedUserText(b.text, opts)));
 }
 
 
@@ -222,7 +255,7 @@ function readTail(path, bytes) {
  * The envelope is the one Codex writes and the checkpoint reader already knows:
  * `{"type":"response_item","payload":{"type":"message","role":"user",
  * "content":[{"type":"input_text","text":…}]}}`. `input_text` is Codex's spelling of `text`.
- * Blocks matching `INJECTED_USER_RE` are skipped, because from 0.149 the first of them is
+ * Blocks `isInjectedUserText` recognises are skipped, because from 0.149 the first of them is
  * always the host's.
  *
  * Returns `''` for anything that does not answer — no path, no file, no user message, a
