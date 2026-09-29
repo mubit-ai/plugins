@@ -10,6 +10,40 @@ var __esm = (fn, res, err) => function __init() {
   }
 };
 
+// ../claude-code/lib/handles.mjs
+function handleFor(ref) {
+  const s = typeof ref === "string" ? ref.trim() : "";
+  if (!s) return "";
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  let out = "m";
+  for (let i = 0; i < LEN; i++) {
+    out += ALPHABET[h % ALPHABET.length];
+    h = Math.floor(h / ALPHABET.length);
+  }
+  return out;
+}
+function handleTag(ref) {
+  const h = handleFor(ref);
+  return h ? `[${h}]` : "";
+}
+function stripHandles(text) {
+  return String(text ?? "").replace(TAG_RE, " ");
+}
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
 // ../claude-code/lib/assemble.mjs
 function sectionFor(entryType) {
   const t = typeof entryType === "string" ? entryType.trim().toLowerCase() : "";
@@ -34,12 +68,14 @@ function assembleContext(evidence, opts = {}) {
     if (!isObject(e)) continue;
     const text = oneLine(e.content);
     if (!text) continue;
-    const section = sectionFor(str(e.origin_entry_type) || str(e.entry_type));
+    const type = (str(e.origin_entry_type) || str(e.entry_type)).toLowerCase();
+    const section = sectionFor(type);
     if (allowed && !allowed.has(section)) continue;
     candidates++;
     const bucket = bySection.get(section) ?? [];
     bucket.push({
       ref: str(e.reference_id),
+      type,
       text,
       score: finite(e.score, 0),
       stale: e.is_stale === true,
@@ -55,12 +91,14 @@ function assembleContext(evidence, opts = {}) {
       sourceRefIds: [],
       dropped: 0,
       pointers: 0,
-      emptyReason: "no_evidence"
+      emptyReason: "no_evidence",
+      entries: []
     };
   }
   const parts = [];
   const sourceRefIds = [];
   const seenRefs = /* @__PURE__ */ new Set();
+  const entries = [];
   const sections = [];
   let used = 0;
   let rendered = 0;
@@ -78,9 +116,10 @@ function assembleContext(evidence, opts = {}) {
       if (perSection > 0 && count >= perSection) {
         continue;
       }
-      const full = `- ${item.stale ? "(stale) " : ""}${item.text}
+      const tag = handleTag(item.ref);
+      const full = `- ${tag ? `${tag} ` : ""}${item.stale ? "(stale) " : ""}${item.text}
 `;
-      const pointer = seen && item.ref && seen.has(item.ref) ? `- ${POINTER_MARK} ${item.stale ? "(stale) " : ""}${item.ref} \u2014 ${firstClause(item.text)}
+      const pointer = seen && item.ref && seen.has(item.ref) ? `- ${POINTER_MARK} ${item.stale ? "(stale) " : ""}${tag} \u2014 ${firstClause(item.text)}
 ` : "";
       const degraded = !!pointer && pointer.length < full.length;
       const line = degraded ? pointer : full;
@@ -99,6 +138,18 @@ function assembleContext(evidence, opts = {}) {
         seenRefs.add(item.ref);
         sourceRefIds.push(item.ref);
       }
+      if (!item.ref || entries.every((x) => x.ref !== item.ref)) {
+        entries.push({
+          ref: item.ref,
+          handle: handleFor(item.ref),
+          section: key,
+          type: item.type,
+          text: item.text,
+          title: firstClause(item.text),
+          pointer: degraded,
+          stale: item.stale
+        });
+      }
     }
     if (count > 0) sections.push({ section: key, count });
   }
@@ -114,7 +165,8 @@ function assembleContext(evidence, opts = {}) {
     // A degraded entry is rendered, not dropped: it counts here and nowhere else, so a
     // reader can tell a block that shrank from a block that lost half its evidence.
     pointers,
-    emptyReason: rendered > 0 ? "" : "budget_exhausted"
+    emptyReason: rendered > 0 ? "" : "budget_exhausted",
+    entries: rendered > 0 ? entries : []
   };
 }
 function isPointerLine(line) {
@@ -162,6 +214,7 @@ function positiveInt(v, d) {
 var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS, DEFAULT_TOKEN_BUDGET, CHARS_PER_TOKEN, MAX_ITEM_CHARS, POINTER_MARK, MAX_POINTER_CHARS, MIN_POINTER_CHARS;
 var init_assemble = __esm({
   "../claude-code/lib/assemble.mjs"() {
+    init_handles();
     SECTION_KEYS = Object.freeze([
       "mental_models",
       "active_rules",
@@ -667,6 +720,7 @@ function takeCarry(cfg, runId) {
       pointers: int(raw.pointers, 0),
       emptyReason: typeof raw.empty_reason === "string" ? raw.empty_reason : "",
       refIds,
+      entries: entriesOf(raw.entries),
       writtenAt,
       forPromptId: typeof raw.for_prompt_id === "string" ? raw.for_prompt_id : "",
       fetchMs: int(raw.fetch_ms, 0)
@@ -674,6 +728,10 @@ function takeCarry(cfg, runId) {
   } catch {
     return null;
   }
+}
+function entriesOf(v) {
+  if (!Array.isArray(v)) return [];
+  return v.filter((e) => isObject2(e) && typeof e.ref === "string").slice(0, MAX_ENTRIES);
 }
 function isObject2(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -686,11 +744,12 @@ function int(v, d) {
   const n = num2(v, NaN);
   return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : d;
 }
-var CARRY_TTL_MS;
+var CARRY_TTL_MS, MAX_ENTRIES;
 var init_carry = __esm({
   "../claude-code/lib/carry.mjs"() {
     init_state();
     CARRY_TTL_MS = 15 * 60 * 1e3;
+    MAX_ENTRIES = 64;
   }
 });
 
@@ -904,6 +963,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -977,6 +1046,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -1122,7 +1193,7 @@ var init_config = __esm({
     ];
     CACHE_FILE = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION = 3;
+    CACHE_VERSION = 4;
     MAX_ENV_TAGS = 8;
     MODE = "hosted";
     LANG_FILES = [
@@ -2667,7 +2738,8 @@ function fromContext(responseBody, rung) {
     dropped: numOr(b.evidence_dropped_by_budget, 0),
     pointers: 0,
     emptyReason: typeof b.empty_reason === "string" && b.empty_reason ? b.empty_reason : block ? "" : "no_evidence",
-    refIds
+    refIds,
+    entries: []
   };
 }
 function fromEvidence(cfg, responseBody, rung, o) {
@@ -2691,7 +2763,8 @@ function fromEvidence(cfg, responseBody, rung, o) {
     emptyReason: a.emptyReason,
     // §4.10/§5.5: a degraded entry is still in here. Dropping a repeat would break
     // attribution for exactly the memories that are helping most.
-    refIds: a.sourceRefIds
+    refIds: a.sourceRefIds,
+    entries: a.entries
   };
 }
 function tokenBudgetOf(cfg, o) {
@@ -2719,7 +2792,8 @@ function empty(rung, reason) {
     dropped: 0,
     pointers: 0,
     emptyReason: reason,
-    refIds: []
+    refIds: [],
+    entries: []
   };
 }
 function failure(state, error, rung) {
@@ -2733,6 +2807,7 @@ function failure(state, error, rung) {
     pointers: 0,
     emptyReason: "",
     refIds: [],
+    entries: [],
     state: typeof state === "string" ? state : "server_error",
     error: typeof error === "string" ? error : String(error ?? "")
   };
@@ -3261,142 +3336,84 @@ var init_seen = __esm({
   }
 });
 
-// ../claude-code/hooks/src/prompt-recall.mjs
-var prompt_recall_exports = {};
-import { join as join16 } from "node:path";
-function carryForward(cfg, payload, runId, sessionId, started, pins, resume = null) {
-  const promptId = safeId(turnKey(payload));
-  const carry = takeCarry(cfg, runId);
-  const rendered = !!(carry && carry.block);
-  if (rendered || resume) {
-    persistRecalled(cfg, runId, promptId, payload, rendered ? carry : NO_RECALL, resume);
-  }
-  if (rendered) markSeen(cfg, runId, carry.refIds, sessionId);
-  const open = breakerOpen(cfg);
-  const b = open ? readBreaker(cfg) : null;
-  const ms = Date.now() - started;
-  updateMarker(cfg, runId, {
-    mode: cfg.mode,
-    // The connection state is the refresh's to write — it is the process that dials. The one
-    // exception is a verdict this side can read for itself off the breaker file.
-    ...open && isConnState2(b?.state) ? { state: b.state } : {},
-    recall: {
-      sources: rendered ? carry.refIds.length : 0,
-      tokens: rendered ? carry.tokens : 0,
-      // What the PROMPT paid, which under this flag is a file read. The endpoint's own
-      // latency is in `carry.json` as `fetch_ms`; separating the two is the measurement.
-      ms,
-      rung: rendered ? carry.rung : 0,
-      dropped: rendered ? carry.dropped : 0,
-      // Literally what happened: no previous turn left a block for this one. Named rather
-      // than blank, because a blank `empty_reason` under this flag is indistinguishable from
-      // a recall path that has quietly died. It deliberately does NOT say *why* — the
-      // ordinary first prompt of a session and a refresh that has been failing for ten
-      // prompts both land here, and `state` plus `dry_streak` are what tell them apart:
-      // `ready` with a streak of 1 is priming, `not_responding` with a climbing streak is
-      // the endpoint. A name that guessed between them would send half the readers to the
-      // wrong fix.
-      empty_reason: rendered ? carry.emptyReason : open ? "breaker_open" : "async_no_carry",
-      pin_tokens: pins.tokens,
-      ...dryness(cfg, runId, rendered)
-    }
-  });
-  if (open) {
-    log(cfg, "debug", "prompt-recall: breaker open; carrying nothing forward", { run_id: runId });
-  } else {
-    spawnRefresh(cfg, payload, runId);
-  }
-  if (!rendered && !resume) return pinsOnly(cfg, pins, runId, true);
-  return injection(runId, rendered ? carry : NO_RECALL, resume, pins, ms, true);
+// ../claude-code/lib/scorecard-log.mjs
+import {
+  closeSync as closeSync2,
+  fstatSync,
+  openSync as openSync2,
+  readdirSync as readdirSync4,
+  readFileSync as readFileSync7,
+  readSync,
+  statSync as statSync6,
+  writeSync as writeSync3
+} from "node:fs";
+import { dirname as dirname6, join as join16 } from "node:path";
+function scorecardPath(cfg, sessionId) {
+  const id = safeSegment(typeof sessionId === "string" ? sessionId.trim() : "", MAX_ID);
+  if (!id) return "";
+  return join16(resolveDataDir(cfg), SCORE_DIR, `${id}.jsonl`);
 }
-function claimResume(cfg, runId, sessionId) {
+function appendScoreRow(cfg, sessionId, row) {
   try {
-    if (!cfg.resumeBlock) return null;
-    const resume = takeResume(cfg, runId);
-    if (!resume) return null;
-    markSeen(cfg, runId, resume.refIds, sessionId);
-    log(
-      cfg,
-      "debug",
-      `prompt-recall: rendering the session briefing (${resume.refIds.length} sources)`,
-      { run_id: runId }
-    );
-    return resume;
-  } catch {
-    return null;
-  }
-}
-function spawnRefresh(cfg, payload, runId) {
-  try {
-    const payloadPath = stashPayload(cfg, payload);
-    if (!payloadPath) {
-      log(cfg, "warn", "prompt-recall: could not stage the refresh payload; the next prompt recalls nothing", { run_id: runId });
-      return;
-    }
-    spawnDetached(cfg, "recall-refresh", [], payloadPath);
-    log(cfg, "debug", "prompt-recall: refresh spawned", { run_id: runId });
-  } catch (err) {
-    log(
-      cfg,
-      "warn",
-      `prompt-recall: could not start the refresh (${messageOf3(err)})`,
-      { run_id: runId }
-    );
-  }
-}
-function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) {
-  try {
-    if (!promptId) return;
-    const file = join16(resolveDataDir(cfg), "runs", safeId(runId), "turns", `${promptId}.json`);
-    const prev = readJson(file, null);
-    const base = isObject10(prev) ? prev : {};
-    const next = {
-      ...base,
-      prompt_id: promptId,
-      // The standing lessons injected at session start ride along on the first turn that
-      // stages ids, so that they too can be reinforced or corrected. Deduped: the same
-      // entry reached through two lanes must not be reinforced twice for one turn.
-      recalled: [.../* @__PURE__ */ new Set([
-        ...claimStandingLessons(cfg, runId),
-        ...resume ? resume.refIds : [],
-        ...outcome.refIds
-      ])],
-      recall: {
-        at: Date.now(),
-        rung: outcome.rung,
-        sources: (outcome.refIds.length || outcome.sources) + (resume ? resume.refIds.length || resume.sources : 0),
-        tokens: outcome.tokens + (resume ? resume.tokens : 0),
-        // The token figure is a four-chars-per-token estimate (§4.10). Characters are what
-        // was actually injected, so a later reader can re-derive the estimate rather than
-        // inherit it.
-        chars: outcome.block.length + (resume ? resume.block.length : 0),
-        dropped: outcome.dropped,
-        // How many of `sources` were repeats the model already had. Without it a smaller
-        // `tokens` is unattributable — a block that shrank because the seen-set worked and
-        // one that shrank because recall found half as much read identically.
-        pointers: outcome.pointers,
-        empty_reason: outcome.emptyReason,
-        terms: memoryTerms(cfg, [resume?.block ?? "", outcome.block], str5(payload?.prompt))
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    if (typeof row.kind !== "string" || !row.kind) return false;
+    const p = scorecardPath(cfg, sessionId);
+    if (!p || !ensureDir(dirname6(p))) return false;
+    const line = `${JSON.stringify({ v: SCORE_LOG_VERSION, at: Date.now(), ...row })}
+`;
+    const fd = openSync2(p, "a+");
+    try {
+      const st = fstatSync(fd);
+      let prefix = "";
+      if (st.size > 0) {
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, st.size - 1);
+        if (last[0] !== 10) prefix = "\n";
       }
-    };
-    if (typeof next.session_id !== "string") next.session_id = str5(payload?.session_id);
-    if (!Number.isFinite(next.started_at)) next.started_at = Date.now();
-    writeJsonAtomic(file, next);
-  } catch (err) {
-    log(cfg, "warn", `prompt-recall: could not stage recalled ids (${messageOf3(err)})`, { run_id: runId });
+      writeSync3(fd, prefix + line);
+    } finally {
+      closeSync2(fd);
+    }
+    return true;
+  } catch {
+    return false;
   }
+}
+var SCORE_LOG_VERSION, SCORE_DIR, SCORE_LOG_TTL_MS, MAX_READ_BYTES, MAX_ID;
+var init_scorecard_log = __esm({
+  "../claude-code/lib/scorecard-log.mjs"() {
+    init_state();
+    SCORE_LOG_VERSION = 1;
+    SCORE_DIR = "scorecard";
+    SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    MAX_READ_BYTES = 4 * 1024 * 1024;
+    MAX_ID = 128;
+  }
+});
+
+// ../claude-code/lib/terms.mjs
+function termSet(s) {
+  const set = /* @__PURE__ */ new Set();
+  for (const m of String(s ?? "").matchAll(TERM_RE)) set.add(m[0].toLowerCase());
+  return set;
+}
+function vocabularyOf(block) {
+  const lines = String(block ?? "").split("\n");
+  const bullets = lines.filter((l) => l.startsWith("- "));
+  if (bullets.length === 0) return stripHandles(lines.filter((l) => !l.startsWith("#")).join("\n"));
+  return bullets.filter((l) => !isPointerLine(l)).map((l) => stripHandles(l.slice(2)).trimStart().replace(/^\(stale\)\s+/, "")).join("\n");
 }
 function memoryTerms(cfg, blocks, prompt) {
   try {
-    let text = blocks.filter(Boolean).map(vocabularyOf).filter(Boolean).join("\n");
+    let text = (Array.isArray(blocks) ? blocks : []).filter(Boolean).map(vocabularyOf).filter(Boolean).join("\n");
     if (!text) return [];
     try {
-      text = str5(redactText(text, cfg, "output")?.text) || "";
+      text = String(redactText(text, cfg, "output")?.text ?? "");
     } catch {
       return [];
     }
-    text = text.replace(/\[REDACTED:[^\]]*\]/gi, " ");
-    const fromPrompt = termSet(prompt.slice(0, MAX_PROMPT_SCAN));
+    text = text.replace(PLACEHOLDER_RE, " ");
+    const fromPrompt = termSet(String(prompt ?? "").slice(0, MAX_PROMPT_SCAN));
     const out = [];
     const seen = /* @__PURE__ */ new Set();
     for (const m of text.matchAll(TERM_RE)) {
@@ -3411,212 +3428,48 @@ function memoryTerms(cfg, blocks, prompt) {
     return [];
   }
 }
-function claimStandingLessons(cfg, runId) {
+function entryTerms(cfg, text, promptTerms = /* @__PURE__ */ new Set(), max = MAX_ENTRY_TERMS) {
   try {
-    const lessons = readMarker(cfg, runId).lessons;
-    if (!isObject10(lessons) || numOr2(lessons.credited_at, 0) > 0) return [];
-    const ids = Array.isArray(lessons.injected_ids) ? lessons.injected_ids.filter((v) => typeof v === "string" && v.trim()) : [];
-    if (!ids.length) return [];
-    updateMarker(cfg, runId, { lessons: { credited_at: Date.now() } });
-    return ids;
+    const raw = stripHandles(String(text ?? ""));
+    if (!raw.trim()) return [];
+    const scrubbed = String(redactText(raw, cfg, "output")?.text ?? "").replace(PLACEHOLDER_RE, " ");
+    const skip = promptTerms instanceof Set ? promptTerms : /* @__PURE__ */ new Set();
+    const cap = Number.isFinite(max) && max > 0 ? Math.trunc(max) : MAX_ENTRY_TERMS;
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const m of scrubbed.matchAll(TERM_RE)) {
+      const t = m[0].toLowerCase();
+      if (seen.has(t) || skip.has(t) || TERM_STOPWORDS.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+      if (out.length >= cap) break;
+    }
+    return out;
   } catch {
     return [];
   }
 }
-function vocabularyOf(block) {
-  const lines = String(block ?? "").split("\n");
-  const bullets = lines.filter((l) => l.startsWith("- "));
-  if (bullets.length === 0) return lines.filter((l) => !l.startsWith("#")).join("\n");
-  return bullets.filter((l) => !isPointerLine(l)).map((l) => l.slice(2).replace(/^\(stale\)\s+/, "")).join("\n");
-}
-function termSet(s) {
-  const set = /* @__PURE__ */ new Set();
-  for (const m of String(s ?? "").matchAll(TERM_RE)) set.add(m[0].toLowerCase());
-  return set;
-}
-function noteFailure(cfg, runId, outcome, ms) {
-  const state = str5(outcome.state);
-  const known = isConnState2(state);
-  log(cfg, "warn", `prompt-recall: recall failed on rung ${outcome.rung} (${state || "unknown"})`, {
-    run_id: runId,
-    error: str5(outcome.error).slice(0, 300)
-  });
-  updateMarker(cfg, runId, {
-    // The state as observed. `bin/statusline.mjs` owns the cold-start lens and reads the
-    // window from the marker, so writing `warming` here would persist a display decision
-    // past the window that justified it.
-    ...known ? { state } : {},
-    last_error: str5(outcome.error).slice(0, 200),
-    recall: {
-      sources: 0,
-      tokens: 0,
-      ms,
-      empty_reason: "",
-      rung: outcome.rung,
-      dropped: 0,
-      ...dryness(cfg, runId, false)
+function entryTitle(cfg, text, max = MAX_TITLE_CHARS) {
+  try {
+    const whole = String(text ?? "").replace(/\s+/g, " ").trim();
+    let clause = firstClause(whole);
+    if (clause.endsWith("\u2026") && whole.replace(/[.;!?]+$/, "") === clause.slice(0, -1)) {
+      clause = clause.slice(0, -1);
     }
-  });
-}
-function dryness(cfg, runId, hit) {
-  if (hit) return { dry_streak: 0, last_hit_at: Date.now() };
-  try {
-    const prior = numOr2(readMarker(cfg, runId).recall?.dry_streak, 0);
-    return { dry_streak: (prior >= 0 ? prior : 0) + 1 };
+    const t = String(redactText(clause, cfg, "output")?.text ?? "").trim();
+    const cap = Number.isFinite(max) && max > 1 ? Math.trunc(max) : MAX_TITLE_CHARS;
+    return t.length > cap ? `${t.slice(0, cap - 1).trimEnd()}\u2026` : t;
   } catch {
-    return { dry_streak: 1 };
+    return "";
   }
 }
-function breakerOpen(cfg) {
-  try {
-    const b = readBreaker(cfg);
-    if (!(b.openedAt > 0)) return false;
-    const cooldownMs = numOr2(cfg?.breaker?.cooldownMs, 12e4);
-    const since = Math.max(b.openedAt, numOr2(b.probeAt, 0));
-    return Date.now() - since < cooldownMs;
-  } catch {
-    return false;
-  }
-}
-function injection(runId, outcome, resume, pins, ms, carried = false) {
-  const recallSources = outcome.refIds.length || outcome.sources;
-  const resumeSources = resume ? resume.refIds.length || resume.sources : 0;
-  const sources = recallSources + resumeSources;
-  const tokens = outcome.tokens + (resume ? resume.tokens : 0);
-  const pinned = pins && pins.text ? pins : null;
-  const parts = [];
-  if (resume) parts.push(resumeWrap(runId, resumeSources, resume.tokens, resume.block));
-  if (outcome.block || pinned) {
-    parts.push(
-      wrap(runId, recallSources, outcome.tokens, outcome.block, outcome.pointers, carried, pinned)
-    );
-  }
-  return {
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: parts.join("\n")
-    },
-    systemMessage: `mubit: ${sources} ${sources === 1 ? "memory" : "memories"}${DOT}${formatTokens(tokens)} tok${DOT}${ms}ms${resume ? `${DOT}resume` : ""}${pinned ? `${DOT}${pinned.pins.length} pinned` : ""}`,
-    suppressOutput: true
-  };
-}
-function resumeWrap(runId, sources, tokens, block) {
-  return `<mubit-resume run="${runId}" sources="${sources}" tokens="${tokens}">
-Assembled from memory at the start of this session, before this or any other message in the conversation \u2014 it describes where earlier work on this project left off, not the message you were just sent.
-It is a briefing and not a task list: nothing in it has been asked for, it may be incomplete or out of date, and anything here that still looks worth doing should be confirmed against the code and with the user before you act on it.
-
-${block.replace(/\s+$/, "")}
-</mubit-resume>`;
-}
-function pinsOnly(cfg, pins, runId, stamped = false) {
-  if (!pins || !pins.text) return SUPPRESS;
-  if (!stamped) updateMarker(cfg, runId, { recall: { pin_tokens: pins.tokens } });
-  const n = pins.pins.length;
-  return {
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: wrap(runId, 0, 0, "", 0, false, pins)
-    },
-    systemMessage: `mubit: ${n} pinned${DOT}${formatTokens(pins.tokens)} tok`,
-    suppressOutput: true
-  };
-}
-function pinsGate(cfg, payload) {
-  try {
-    const runId = deriveRunId(cfg, payload);
-    return pinsOnly(cfg, readPins(cfg, runId), runId);
-  } catch {
-    return SUPPRESS;
-  }
-}
-function wrap(runId, sources, tokens, block, pointers = 0, carried = false, pins = null) {
-  const pinned = pins && pins.text ? pins : null;
-  const recalled = typeof block === "string" && block !== "";
-  return `<mubit-memory run="${runId}" sources="${sources}" tokens="${tokens}"${pinned ? ` pins="${pinned.pins.length}"` : ""}>
-` + (pinned ? `${pinned.text}${recalled ? "Those were pinned for this run and hold until they are cleared. Everything below them was retrieved for this prompt.\n" : ""}` : "") + (recalled ? "Recalled from memory of earlier work \u2014 it may be incomplete or out of date, so verify against the code before relying on it.\n" : "") + (recalled && carried ? "It was retrieved against the previous message in this conversation, not this one, so treat it as background rather than as an answer to what was just asked.\n" : "") + (recalled && pointers > 0 ? `A line marked "${POINTER_MARK}" was injected in full earlier in this conversation and is repeated here only as a reference; ask mubit_dereference for its text.
-` : "") + (recalled ? `
-${block.replace(/\s+$/, "")}
-` : "") + "</mubit-memory>";
-}
-function formatTokens(n) {
-  const t = Math.max(0, Math.trunc(numOr2(n, 0)));
-  return t >= 1e3 ? `${(t / 1e3).toFixed(1)}k` : String(t);
-}
-function safeId(v) {
-  return safeSegment(v, MAX_ID);
-}
-function isObject10(v) {
-  return !!v && typeof v === "object" && !Array.isArray(v);
-}
-function str5(v) {
-  return typeof v === "string" ? v.trim() : "";
-}
-function isConnState2(v) {
-  return typeof v === "string" && /** @type {readonly string[]} */
-  CONN_STATES.includes(v);
-}
-function numOr2(v, d) {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : d;
-}
-function intOr2(v, d) {
-  const n = numOr2(v, NaN);
-  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : d;
-}
-function clampInt(v, d, lo, hi) {
-  return Math.min(hi, Math.max(lo, intOr2(v, d)));
-}
-function safeConfig2() {
-  try {
-    return loadConfig();
-  } catch {
-    return (
-      /** @type {Record<string, any>} */
-      {
-        recall: true,
-        recallBudgetMs: 1500,
-        recallTokenBudget: 1500,
-        timeoutMs: 4e3,
-        logLevel: process.env.MUBIT_CC_LOG_LEVEL || "warn",
-        recallAssemble: "client",
-        recallFallback: "none"
-      }
-    );
-  }
-}
-function messageOf3(err) {
-  try {
-    if (!err) return "unknown error";
-    if (typeof err === "string") return err;
-    return [err.name, err.message].filter(Boolean).join(": ") || String(err);
-  } catch {
-    return "unknown error";
-  }
-}
-var MIN_PROMPT_CHARS, MAX_QUERY_CHARS, DOT, MAX_RECALL_TERMS, TERM_RE, MAX_PROMPT_SCAN, TERM_STOPWORDS, MAX_ID, CFG, RECALL_BUDGET_MS, HARNESS_BUDGET_MS, SUPPRESS, NO_RECALL;
-var init_prompt_recall = __esm({
-  async "../claude-code/hooks/src/prompt-recall.mjs"() {
+var TERM_RE, TERM_STOPWORDS, MAX_RECALL_TERMS, MAX_PROMPT_SCAN, MAX_ANSWER_SCAN, MAX_ENTRY_TERMS, MAX_TITLE_CHARS, PLACEHOLDER_RE;
+var init_terms = __esm({
+  "../claude-code/lib/terms.mjs"() {
     init_assemble();
-    init_breaker();
-    init_carry();
-    init_config();
-    init_hook();
-    init_log();
-    init_markers();
-    init_pins();
-    init_resume();
-    init_rank();
-    init_recall();
+    init_handles();
     init_redact();
-    init_runid();
-    init_seen();
-    init_state();
-    MIN_PROMPT_CHARS = 8;
-    MAX_QUERY_CHARS = 2e3;
-    DOT = " \xB7 ";
-    MAX_RECALL_TERMS = 48;
     TERM_RE = /[A-Za-z][A-Za-z0-9_]{3,23}/g;
-    MAX_PROMPT_SCAN = 16 * 1024;
     TERM_STOPWORDS = /* @__PURE__ */ new Set([
       "about",
       "after",
@@ -3703,7 +3556,377 @@ var init_prompt_recall = __esm({
       "would",
       "your"
     ]);
-    MAX_ID = 128;
+    MAX_RECALL_TERMS = 48;
+    MAX_PROMPT_SCAN = 16 * 1024;
+    MAX_ANSWER_SCAN = 64 * 1024;
+    MAX_ENTRY_TERMS = 32;
+    MAX_TITLE_CHARS = 48;
+    PLACEHOLDER_RE = /\[REDACTED:[^\]]*\]/gi;
+  }
+});
+
+// ../claude-code/hooks/src/prompt-recall.mjs
+var prompt_recall_exports = {};
+import { join as join17 } from "node:path";
+function carryForward(cfg, payload, runId, sessionId, started, pins, resume = null) {
+  const promptId = safeId(turnKey(payload));
+  const carry = takeCarry(cfg, runId);
+  const rendered = !!(carry && carry.block);
+  if (rendered || resume) {
+    persistRecalled(cfg, runId, promptId, payload, rendered ? carry : NO_RECALL, resume);
+  }
+  if (rendered) markSeen(cfg, runId, carry.refIds, sessionId);
+  const open = breakerOpen(cfg);
+  const b = open ? readBreaker(cfg) : null;
+  const ms = Date.now() - started;
+  updateMarker(cfg, runId, {
+    mode: cfg.mode,
+    // The connection state is the refresh's to write — it is the process that dials. The one
+    // exception is a verdict this side can read for itself off the breaker file.
+    ...open && isConnState2(b?.state) ? { state: b.state } : {},
+    recall: {
+      sources: rendered ? carry.refIds.length : 0,
+      tokens: rendered ? carry.tokens : 0,
+      // What the PROMPT paid, which under this flag is a file read. The endpoint's own
+      // latency is in `carry.json` as `fetch_ms`; separating the two is the measurement.
+      ms,
+      rung: rendered ? carry.rung : 0,
+      dropped: rendered ? carry.dropped : 0,
+      // Literally what happened: no previous turn left a block for this one. Named rather
+      // than blank, because a blank `empty_reason` under this flag is indistinguishable from
+      // a recall path that has quietly died. It deliberately does NOT say *why* — the
+      // ordinary first prompt of a session and a refresh that has been failing for ten
+      // prompts both land here, and `state` plus `dry_streak` are what tell them apart:
+      // `ready` with a streak of 1 is priming, `not_responding` with a climbing streak is
+      // the endpoint. A name that guessed between them would send half the readers to the
+      // wrong fix.
+      empty_reason: rendered ? carry.emptyReason : open ? "breaker_open" : "async_no_carry",
+      pin_tokens: pins.tokens,
+      ...dryness(cfg, runId, rendered)
+    }
+  });
+  if (open) {
+    log(cfg, "debug", "prompt-recall: breaker open; carrying nothing forward", { run_id: runId });
+  } else {
+    spawnRefresh(cfg, payload, runId);
+  }
+  if (!rendered && !resume) return pinsOnly(cfg, pins, runId, true);
+  return injection(cfg, runId, rendered ? carry : NO_RECALL, resume, pins, ms, true);
+}
+function claimResume(cfg, runId, sessionId) {
+  try {
+    if (!cfg.resumeBlock) return null;
+    const resume = takeResume(cfg, runId);
+    if (!resume) return null;
+    markSeen(cfg, runId, resume.refIds, sessionId);
+    log(
+      cfg,
+      "debug",
+      `prompt-recall: rendering the session briefing (${resume.refIds.length} sources)`,
+      { run_id: runId }
+    );
+    return resume;
+  } catch {
+    return null;
+  }
+}
+function spawnRefresh(cfg, payload, runId) {
+  try {
+    const payloadPath = stashPayload(cfg, payload);
+    if (!payloadPath) {
+      log(cfg, "warn", "prompt-recall: could not stage the refresh payload; the next prompt recalls nothing", { run_id: runId });
+      return;
+    }
+    spawnDetached(cfg, "recall-refresh", [], payloadPath);
+    log(cfg, "debug", "prompt-recall: refresh spawned", { run_id: runId });
+  } catch (err) {
+    log(
+      cfg,
+      "warn",
+      `prompt-recall: could not start the refresh (${messageOf3(err)})`,
+      { run_id: runId }
+    );
+  }
+}
+function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) {
+  try {
+    if (!promptId) return;
+    const file = join17(resolveDataDir(cfg), "runs", safeId(runId), "turns", `${promptId}.json`);
+    const prev = readJson(file, null);
+    const base = isObject10(prev) ? prev : {};
+    const next = {
+      ...base,
+      prompt_id: promptId,
+      // The standing lessons injected at session start ride along on the first turn that
+      // stages ids, so that they too can be reinforced or corrected. Deduped: the same
+      // entry reached through two lanes must not be reinforced twice for one turn.
+      recalled: [.../* @__PURE__ */ new Set([
+        ...claimStandingLessons(cfg, runId),
+        ...resume ? resume.refIds : [],
+        ...outcome.refIds
+      ])],
+      recall: {
+        at: Date.now(),
+        rung: outcome.rung,
+        sources: (outcome.refIds.length || outcome.sources) + (resume ? resume.refIds.length || resume.sources : 0),
+        tokens: outcome.tokens + (resume ? resume.tokens : 0),
+        // The token figure is a four-chars-per-token estimate (§4.10). Characters are what
+        // was actually injected, so a later reader can re-derive the estimate rather than
+        // inherit it.
+        chars: outcome.block.length + (resume ? resume.block.length : 0),
+        dropped: outcome.dropped,
+        // How many of `sources` were repeats the model already had. Without it a smaller
+        // `tokens` is unattributable — a block that shrank because the seen-set worked and
+        // one that shrank because recall found half as much read identically.
+        pointers: outcome.pointers,
+        empty_reason: outcome.emptyReason,
+        terms: memoryTerms(cfg, [resume?.block ?? "", outcome.block], str5(payload?.prompt))
+      }
+    };
+    if (typeof next.session_id !== "string") next.session_id = str5(payload?.session_id);
+    if (!Number.isFinite(next.started_at)) next.started_at = Date.now();
+    const promptTerms = termSet(str5(payload?.prompt).slice(0, MAX_PROMPT_SCAN));
+    const entries = (Array.isArray(outcome.entries) ? outcome.entries : []).filter((e) => e && typeof e.ref === "string" && e.ref);
+    const shown = entries.map((e) => ({
+      ref: e.ref,
+      handle: str5(e.handle),
+      type: str5(e.type),
+      pointer: e.pointer === true,
+      terms: entryTerms(cfg, str5(e.text), promptTerms)
+    }));
+    next.shown = shown;
+    writeJsonAtomic(file, next);
+    if (cfg.capture !== false) {
+      appendShownRow(cfg, payload, promptId, entries, shown, outcome, resume);
+    }
+  } catch (err) {
+    log(cfg, "warn", `prompt-recall: could not stage recalled ids (${messageOf3(err)})`, { run_id: runId });
+  }
+}
+function appendShownRow(cfg, payload, promptId, entries, shown, outcome, resume) {
+  try {
+    const lessons = {};
+    entries.forEach((e, i) => {
+      if (str5(e.type) !== "lesson") return;
+      lessons[e.ref] = {
+        title: entryTitle(cfg, str5(e.text)),
+        terms: shown[i].terms,
+        handle: shown[i].handle,
+        pointer: shown[i].pointer
+      };
+    });
+    const refs = [...new Set([
+      ...outcome.refIds,
+      ...entries.map((e) => e.ref),
+      ...resume ? resume.refIds : []
+    ].filter((r) => typeof r === "string" && r))];
+    appendScoreRow(cfg, str5(payload?.session_id), {
+      kind: "shown",
+      prompt_id: promptId,
+      lessons,
+      refs,
+      tokens: outcome.tokens + (resume ? resume.tokens : 0)
+    });
+  } catch {
+  }
+}
+function claimStandingLessons(cfg, runId) {
+  try {
+    const lessons = readMarker(cfg, runId).lessons;
+    if (!isObject10(lessons) || numOr2(lessons.credited_at, 0) > 0) return [];
+    const ids = Array.isArray(lessons.injected_ids) ? lessons.injected_ids.filter((v) => typeof v === "string" && v.trim()) : [];
+    if (!ids.length) return [];
+    updateMarker(cfg, runId, { lessons: { credited_at: Date.now() } });
+    return ids;
+  } catch {
+    return [];
+  }
+}
+function noteFailure(cfg, runId, outcome, ms) {
+  const state = str5(outcome.state);
+  const known = isConnState2(state);
+  log(cfg, "warn", `prompt-recall: recall failed on rung ${outcome.rung} (${state || "unknown"})`, {
+    run_id: runId,
+    error: str5(outcome.error).slice(0, 300)
+  });
+  updateMarker(cfg, runId, {
+    // The state as observed. `bin/statusline.mjs` owns the cold-start lens and reads the
+    // window from the marker, so writing `warming` here would persist a display decision
+    // past the window that justified it.
+    ...known ? { state } : {},
+    last_error: str5(outcome.error).slice(0, 200),
+    recall: {
+      sources: 0,
+      tokens: 0,
+      ms,
+      empty_reason: "",
+      rung: outcome.rung,
+      dropped: 0,
+      ...dryness(cfg, runId, false)
+    }
+  });
+}
+function dryness(cfg, runId, hit) {
+  if (hit) return { dry_streak: 0, last_hit_at: Date.now() };
+  try {
+    const prior = numOr2(readMarker(cfg, runId).recall?.dry_streak, 0);
+    return { dry_streak: (prior >= 0 ? prior : 0) + 1 };
+  } catch {
+    return { dry_streak: 1 };
+  }
+}
+function breakerOpen(cfg) {
+  try {
+    const b = readBreaker(cfg);
+    if (!(b.openedAt > 0)) return false;
+    const cooldownMs = numOr2(cfg?.breaker?.cooldownMs, 12e4);
+    const since = Math.max(b.openedAt, numOr2(b.probeAt, 0));
+    return Date.now() - since < cooldownMs;
+  } catch {
+    return false;
+  }
+}
+function injection(cfg, runId, outcome, resume, pins, ms, carried = false) {
+  const recallSources = outcome.refIds.length || outcome.sources;
+  const resumeSources = resume ? resume.refIds.length || resume.sources : 0;
+  const sources = recallSources + resumeSources;
+  const tokens = outcome.tokens + (resume ? resume.tokens : 0);
+  const pinned = pins && pins.text ? pins : null;
+  const parts = [];
+  if (resume) parts.push(resumeWrap(runId, resumeSources, resume.tokens, resume.block));
+  if (outcome.block || pinned) {
+    parts.push(
+      wrap(cfg, runId, recallSources, outcome.tokens, outcome.block, outcome.pointers, carried, pinned)
+    );
+  }
+  return {
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: parts.join("\n")
+    },
+    systemMessage: `mubit: ${sources} ${sources === 1 ? "memory" : "memories"}${DOT}${formatTokens(tokens)} tok${DOT}${ms}ms${resume ? `${DOT}resume` : ""}${pinned ? `${DOT}${pinned.pins.length} pinned` : ""}`,
+    suppressOutput: true
+  };
+}
+function resumeWrap(runId, sources, tokens, block) {
+  return `<mubit-resume run="${runId}" sources="${sources}" tokens="${tokens}">
+Assembled from memory at the start of this session, before this or any other message in the conversation \u2014 it describes where earlier work on this project left off, not the message you were just sent.
+It is a briefing and not a task list: nothing in it has been asked for, it may be incomplete or out of date, and anything here that still looks worth doing should be confirmed against the code and with the user before you act on it.
+
+${block.replace(/\s+$/, "")}
+</mubit-resume>`;
+}
+function pinsOnly(cfg, pins, runId, stamped = false) {
+  if (!pins || !pins.text) return SUPPRESS;
+  if (!stamped) updateMarker(cfg, runId, { recall: { pin_tokens: pins.tokens } });
+  const n = pins.pins.length;
+  return {
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: wrap(cfg, runId, 0, 0, "", 0, false, pins)
+    },
+    systemMessage: `mubit: ${n} pinned${DOT}${formatTokens(pins.tokens)} tok`,
+    suppressOutput: true
+  };
+}
+function pinsGate(cfg, payload) {
+  try {
+    const runId = deriveRunId(cfg, payload);
+    return pinsOnly(cfg, readPins(cfg, runId), runId);
+  } catch {
+    return SUPPRESS;
+  }
+}
+function wrap(cfg, runId, sources, tokens, block, pointers = 0, carried = false, pins = null) {
+  const pinned = pins && pins.text ? pins : null;
+  const recalled = typeof block === "string" && block !== "";
+  const nudge = recalled && HANDLE_LINE_RE.test(block) && cfg?.outcomeReview !== "off";
+  return `<mubit-memory run="${runId}" sources="${sources}" tokens="${tokens}"${pinned ? ` pins="${pinned.pins.length}"` : ""}>
+` + (pinned ? `${pinned.text}${recalled ? "Those were pinned for this run and hold until they are cleared. Everything below them was retrieved for this prompt.\n" : ""}` : "") + (recalled ? "Recalled from memory of earlier work \u2014 it may be incomplete or out of date, so verify against the code before relying on it.\n" : "") + (nudge ? "Each entry starts with its id in brackets. Before you finish, report the entries that helped or misled you with mubit_outcome, passing those ids.\n" : "") + (recalled && carried ? "It was retrieved against the previous message in this conversation, not this one, so treat it as background rather than as an answer to what was just asked.\n" : "") + (recalled && pointers > 0 ? `A line marked "${POINTER_MARK}" was injected in full earlier in this conversation and is repeated here only as a reference; ask mubit_dereference with its id for the text.
+` : "") + (recalled ? `
+${block.replace(/\s+$/, "")}
+` : "") + "</mubit-memory>";
+}
+function formatTokens(n) {
+  const t = Math.max(0, Math.trunc(numOr2(n, 0)));
+  return t >= 1e3 ? `${(t / 1e3).toFixed(1)}k` : String(t);
+}
+function safeId(v) {
+  return safeSegment(v, MAX_ID2);
+}
+function isObject10(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+function str5(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+function isConnState2(v) {
+  return typeof v === "string" && /** @type {readonly string[]} */
+  CONN_STATES.includes(v);
+}
+function numOr2(v, d) {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+function intOr2(v, d) {
+  const n = numOr2(v, NaN);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : d;
+}
+function clampInt(v, d, lo, hi) {
+  return Math.min(hi, Math.max(lo, intOr2(v, d)));
+}
+function safeConfig2() {
+  try {
+    return loadConfig();
+  } catch {
+    return (
+      /** @type {Record<string, any>} */
+      {
+        recall: true,
+        recallBudgetMs: 1500,
+        recallTokenBudget: 1500,
+        timeoutMs: 4e3,
+        logLevel: process.env.MUBIT_CC_LOG_LEVEL || "warn",
+        recallAssemble: "client",
+        recallFallback: "none"
+      }
+    );
+  }
+}
+function messageOf3(err) {
+  try {
+    if (!err) return "unknown error";
+    if (typeof err === "string") return err;
+    return [err.name, err.message].filter(Boolean).join(": ") || String(err);
+  } catch {
+    return "unknown error";
+  }
+}
+var MIN_PROMPT_CHARS, MAX_QUERY_CHARS, DOT, HANDLE_LINE_RE, MAX_ID2, CFG, RECALL_BUDGET_MS, HARNESS_BUDGET_MS, SUPPRESS, NO_RECALL;
+var init_prompt_recall = __esm({
+  async "../claude-code/hooks/src/prompt-recall.mjs"() {
+    init_assemble();
+    init_breaker();
+    init_carry();
+    init_config();
+    init_hook();
+    init_log();
+    init_markers();
+    init_pins();
+    init_resume();
+    init_rank();
+    init_recall();
+    init_redact();
+    init_runid();
+    init_seen();
+    init_scorecard_log();
+    init_state();
+    init_terms();
+    MIN_PROMPT_CHARS = 8;
+    MAX_QUERY_CHARS = 2e3;
+    DOT = " \xB7 ";
+    HANDLE_LINE_RE = /^- (?:\(seen earlier\) )?(?:\(stale\) )?\[m[a-z2-9]{4}\]/m;
+    MAX_ID2 = 128;
     CFG = safeConfig2();
     RECALL_BUDGET_MS = clampInt(CFG.recallBudgetMs, 1500, 50, 1e4);
     HARNESS_BUDGET_MS = Math.min(RECALL_BUDGET_MS + 400, 2800);
@@ -3717,7 +3940,8 @@ var init_prompt_recall = __esm({
       dropped: 0,
       pointers: 0,
       emptyReason: "",
-      refIds: Object.freeze([])
+      refIds: Object.freeze([]),
+      entries: Object.freeze([])
     });
     await runHook("prompt-recall", {
       budgetMs: HARNESS_BUDGET_MS,
@@ -3762,7 +3986,7 @@ var init_prompt_recall = __esm({
           if (!resume) return pinsOnly(cfg, pins, runId);
           persistRecalled(cfg, runId, safeId(turnKey(payload)), payload, NO_RECALL, resume);
           if (pins.text) updateMarker(cfg, runId, { recall: { pin_tokens: pins.tokens } });
-          return injection(runId, NO_RECALL, resume, pins, Date.now() - started);
+          return injection(cfg, runId, NO_RECALL, resume, pins, Date.now() - started);
         }
         const query = prompt.slice(0, MAX_QUERY_CHARS);
         const rankBy = rankForRecall(cfg, query);
@@ -3784,7 +4008,7 @@ var init_prompt_recall = __esm({
           if (!resume) return pinsOnly(cfg, pins, runId);
           persistRecalled(cfg, runId, promptId, payload, NO_RECALL, resume);
           if (pins.text) updateMarker(cfg, runId, { recall: { pin_tokens: pins.tokens } });
-          return injection(runId, NO_RECALL, resume, pins, ms);
+          return injection(cfg, runId, NO_RECALL, resume, pins, ms);
         }
         persistRecalled(cfg, runId, promptId, payload, outcome, resume);
         markSeen(cfg, runId, outcome.refIds, sessionId);
@@ -3806,7 +4030,7 @@ var init_prompt_recall = __esm({
           }
         });
         if (!outcome.block && !resume) return pinsOnly(cfg, pins, runId, true);
-        return injection(runId, outcome, resume, pins, ms);
+        return injection(cfg, runId, outcome, resume, pins, ms);
       }
     });
   }

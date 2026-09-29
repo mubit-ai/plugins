@@ -182,7 +182,7 @@ var DEFAULT_MCP_TOOLS = [
 ];
 var CACHE_FILE = "config.json";
 var CACHE_TTL_MS = 300 * 1e3;
-var CACHE_VERSION = 3;
+var CACHE_VERSION = 4;
 function screaming(key) {
   return String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
 }
@@ -302,6 +302,16 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -375,6 +385,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -1045,8 +1057,8 @@ function safeCwd2() {
 }
 
 // mcp/src/egress.mjs
-import { readdirSync as readdirSync3, statSync as statSync5 } from "node:fs";
-import { join as join8 } from "node:path";
+import { readdirSync as readdirSync4, statSync as statSync6 } from "node:fs";
+import { join as join9 } from "node:path";
 
 // lib/breaker.mjs
 import { createHash as createHash3 } from "node:crypto";
@@ -2042,6 +2054,73 @@ function clamp2(v, lo, hi, dflt) {
   return Math.min(hi, Math.max(lo, Math.trunc(n)));
 }
 
+// lib/handles.mjs
+var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+var LEN = 4;
+var BODY = `[${ALPHABET}]{${LEN}}`;
+var BARE_RE = new RegExp(`^m${BODY}$`);
+var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+function handleFor(ref) {
+  const s = typeof ref === "string" ? ref.trim() : "";
+  if (!s) return "";
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  let out = "m";
+  for (let i = 0; i < LEN; i++) {
+    out += ALPHABET[h % ALPHABET.length];
+    h = Math.floor(h / ALPHABET.length);
+  }
+  return out;
+}
+function isHandle(v) {
+  return BARE_RE.test(bareOf(v));
+}
+function resolveHandles(ids, knownRefs) {
+  const byHandle = /* @__PURE__ */ new Map();
+  for (const ref of Array.isArray(knownRefs) ? knownRefs : []) {
+    const h = handleFor(ref);
+    if (h) byHandle.set(h, ref);
+  }
+  const out = [];
+  const unresolved = [];
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    if (typeof raw !== "string") continue;
+    const bare = bareOf(raw);
+    if (BARE_RE.test(bare)) {
+      const ref = byHandle.get(bare);
+      if (ref) out.push(ref);
+      else {
+        out.push(bare);
+        unresolved.push(bare);
+      }
+    } else if (raw.trim()) {
+      out.push(raw.trim());
+    }
+  }
+  return { ids: out, unresolved };
+}
+function knownRefsFromRows(rows) {
+  const last = /* @__PURE__ */ new Map();
+  let n = 0;
+  const note2 = (ref) => {
+    if (typeof ref === "string" && ref.trim()) last.set(ref.trim(), n++);
+  };
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== "object") continue;
+    if (row.kind !== "start" && row.kind !== "shown" && row.kind !== "refs") continue;
+    if (row.lessons && typeof row.lessons === "object") for (const ref of Object.keys(row.lessons)) note2(ref);
+    if (Array.isArray(row.refs)) for (const ref of row.refs) note2(ref);
+  }
+  return [...last.entries()].sort((a, b) => a[1] - b[1]).map(([ref]) => ref);
+}
+function bareOf(v) {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s.startsWith("[") && s.endsWith("]") ? s.slice(1, -1).trim() : s;
+}
+
 // lib/markers.mjs
 import { join as join7 } from "node:path";
 function defaultMarker(runId = "") {
@@ -2124,11 +2203,97 @@ function updateMarker(cfg, runId, patch = {}) {
   }
 }
 
+// lib/scorecard-log.mjs
+import {
+  closeSync as closeSync2,
+  fstatSync,
+  openSync as openSync2,
+  readdirSync as readdirSync3,
+  readFileSync as readFileSync5,
+  readSync,
+  statSync as statSync5,
+  writeSync as writeSync2
+} from "node:fs";
+import { dirname as dirname4, join as join8 } from "node:path";
+var SCORE_DIR = "scorecard";
+var SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+var MAX_READ_BYTES = 4 * 1024 * 1024;
+var MAX_ID = 128;
+function scorecardPath(cfg, sessionId) {
+  const id = safeSegment(typeof sessionId === "string" ? sessionId.trim() : "", MAX_ID);
+  if (!id) return "";
+  return join8(resolveDataDir(cfg), SCORE_DIR, `${id}.jsonl`);
+}
+function readRowsAt(p, opts = {}) {
+  try {
+    const size = statSync5(p).size;
+    const tail = Number(opts?.tailBytes);
+    const want = Number.isFinite(tail) && tail > 0 ? Math.min(tail, MAX_READ_BYTES) : MAX_READ_BYTES;
+    let text;
+    let partialHead = false;
+    if (size > want) {
+      const fd = openSync2(p, "r");
+      try {
+        const buf = Buffer.alloc(want);
+        readSync(fd, buf, 0, want, size - want);
+        text = buf.toString("utf8");
+      } finally {
+        closeSync2(fd);
+      }
+      partialHead = true;
+    } else {
+      text = readFileSync5(p, "utf8");
+    }
+    const lines = text.split("\n");
+    if (partialHead) lines.shift();
+    const out = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line);
+        if (row && typeof row === "object" && !Array.isArray(row) && typeof row.kind === "string") {
+          out.push(row);
+        }
+      } catch {
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+function recentScoreLogs(cfg, opts = {}) {
+  try {
+    const dir = join8(resolveDataDir(cfg), SCORE_DIR);
+    const now = Date.now();
+    const maxAge = Number(opts?.maxAgeMs) > 0 ? Number(opts.maxAgeMs) : SCORE_LOG_TTL_MS;
+    const limit = Number(opts?.limit) > 0 ? Math.trunc(Number(opts.limit)) : 20;
+    const found = [];
+    for (const name of readdirSync3(dir)) {
+      if (!name.endsWith(".jsonl")) continue;
+      const p = join8(dir, name);
+      try {
+        const st = statSync5(p);
+        if (st.isFile() && now - st.mtimeMs <= maxAge) found.push({ p, m: st.mtimeMs });
+      } catch {
+      }
+    }
+    found.sort((a, b) => b.m - a.m);
+    return found.slice(0, limit).map((f) => f.p);
+  } catch {
+    return [];
+  }
+}
+
 // mcp/src/egress.mjs
 var LATTICE = ["run", "session", "global", "org"];
 var CEILINGS = ["run", "session", "global"];
 var INGEST_PATH = "/v2/control/ingest";
 var ARCHIVE_PATH = "/v2/control/archive";
+var OUTCOME_PATH = "/v2/control/outcome";
+var DEREFERENCE_PATH = "/v2/control/dereference";
+var HANDLES_NOTE_KEY = "mubit_handles";
+var HANDLES_HINT = "These ids match no memory line shown in this session and were sent as typed. Use the [m\u2026] id printed on a memory line, or a full reference_id.";
 var OPEN_TURN_GRACE_MS = 6e4;
 var TURN_FILES_TO_READ = 16;
 var LESSONS_PATH = "/v2/control/lessons";
@@ -2264,19 +2429,19 @@ function provenanceStamp(cfg, runId, sessionId, now = Date.now()) {
   return stamp;
 }
 function openTurn(cfg, runId, sessionId, now) {
-  const dir = join8(runDir(cfg, runId), "turns");
+  const dir = join9(runDir(cfg, runId), "turns");
   let names;
   try {
-    names = readdirSync3(dir).filter((f) => f.endsWith(".json"));
+    names = readdirSync4(dir).filter((f) => f.endsWith(".json"));
   } catch {
     return null;
   }
   if (names.length > TURN_FILES_TO_READ) {
-    names = names.map((f) => ({ f, at: mtimeOf(join8(dir, f)) })).sort((a, b) => b.at - a.at).slice(0, TURN_FILES_TO_READ).map((e) => e.f);
+    names = names.map((f) => ({ f, at: mtimeOf(join9(dir, f)) })).sort((a, b) => b.at - a.at).slice(0, TURN_FILES_TO_READ).map((e) => e.f);
   }
   let best = null;
   for (const f of names) {
-    const t = readJson(join8(dir, f), null);
+    const t = readJson(join9(dir, f), null);
     if (!isPlainObject3(t)) continue;
     if (String(t.session_id ?? "") !== sessionId) continue;
     if (!best || num2(t.started_at) > num2(best.started_at)) best = t;
@@ -2290,7 +2455,7 @@ function openTurn(cfg, runId, sessionId, now) {
 }
 function mtimeOf(p) {
   try {
-    return statSync5(p).mtimeMs;
+    return statSync6(p).mtimeMs;
   } catch {
     return 0;
   }
@@ -2428,6 +2593,50 @@ function recordMcpIngest(cfg, runId, items) {
 function countItems(body) {
   return Array.isArray(body?.items) ? body.items.length : 0;
 }
+function resolveOutcomeBody(body, knownRefs) {
+  return resolveFields(body, knownRefs, true);
+}
+function resolveDereferenceBody(body, knownRefs) {
+  return resolveFields(body, knownRefs, false);
+}
+function knownRefsFor(cfg, sessionId) {
+  try {
+    const c = cfg ?? {};
+    const own = sessionId ? scorecardPath(c, sessionId) : "";
+    const rows = [];
+    for (const p of recentScoreLogs(c).reverse()) if (p !== own) rows.push(...readRowsAt(p));
+    if (own) rows.push(...readRowsAt(own));
+    return knownRefsFromRows(rows);
+  } catch {
+    return [];
+  }
+}
+function carriesHandle(body, withEntries) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  if (isHandle(body.reference_id)) return true;
+  return withEntries && Array.isArray(body.entry_ids) && body.entry_ids.some((id) => isHandle(id));
+}
+function resolveFields(body, knownRefs, withEntries) {
+  const noop = { body, changed: false, unresolved: (
+    /** @type {string[]} */
+    []
+  ) };
+  try {
+    if (!carriesHandle(body, withEntries)) return noop;
+    const unresolved = [];
+    const one = (id) => {
+      if (!isHandle(id)) return id;
+      const r = resolveHandles([id], knownRefs);
+      unresolved.push(...r.unresolved);
+      return r.ids[0] ?? id;
+    };
+    const next = { ...body, reference_id: one(body.reference_id) };
+    if (withEntries && Array.isArray(body.entry_ids)) next.entry_ids = body.entry_ids.map(one);
+    return { body: next, changed: true, unresolved };
+  } catch {
+    return noop;
+  }
+}
 function installFetchGuard(opts) {
   const ceiling = resolveCeiling(opts?.ceiling);
   const runId = typeof opts?.runId === "string" ? opts.runId : "";
@@ -2483,6 +2692,18 @@ function installFetchGuard(opts) {
         if (parsed.ok) {
           const out = stampProvenance(parsed.value, stampNow(), { at: "body" });
           if (out.stamped) sendInit = { ...init, body: JSON.stringify(out.body) };
+        }
+      } else if (isPostTo(input, init, OUTCOME_PATH) || isPostTo(input, init, DEREFERENCE_PATH)) {
+        const parsed = parseBody(init);
+        const outcome = isPostTo(input, init, OUTCOME_PATH);
+        if (parsed.ok && carriesHandle(parsed.value, outcome)) {
+          const refs = knownRefsFor(opts?.cfg, sessionId);
+          const out = outcome ? resolveOutcomeBody(parsed.value, refs) : resolveDereferenceBody(parsed.value, refs);
+          if (out.changed) sendInit = { ...init, body: JSON.stringify(out.body) };
+          if (out.unresolved.length) {
+            note2 = { unresolved: out.unresolved, hint: HANDLES_HINT };
+            noteKey = HANDLES_NOTE_KEY;
+          }
         }
       } else if (isLessonsRead(input, init)) {
         const plan = await planLessons(init);
@@ -2580,8 +2801,16 @@ var INSTRUCTIONS = [
   "",
   "Which tool. mubit_recall for a topic or question in words. mubit_diagnose when a command or test has just failed, which matches the error shape against past failures. mubit_dereference when you already hold a reference_id. Reviewing the whole catalogue, the pattern across many lessons, a named checkpoint, deleting a lesson and an explicit reflect are skills (/mubit-memory:strategies, :checkpoint, :forget, :reflect), not tools.",
   "",
-  'What to write back. mubit_learned records one durable claim \u2014 a constraint, a fix that worked, a standing preference \u2014 stated so it is still true in a later session. It is not a session log: narrating what happened ("the user asked for X", "I refactored Y") is the common way this tool is misused, and every future recall pays for it. mubit_outcome credits the reference_ids that actually helped, which is what makes the memory that helps rank higher next time.'
+  'What to write back. mubit_learned records one durable claim \u2014 a constraint, a fix that worked, a standing preference \u2014 stated so it is still true in a later session. It is not a session log: narrating what happened ("the user asked for X", "I refactored Y") is the common way this tool is misused, and every future recall pays for it. Each injected memory line starts with an id in brackets, like [m7k2q]: pass those ids (or reference_ids) to mubit_outcome \u2014 outcome success for entries that helped, failure for ones that were wrong or misled you \u2014 which is what makes the memory that helps rank higher next time.'
 ].join("\n");
+var ALWAYS_LOAD_META = "anthropic/alwaysLoad";
+var ALWAYS_LOAD_TOOLS = Object.freeze(["mubit_outcome", "mubit_learned"]);
+function alwaysLoadFor(cfg) {
+  const c = cfg && typeof cfg === "object" ? cfg : {};
+  if (String(c.outcomeReview ?? "").trim().toLowerCase() === "off") return [];
+  if (c.host === "codex") return [];
+  return [...ALWAYS_LOAD_TOOLS];
+}
 function guardInitialize(message, instructions) {
   const noop = { message, changed: false };
   try {
@@ -2602,8 +2831,31 @@ function guardInitialize(message, instructions) {
     return noop;
   }
 }
+function guardToolsList(message, names) {
+  const noop = { message, changed: false };
+  try {
+    const wanted = new Set(Array.isArray(names) ? names : []);
+    if (!wanted.size) return noop;
+    if (!message || typeof message !== "object" || Array.isArray(message)) return noop;
+    if (message.jsonrpc !== "2.0") return noop;
+    const result = message.result;
+    if (!result || typeof result !== "object" || !Array.isArray(result.tools)) return noop;
+    let changed = false;
+    const tools = result.tools.map((t) => {
+      if (!t || typeof t !== "object" || !wanted.has(t.name)) return t;
+      const meta = t._meta && typeof t._meta === "object" && !Array.isArray(t._meta) ? t._meta : {};
+      if (meta[ALWAYS_LOAD_META] === true) return t;
+      changed = true;
+      return { ...t, _meta: { ...meta, [ALWAYS_LOAD_META]: true } };
+    });
+    return changed ? { message: { ...message, result: { ...result, tools } }, changed } : noop;
+  } catch {
+    return noop;
+  }
+}
 function installInstructionsGuard(opts) {
   const instructions = typeof opts?.instructions === "string" ? opts.instructions : "";
+  const alwaysLoad = Array.isArray(opts?.alwaysLoad) ? opts.alwaysLoad.filter((n) => typeof n === "string" && n.trim()) : [];
   if (instructions.trim() === "") return;
   const stream = opts?.stream ?? process.stdout;
   const current = stream?.write;
@@ -2621,6 +2873,13 @@ function installInstructionsGuard(opts) {
       } catch {
       }
     }
+    if (alwaysLoad.length && typeof chunk === "string" && chunk.includes('"tools":[')) {
+      try {
+        const marked = rewriteLines(chunk, (frame) => guardToolsList(frame, alwaysLoad));
+        if (marked !== null) chunk = marked;
+      } catch {
+      }
+    }
     return base.call(this, chunk, ...rest);
   };
   Object.defineProperty(wrapped, "mubitInstructionsGuardOriginal", {
@@ -2629,11 +2888,14 @@ function installInstructionsGuard(opts) {
     configurable: true,
     enumerable: false
   });
-  wrapped.mubitInstructionsGuard = { chars: instructions.length };
+  wrapped.mubitInstructionsGuard = { chars: instructions.length, alwaysLoad };
   stream.write = wrapped;
 }
 function fill(chunk, instructions) {
   if (!chunk.includes('"result"')) return null;
+  return rewriteLines(chunk, (frame) => guardInitialize(frame, instructions));
+}
+function rewriteLines(chunk, guard) {
   const parts = chunk.split("\n");
   let changed = false;
   for (let i = 0; i < parts.length; i += 1) {
@@ -2644,7 +2906,7 @@ function fill(chunk, instructions) {
     } catch {
       continue;
     }
-    const out = guardInitialize(frame, instructions);
+    const out = guard(frame);
     if (!out.changed) continue;
     parts[i] = JSON.stringify(out.message);
     changed = true;
@@ -2654,7 +2916,7 @@ function fill(chunk, instructions) {
 
 // mcp/src/results.mjs
 import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // lib/assemble.mjs
 var SECTION_KEYS = Object.freeze([
@@ -2740,7 +3002,7 @@ function firstClause(text) {
 }
 
 // lib/seen.mjs
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 var SEEN_TTL_MS = 6 * 60 * 60 * 1e3;
 var MAX_SEEN_REFS = 512;
 var SEEN_DIR = "seen";
@@ -2752,7 +3014,7 @@ function seenPath(cfg, runId, sessionId) {
   if (!safeSegment(runId)) return "";
   const session = safeSegment(hostSessionId({ session_id: sessionId }), MAX_SESSION_SEGMENT);
   if (!session) return "";
-  return join9(runDir(cfg, runId), SEEN_DIR, `${session}.json`);
+  return join10(runDir(cfg, runId), SEEN_DIR, `${session}.json`);
 }
 function readSeen(cfg, runId, sessionId = "") {
   try {
@@ -3071,10 +3333,10 @@ function spillWriter(cfg, runId) {
   return (text, shape) => {
     try {
       if (!safeSegment(runId)) return "";
-      const dir = join10(runDir(cfg, runId), SPILL_DIR);
+      const dir = join11(runDir(cfg, runId), SPILL_DIR);
       mkdirSync3(dir, { recursive: true });
       const ext = shape === "text" || shape === "error" ? "txt" : "json";
-      const p = join10(dir, `${Date.now()}-${safeSegment(shape) || "result"}-${n++}.${ext}`);
+      const p = join11(dir, `${Date.now()}-${safeSegment(shape) || "result"}-${n++}.${ext}`);
       writeFileSync2(p, text, { encoding: "utf8", mode: 384 });
       return p;
     } catch {
@@ -3171,7 +3433,7 @@ function prepare(env) {
   const sessionId = hostPayload(env).session_id ?? "";
   const ceiling = resolveCeiling(cfg.mcpLessonScope);
   installFetchGuard({ ceiling, runId, pinRun: true, cfg, sessionId });
-  installInstructionsGuard({ instructions: INSTRUCTIONS });
+  installInstructionsGuard({ instructions: INSTRUCTIONS, alwaysLoad: alwaysLoadFor(cfg) });
   installResultsGuard({
     cfg,
     runId,

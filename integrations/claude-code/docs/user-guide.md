@@ -243,7 +243,7 @@ What happens on its own:
 | Every prompt you send | Queries memory and injects what is relevant, within a 1500 ms budget and a 1500-token cap. **Zero LLM calls** — assembly is local |
 | Every tool call | Redacts and spools it. Zero network on the hot path |
 | Every tool failure | Captured — these produce the most useful lessons |
-| Every turn ends | Writes the `Q: … / A: …` pair, flushes the spool, and attributes the turn's success or failure back to the memories that were injected for it |
+| Every turn ends | Writes the `Q: … / A: …` pair, flushes the spool, credits the memories the reply actually used, and — on turns that showed a lesson — asks Claude to review those lessons and prints the [session scorecard](#the-session-scorecard) |
 | Before a compact | Snapshots the last 200 KB of transcript before the host throws it away |
 | Session ends | Drains, flushes outcomes, then reflects — extracting lessons that outlive this run |
 
@@ -267,6 +267,97 @@ costs you a memory, never a turn.
 
 Groups are hidden while still zero. It reads two local JSON files and never touches the
 network, so a dead server can never freeze your terminal.
+
+### The session scorecard
+
+After each turn that showed Claude at least one lesson, a short card appears under the reply.
+Claude Code prefixes it with `Stop says:`.
+
+```
+mubit · this session · lessons on 6 of 8 prompts · +2 learned · memory added 6.4k tok
+  9 lessons shown
+  ├ 5 used      3 worked · 1 failed · 1 waiting on your reply
+  └ 4 not used
+  this turn: used "run vitest with --pool=forks"
+  review: "use npm ci in CI" failed on prompt 5 · 2 lessons shown 3+ times and never used
+```
+
+The header counts the prompts in this session that carried a lesson, the lessons Claude saved
+with `mubit_learned`, and the tokens memory added to the context (standing lessons plus every
+per-prompt injection). Parts that would read zero are left out.
+
+The tree counts **lessons**: distinct entries of type `lesson` shown in this session. Rules,
+facts and past work are injected too, but they are not counted here. Every lesson lands in
+exactly one row, so the rows always add up to the total.
+
+| Row | Meaning |
+| --- | --- |
+| shown | Injected in full, or repeated as a `(seen earlier)` pointer. Standing lessons count on the first prompt after each session start. |
+| used | The lesson's own distinctive words appear in Claude's reply, or Claude named it in `mubit_outcome`. Words shared with another entry shown that turn, or that you typed in your prompt, do not count. A lesson needs at least two of its words, or a quarter of them if that is more; when it has two or fewer, it needs all of them. |
+| unknown | Could not be checked: the lesson had no distinctive words, there was no reply, the API failed, or you interrupted the turn. Shown only when non-zero. |
+| not used | Everything else. This is not a penalty: a lesson like "never force-push" is followed by *not* doing something, which a word match cannot see. The outcome review below is what catches those. |
+
+A used lesson gets a verdict for the turn it was used in. The first rule that applies wins:
+
+1. **Claude's own verdict** through `mubit_outcome`: success or partial means worked, failure
+   means failed.
+2. **Your next prompt corrects Claude** — "no, that's wrong", "still failing", "revert
+   that" — means failed. A correction never counts across `/clear` or for a slash command, and
+   a bare "no" answering a question Claude asked is an answer, not a correction.
+3. **The turn's last tool call that changed something failed** means failed. Reads and
+   searches do not count, so a `grep` that matched nothing is not a failure.
+4. **You sent another prompt** means worked.
+5. Otherwise the lesson is **waiting on your reply**.
+
+A lesson used on several turns shows as failed if any of them failed, then waiting if any is
+still waiting, and worked otherwise. `this turn` names up to two lessons this reply used. The
+`review` line appears only when something failed, or when a lesson has been shown three or more
+times and never used — a candidate for `/mubit-memory:forget`.
+
+The card is built from a local log (`scorecard/<session_id>.jsonl` under the plugin data
+directory, kept for 7 days) and costs no network call. Set `sessionScore` to `compact` for a
+single line or `off` to hide it. Nothing is measured, and no card is shown, while `capture` is
+off.
+
+### Crediting memory by id: the outcome review
+
+Mubit learns which memories help from outcomes. The plugin posts one automatically at the end
+of every turn, but the model's own judgement — "this lesson helped", "this one was wrong" —
+is the stronger signal, and it used to be almost impossible for Claude to give: memory arrived
+as plain lines with no id to name.
+
+Now every injected memory line starts with a short id:
+
+```
+## Lessons
+- [m7k2q] run vitest with --pool=forks; the thread pool hangs on the native module
+- (seen earlier) [m3jd9] — use npm ci in CI…
+```
+
+Claude passes those ids to `mubit_outcome`, and the plugin maps each one back to the entry's
+real reference id before the call leaves your machine. `outcomeReview` decides how hard Claude
+is asked to do it:
+
+| Value | What happens |
+| --- | --- |
+| `stop` (default in Claude Code) | Everything `nudge` does, plus: when a turn showed lessons that were new to Claude or that its reply appeared to use, the Stop hook asks Claude once to review them. Claude credits the ones that helped (`success`), flags the ones that misled it (`failure`), saves a corrected lesson with `mubit_learned` when one was wrong, and ends with a one-line `Memory review:` summary. |
+| `nudge` (default in Codex) | One sentence in the memory block asks Claude to credit what helped or misled it before finishing. In Claude Code, `mubit_outcome` and `mubit_learned` are also kept loaded rather than deferred behind tool search, so reporting costs one call instead of two. |
+| `off` | No sentence, no review, and the two tools are deferred like the rest. The ids stay on the lines. |
+
+The review costs one extra short model step on the turns that trigger it. Claude Code labels any
+continuation a Stop hook asks for as **"Stop hook error occurred"**, even though nothing failed
+— that label is the review running. Set `outcomeReview` to `nudge` if you would rather not see
+it. With `outcomeMode: off` there is no review at all. Codex defaults to `nudge` because a Stop
+continuation has not been verified there.
+
+What reaches the server:
+
+- The automatic outcome now reinforces only the entries the reply actually used, instead of
+  everything that was injected that turn.
+- An entry Claude credited or blamed itself is left to its verdict, so it is never counted
+  twice for one turn.
+- When your next prompt corrects Claude, a failure (−0.3) is posted against the entries the
+  previous reply used.
 
 ---
 
@@ -652,12 +743,24 @@ on it — the plugin denies nothing at any exit it controls, and it exits 0 on e
 including the path where its own internal deadline fires — but if you write your own pre-tool
 hook, do not carry the assumption forward.
 
+### The scorecard and the outcome review
+
+`sessionScore`, default **`full`** (`off` in Codex): `full` prints the card described in
+[The session scorecard](#the-session-scorecard) under every reply that showed a lesson,
+`compact` prints a one-line summary instead, `off` prints nothing.
+
+`outcomeReview`, default **`stop`** (`nudge` in Codex): how hard Claude is asked to credit the
+memory it used. See [Crediting memory by id](#crediting-memory-by-id-the-outcome-review) for
+what each value does and what the review costs.
+
 ### Quieting it temporarily
 
 ```bash
 MUBIT_CC_CAPTURE=0 claude    # stop capturing, keep recall
 MUBIT_CC_RECALL=0 claude     # stop injecting, keep capturing
 MUBIT_CC_PRE_TOOL_WARNINGS=0 claude   # stop the pre-command reminders (already the default)
+MUBIT_CC_SESSION_SCORE=off claude     # hide the scorecard under each reply
+MUBIT_CC_OUTCOME_REVIEW=nudge claude  # no end-of-turn review step, keep the one-line ask
 ```
 
 ### Fewer MCP tools
