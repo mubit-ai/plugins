@@ -44,10 +44,10 @@ around it.
 
 `mcp__mubit__mubit_learned` returns when the write is **queued**, not stored. Do not
 immediately search for what you just saved; it will not be there yet. Ingest runs
-asynchronously — the item is embedded and indexed after the call returns, so a search fired
-in the same turn honestly returns nothing and that is not a sign that memory is broken. The
-same applies to `mubit-memory:reflect`: reflection only sees items the server has already
-indexed, so reflecting seconds after a write reports zero lessons where reflecting a minute
+asynchronously — the item becomes searchable a little after the call returns, so a search
+fired in the same turn honestly returns nothing and that is not a sign that memory is broken.
+The same applies to `mubit-memory:reflect`: reflection only sees items that are already
+searchable, so reflecting seconds after a write reports zero lessons where reflecting a minute
 later reports them.
 
 Note the one place the tool is narrower than the table: `mcp__mubit__mubit_learned` is the
@@ -57,7 +57,6 @@ plugin clamps it there on purpose — anything wider is read back by unrelated p
 the run id is stable for a project: a lesson written here is recalled here tomorrow, **and it
 is recalled by a Claude Code session in the same directory too**, because both harnesses
 derive the same run. It simply stops following you into work it has nothing to do with. Use
-the table to decide what the entry *is* and to word it accordingly, and let scope widening
-happen the way it is supposed to — through the explicit reflect path, which is the only thing
-that promotes a lesson beyond its own run. To raise the ceiling on what any MCP write may
-claim, set `MUBIT_MCP_LESSON_SCOPE`.
+the table to decide what the entry *is* and to word it accordingly, and leave wider reach to
+the explicit reflect path, which is how lessons reach later sessions. To raise the ceiling on
+what any MCP write may claim, set `MUBIT_MCP_LESSON_SCOPE`.

@@ -20,8 +20,8 @@ Most of the bundle is our own code (`@mubit-ai/mcp`, `@mubit-ai/sdk`), covered b
 | `long` | Apache-2.0 | Copyright 2016 Daniel Wirtz | <https://github.com/dcodeIO/long.js> |
 | `lodash.camelcase` | MIT | Copyright John-David Dalton (Lodash) | <https://github.com/lodash/lodash> |
 
-Versions are resolved at build time by the source repository's `mcp/package-lock.json`
-(this published tree does not carry the lockfile); `@grpc/grpc-js` also embeds its version
+Versions are resolved when the vendored server is built (this tree does not carry its
+lockfile); `@grpc/grpc-js` also embeds its version
 string in the bundle, so `grep 'grpc-node-js/' mcp/dist/server.js` reads back what shipped.
 
 1. The TypeScript SDK's upstream `LICENSE` is transitional: code contributed before the
