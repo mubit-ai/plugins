@@ -2164,6 +2164,49 @@ var init_runid = __esm({
   }
 });
 
+// ../claude-code/lib/codex-rollout.mjs
+function isHookFeedback(text) {
+  const end = text.trimEnd().length;
+  let at = 0;
+  do {
+    HOOK_PROMPT_OPEN_RE.lastIndex = at;
+    if (!HOOK_PROMPT_OPEN_RE.test(text)) return false;
+    const close = text.indexOf(HOOK_PROMPT_CLOSE, HOOK_PROMPT_OPEN_RE.lastIndex);
+    if (close === -1) return false;
+    at = close + HOOK_PROMPT_CLOSE.length;
+  } while (at < end);
+  return true;
+}
+function isInjectedUserText(text, opts) {
+  if (typeof text !== "string") return false;
+  if (INJECTED_USER_RE.test(text) || isHookFeedback(text)) return true;
+  return !opts?.keepUserActions && USER_ACTION_RE.test(text);
+}
+function stripInjectedBlocks(content, opts) {
+  if (typeof content === "string") return isInjectedUserText(content, opts) ? "" : content;
+  if (!Array.isArray(content)) return content;
+  return content.filter((b) => !(b && typeof b === "object" && !Array.isArray(b) && isInjectedUserText(b.text, opts)));
+}
+var TAIL_BYTES, HEAD_BYTES, INJECTED_USER_RE, USER_ACTION_RE, HOOK_PROMPT_OPEN_RE, HOOK_PROMPT_CLOSE, NOT_FOUND;
+var init_codex_rollout = __esm({
+  "../claude-code/lib/codex-rollout.mjs"() {
+    init_transcript();
+    TAIL_BYTES = 512 * 1024;
+    HEAD_BYTES = 256 * 1024;
+    INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
+    USER_ACTION_RE = /^\s*<(?:turn_aborted|user_shell_command)\b/;
+    HOOK_PROMPT_OPEN_RE = /\s*<hook_prompt(?:\s[^>]*)?>/y;
+    HOOK_PROMPT_CLOSE = "</hook_prompt>";
+    NOT_FOUND = Object.freeze({
+      found: false,
+      failed: false,
+      exitCode: null,
+      durationMs: null,
+      status: ""
+    });
+  }
+});
+
 // ../claude-code/lib/transcript.mjs
 function parseLine(line) {
   const s = typeof line === "string" ? line.trim() : "";
@@ -2209,7 +2252,9 @@ function renderEntry(line, opts = {}) {
   const entry = parseLine(s);
   if (!entry) return s;
   const message = messageRecord(entry);
-  const body = messageText(message.content ?? entry.content ?? entry.text, opts);
+  let content = message.content ?? entry.content ?? entry.text;
+  if (message === entry.payload && str2(message.role) === "user") content = stripInjectedBlocks(content, { keepUserActions: true });
+  const body = messageText(content, opts);
   if (!body.trim()) return "";
   const role = str2(message.role) || str2(entry.role) || str2(entry.type) || "message";
   return `${role}: ${body}`;
@@ -2223,6 +2268,7 @@ function str2(v) {
 var CHUNK_BYTES, MAX_LINE_BYTES, TEXT_BLOCKS, MAX_CONTENT_DEPTH;
 var init_transcript = __esm({
   "../claude-code/lib/transcript.mjs"() {
+    init_codex_rollout();
     CHUNK_BYTES = 256 * 1024;
     MAX_LINE_BYTES = 2 * 1024 * 1024;
     TEXT_BLOCKS = /* @__PURE__ */ new Set(["text", "input_text", "output_text"]);

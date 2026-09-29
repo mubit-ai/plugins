@@ -178,14 +178,31 @@ function posInt(v, d) {
 // lib/codex-rollout.mjs
 var TAIL_BYTES = 512 * 1024;
 var HEAD_BYTES = 256 * 1024;
-var INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|turn_aborted|user_shell_command|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
-function isInjectedUserText(text) {
-  return typeof text === "string" && INJECTED_USER_RE.test(text);
+var INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
+var USER_ACTION_RE = /^\s*<(?:turn_aborted|user_shell_command)\b/;
+var HOOK_PROMPT_OPEN_RE = /\s*<hook_prompt(?:\s[^>]*)?>/y;
+var HOOK_PROMPT_CLOSE = "</hook_prompt>";
+function isHookFeedback(text) {
+  const end = text.trimEnd().length;
+  let at = 0;
+  do {
+    HOOK_PROMPT_OPEN_RE.lastIndex = at;
+    if (!HOOK_PROMPT_OPEN_RE.test(text)) return false;
+    const close = text.indexOf(HOOK_PROMPT_CLOSE, HOOK_PROMPT_OPEN_RE.lastIndex);
+    if (close === -1) return false;
+    at = close + HOOK_PROMPT_CLOSE.length;
+  } while (at < end);
+  return true;
 }
-function stripInjectedBlocks(content) {
-  if (typeof content === "string") return isInjectedUserText(content) ? "" : content;
+function isInjectedUserText(text, opts) {
+  if (typeof text !== "string") return false;
+  if (INJECTED_USER_RE.test(text) || isHookFeedback(text)) return true;
+  return !opts?.keepUserActions && USER_ACTION_RE.test(text);
+}
+function stripInjectedBlocks(content, opts) {
+  if (typeof content === "string") return isInjectedUserText(content, opts) ? "" : content;
   if (!Array.isArray(content)) return content;
-  return content.filter((b) => !(b && typeof b === "object" && !Array.isArray(b) && isInjectedUserText(b.text)));
+  return content.filter((b) => !(b && typeof b === "object" && !Array.isArray(b) && isInjectedUserText(b.text, opts)));
 }
 var NOT_FOUND = Object.freeze({
   found: false,

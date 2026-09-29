@@ -679,6 +679,7 @@ function str2(v) {
 var CHUNK_BYTES, MAX_LINE_BYTES, TEXT_BLOCKS, MAX_CONTENT_DEPTH;
 var init_transcript = __esm({
   "../claude-code/lib/transcript.mjs"() {
+    init_codex_rollout();
     CHUNK_BYTES = 256 * 1024;
     MAX_LINE_BYTES = 2 * 1024 * 1024;
     TEXT_BLOCKS = /* @__PURE__ */ new Set(["text", "input_text", "output_text"]);
@@ -688,13 +689,27 @@ var init_transcript = __esm({
 
 // ../claude-code/lib/codex-rollout.mjs
 import { openSync as openSync2, readSync, closeSync as closeSync2, fstatSync } from "node:fs";
-function isInjectedUserText(text) {
-  return typeof text === "string" && INJECTED_USER_RE.test(text);
+function isHookFeedback(text) {
+  const end = text.trimEnd().length;
+  let at = 0;
+  do {
+    HOOK_PROMPT_OPEN_RE.lastIndex = at;
+    if (!HOOK_PROMPT_OPEN_RE.test(text)) return false;
+    const close = text.indexOf(HOOK_PROMPT_CLOSE, HOOK_PROMPT_OPEN_RE.lastIndex);
+    if (close === -1) return false;
+    at = close + HOOK_PROMPT_CLOSE.length;
+  } while (at < end);
+  return true;
 }
-function stripInjectedBlocks(content) {
-  if (typeof content === "string") return isInjectedUserText(content) ? "" : content;
+function isInjectedUserText(text, opts) {
+  if (typeof text !== "string") return false;
+  if (INJECTED_USER_RE.test(text) || isHookFeedback(text)) return true;
+  return !opts?.keepUserActions && USER_ACTION_RE.test(text);
+}
+function stripInjectedBlocks(content, opts) {
+  if (typeof content === "string") return isInjectedUserText(content, opts) ? "" : content;
   if (!Array.isArray(content)) return content;
-  return content.filter((b) => !(b && typeof b === "object" && !Array.isArray(b) && isInjectedUserText(b.text)));
+  return content.filter((b) => !(b && typeof b === "object" && !Array.isArray(b) && isInjectedUserText(b.text, opts)));
 }
 function toolCallRecord(transcriptPath, toolUseId, opts = {}) {
   const path = typeof transcriptPath === "string" ? transcriptPath.trim() : "";
@@ -799,14 +814,17 @@ function readHead(path, bytes) {
     }
   }
 }
-var TAIL_BYTES, HEAD_BYTES, MAX_PROMPT_CHARS, INJECTED_USER_RE, NOT_FOUND;
+var TAIL_BYTES, HEAD_BYTES, MAX_PROMPT_CHARS, INJECTED_USER_RE, USER_ACTION_RE, HOOK_PROMPT_OPEN_RE, HOOK_PROMPT_CLOSE, NOT_FOUND;
 var init_codex_rollout = __esm({
   "../claude-code/lib/codex-rollout.mjs"() {
     init_transcript();
     TAIL_BYTES = 512 * 1024;
     HEAD_BYTES = 256 * 1024;
     MAX_PROMPT_CHARS = 4096;
-    INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|turn_aborted|user_shell_command|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
+    INJECTED_USER_RE = /^\s*(?:<(?:environment_context|recommended_plugins|skill|image)\b|# AGENTS\.md instructions|# Files mentioned)/;
+    USER_ACTION_RE = /^\s*<(?:turn_aborted|user_shell_command)\b/;
+    HOOK_PROMPT_OPEN_RE = /\s*<hook_prompt(?:\s[^>]*)?>/y;
+    HOOK_PROMPT_CLOSE = "</hook_prompt>";
     NOT_FOUND = Object.freeze({
       found: false,
       failed: false,
