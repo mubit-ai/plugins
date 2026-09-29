@@ -406,6 +406,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -479,6 +489,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -624,7 +636,7 @@ var init_config = __esm({
     ];
     CACHE_FILE2 = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION2 = 3;
+    CACHE_VERSION2 = 4;
     MAX_ENV_TAGS = 8;
     MODE = "hosted";
     LANG_FILES = [
@@ -872,9 +884,9 @@ function scrub(text, count) {
 }
 function entropy(s) {
   if (s === null || s === void 0) return 0;
-  const str6 = typeof s === "string" ? s : String(s);
-  if (str6.length === 0) return 0;
-  const buf = Buffer.from(str6, "utf8");
+  const str8 = typeof s === "string" ? s : String(s);
+  if (str8.length === 0) return 0;
+  const buf = Buffer.from(str8, "utf8");
   const n = buf.length;
   if (n === 0) return 0;
   const counts = new Uint32Array(256);
@@ -1705,7 +1717,59 @@ function classifyTurn(prompt, lastAssistantMessage, opts = {}) {
     agentType: isSubagent && typeof o.agent_type === "string" ? o.agent_type : ""
   };
 }
-var CONTENT_TYPE, TOOL_TABLE, FALLBACK, MCP, FAILURE, MCP_PREFIX;
+function toolIntent(toolName, toolInput) {
+  try {
+    const name = typeof toolName === "string" ? toolName.trim() : "";
+    if (!name) return "other";
+    if (READ_TOOLS.has(name)) return "read";
+    if (SEARCH_TOOLS.has(name)) return "search";
+    if (WRITE_TOOLS.has(name)) return "write";
+    if (SHELL_TOOLS.has(name)) return shellIntent(toolInput);
+    const own = OWN_MCP_PREFIXES2.find((p) => name.startsWith(p));
+    if (own && OWN_READ_TOOLS.has(name.slice(own.length))) return "read";
+    return "other";
+  } catch {
+    return "other";
+  }
+}
+function shellIntent(input) {
+  const raw = input && typeof input === "object" ? input.command : void 0;
+  const cmd = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.filter((s) => typeof s === "string").join(" ") : "";
+  if (!cmd.trim() || cmd.length > MAX_SHELL_PARSE) return "exec";
+  const cleaned = cmd.replace(/&>\s*\/dev\/null/g, " ").replace(/\d*>>?\s*\/dev\/null/g, " ").replace(/\d*>&\d+/g, " ");
+  if (/[<>]/.test(cleaned.replace(/<<</g, ""))) return "exec";
+  let search = false;
+  for (const segment of cleaned.split(/\|\||&&|;|\|/)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens.shift();
+    if (!tokens.length || tokens[0] === "cd") continue;
+    const verb = tokens[0].split("/").pop() ?? "";
+    if (SEARCH_VERBS.has(verb)) {
+      search = true;
+      continue;
+    }
+    if (verb === "git") {
+      if (!READ_GIT.has(gitSubcommand(tokens))) return "exec";
+      continue;
+    }
+    if (verb === "sed" && tokens.some((t) => t === "--in-place" || /^-[a-zA-Z]*i/.test(t))) return "exec";
+    if (!READ_VERBS.has(verb)) return "exec";
+  }
+  return search ? "search" : "read";
+}
+function gitSubcommand(tokens) {
+  for (let i = 1; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t === "-C" || t === "-c") {
+      i++;
+      continue;
+    }
+    if (t.startsWith("-")) continue;
+    return t;
+  }
+  return "";
+}
+var CONTENT_TYPE, TOOL_TABLE, FALLBACK, MCP, FAILURE, MCP_PREFIX, READ_TOOLS, SEARCH_TOOLS, WRITE_TOOLS, SHELL_TOOLS, OWN_MCP_PREFIXES2, OWN_READ_TOOLS, SEARCH_VERBS, READ_VERBS, READ_GIT, MAX_SHELL_PARSE;
 var init_classify = __esm({
   "../claude-code/lib/classify.mjs"() {
     CONTENT_TYPE = "text";
@@ -1773,6 +1837,62 @@ var init_classify = __esm({
     FAILURE = /** @type {[string, string]} */
     ["trace", "high"];
     MCP_PREFIX = "mcp__";
+    READ_TOOLS = /* @__PURE__ */ new Set([
+      "Read",
+      "NotebookRead",
+      "WebFetch",
+      "LSP",
+      "TaskOutput",
+      "BashOutput",
+      "ToolSearch",
+      "ListMcpResourcesTool",
+      "ReadMcpResourceTool",
+      "view_image"
+    ]);
+    SEARCH_TOOLS = /* @__PURE__ */ new Set(["Grep", "Glob", "WebSearch", "web_search"]);
+    WRITE_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"]);
+    SHELL_TOOLS = /* @__PURE__ */ new Set(["Bash", "shell", "exec_command", "write_stdin", "KillShell"]);
+    OWN_MCP_PREFIXES2 = ["mcp__plugin_mubit-memory_mubit__", "mcp__mubit__"];
+    OWN_READ_TOOLS = /* @__PURE__ */ new Set([
+      "mubit_recall",
+      "mubit_dereference",
+      "mubit_status",
+      "mubit_memory_health",
+      "mubit_diagnose"
+    ]);
+    SEARCH_VERBS = /* @__PURE__ */ new Set(["grep", "rg", "ag", "ack", "find", "fd"]);
+    READ_VERBS = /* @__PURE__ */ new Set([
+      "ls",
+      "cat",
+      "head",
+      "tail",
+      "less",
+      "wc",
+      "stat",
+      "file",
+      "which",
+      "type",
+      "echo",
+      "printf",
+      "pwd",
+      "tree",
+      "du",
+      "df",
+      "diff",
+      "cmp",
+      "test",
+      "[",
+      "jq",
+      "sort",
+      "uniq",
+      "cut",
+      "tr",
+      "nl",
+      "sed",
+      "awk"
+    ]);
+    READ_GIT = /* @__PURE__ */ new Set(["status", "diff", "log", "show", "grep", "rev-parse", "branch", "ls-files", "blame"]);
+    MAX_SHELL_PARSE = 4096;
   }
 });
 
@@ -1780,15 +1900,50 @@ var init_classify = __esm({
 function decideOutcome(turn) {
   if (!isObject4(turn)) return { post: false, reason: "not_a_turn" };
   if (numOr(turn.outcome_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "corrected" };
   if (str3(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
   if (numOr(turn.outcome_attempts, 0) >= MAX_OUTCOME_ATTEMPTS) {
     return { post: false, reason: "attempts_exhausted" };
   }
-  const entryIds = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
-  if (entryIds.length === 0) return { post: false, reason: "nothing_injected" };
-  const failed = str3(turn.outcome).toLowerCase() === "failure";
+  const recalled = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
   const ev = isObject4(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (recalled.length === 0 && !entries) return { post: false, reason: "nothing_injected" };
+  const failed = str3(turn.outcome).toLowerCase() === "failure";
+  const toolFailure = failed && str3(turn.failure_reason) === "tool_failure";
+  if (entries) {
+    const refs = Object.keys(entries);
+    const used = refs.filter((r) => entries[r].used === true);
+    const measured = refs.some((r) => entries[r].used === false);
+    if (used.length > 0) {
+      const explicit2 = new Set(explicitIdsOf(turn));
+      const ids2 = used.filter((r) => !explicit2.has(r));
+      if (ids2.length === 0) return { post: false, reason: "explicit_only" };
+      return {
+        post: true,
+        outcome: failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
+        signal: failed ? SIGNAL_FAILURE : SIGNAL_SUCCESS,
+        entryIds: ids2,
+        rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure)
+      };
+    }
+    if (measured && explicitIdsOf(turn).length > 0) return { post: false, reason: "explicit_only" };
+    if (measured) {
+      return {
+        post: true,
+        outcome: OUTCOME_UNUSED,
+        signal: SIGNAL_UNUSED,
+        entryIds: [],
+        rationale: entryRationale(ev, 0, refs.length, failed, toolFailure)
+      };
+    }
+    if (recalled.length === 0) return { post: false, reason: "nothing_injected" };
+  }
   const unused = ev.used === false;
+  const explicit = new Set(explicitIdsOf(turn));
+  if (unused && explicit.size > 0) return { post: false, reason: "explicit_only" };
+  const ids = recalled.filter((r) => !explicit.has(r));
+  if (!unused && ids.length === 0) return { post: false, reason: "explicit_only" };
   return {
     post: true,
     outcome: unused ? OUTCOME_UNUSED : failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
@@ -1798,21 +1953,44 @@ function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : entryIds,
-    rationale: rationaleFor(ev, unused, failed, entryIds.length)
+    entryIds: unused ? [] : ids,
+    rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure)
   };
 }
-function rationaleFor(ev, unused, failed, n) {
+function rationaleFor(ev, unused, failed, n, toolFailure = false) {
   const method = str3(ev.method);
   const by = method ? ` (${method})` : "";
   const counts = `${numOr(ev.matched, 0)} of ${numOr(ev.candidates, 0)} injected memory terms`;
   if (unused) {
     return `Claude Code injected ${n} ${n === 1 ? "memory" : "memories"} and the reply carried none of their vocabulary \u2014 ${counts}${by}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
   }
+  const ended = toolFailure ? "Claude Code turn ended on a failed tool call" : "Claude Code turn ended in failure";
   if (ev.used === true) {
-    return failed ? `Claude Code turn ended in failure; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
+    return failed ? `${ended}; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
   }
-  return failed ? "Claude Code turn ended in failure after these memories were injected." : "Claude Code turn completed after these memories were injected.";
+  return failed ? `${ended} after these memories were injected.` : "Claude Code turn completed after these memories were injected.";
+}
+function entryRationale(ev, used, of, failed, toolFailure) {
+  const method = str3(ev.entry_method) || "memory-term-echo/v2-entry";
+  const counts = `the reply used ${used} of ${of} injected ${of === 1 ? "memory" : "memories"} (${method})`;
+  if (used === 0) {
+    return `Claude Code turn completed; ${counts}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
+  }
+  if (!failed) return `Claude Code turn completed; ${counts}.`;
+  return toolFailure ? `Claude Code turn ended on a failed tool call; ${counts}.` : `Claude Code turn ended in failure; ${counts}.`;
+}
+function entriesOf(ev) {
+  const e = ev.entries;
+  if (!isObject4(e)) return null;
+  const out = {};
+  for (const [ref, v] of Object.entries(e)) {
+    if (ref.trim() && isObject4(v)) out[ref] = /** @type {any} */
+    v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function explicitIdsOf(turn) {
+  return Array.isArray(turn.explicit_ids) ? turn.explicit_ids.filter((v) => typeof v === "string" && v.trim()) : [];
 }
 function isObject4(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -2179,19 +2357,646 @@ var init_filechange = __esm({
   }
 });
 
+// ../claude-code/lib/handles.mjs
+function handleFor(ref) {
+  const s = typeof ref === "string" ? ref.trim() : "";
+  if (!s) return "";
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  let out = "m";
+  for (let i = 0; i < LEN; i++) {
+    out += ALPHABET[h % ALPHABET.length];
+    h = Math.floor(h / ALPHABET.length);
+  }
+  return out;
+}
+function resolveHandles(ids, knownRefs) {
+  const byHandle = /* @__PURE__ */ new Map();
+  for (const ref of Array.isArray(knownRefs) ? knownRefs : []) {
+    const h = handleFor(ref);
+    if (h) byHandle.set(h, ref);
+  }
+  const out = [];
+  const unresolved = [];
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    if (typeof raw !== "string") continue;
+    const bare = bareOf(raw);
+    if (BARE_RE.test(bare)) {
+      const ref = byHandle.get(bare);
+      if (ref) out.push(ref);
+      else {
+        out.push(bare);
+        unresolved.push(bare);
+      }
+    } else if (raw.trim()) {
+      out.push(raw.trim());
+    }
+  }
+  return { ids: out, unresolved };
+}
+function knownRefsFromRows(rows) {
+  const last = /* @__PURE__ */ new Map();
+  let n = 0;
+  const note = (ref) => {
+    if (typeof ref === "string" && ref.trim()) last.set(ref.trim(), n++);
+  };
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== "object") continue;
+    if (row.kind !== "start" && row.kind !== "shown" && row.kind !== "refs") continue;
+    if (row.lessons && typeof row.lessons === "object") for (const ref of Object.keys(row.lessons)) note(ref);
+    if (Array.isArray(row.refs)) for (const ref of row.refs) note(ref);
+  }
+  return [...last.entries()].sort((a, b) => a[1] - b[1]).map(([ref]) => ref);
+}
+function bareOf(v) {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s.startsWith("[") && s.endsWith("]") ? s.slice(1, -1).trim() : s;
+}
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
+// ../claude-code/lib/review.mjs
+function reviewCandidates(lessons, opts = {}) {
+  try {
+    const max = Number(opts?.max) > 0 ? Math.trunc(Number(opts.max)) : DEFAULT_MAX;
+    const keep = (Array.isArray(lessons) ? lessons : []).filter((l) => l && typeof l === "object" && str5(l.ref) && str5(l.handle) && !VERDICTS.has(str5(l.explicit).toLowerCase()) && (l.pointer !== true || l.used === true));
+    const used = keep.filter((l) => l.used === true);
+    const rest = keep.filter((l) => l.used !== true);
+    return [...used, ...rest].slice(0, max);
+  } catch {
+    return [];
+  }
+}
+function shouldReview(o) {
+  if (!o || typeof o !== "object") return false;
+  if (str5(o.outcomeReview) !== "stop") return false;
+  if (str5(o.outcomeMode) === "off") return false;
+  if (o.stopHookActive === true) return false;
+  if (o.alreadyRequested === true) return false;
+  if (str5(o.apiError)) return false;
+  if (o.isSubagent === true) return false;
+  return Array.isArray(o.candidates) && o.candidates.length > 0;
+}
+function reviewReason(candidates) {
+  const list2 = (Array.isArray(candidates) ? candidates : []).filter((l) => l && typeof l === "object" && str5(l.handle));
+  if (!list2.length) return "";
+  const lines = ["Mubit memory review (once per turn). Lessons in your context this turn:"];
+  for (const l of list2) {
+    lines.push(`- [${oneLine(l.handle, 16)}] ${oneLine(l.title, MAX_TITLE_CHARS)}${l.used === true ? " (your reply appears to use it)" : ""}`);
+  }
+  lines.push(
+    'Call mubit_outcome with reference_id "global", outcome "success" and entry_ids set to the ids that helped; for any that were wrong or misled you, a second call with outcome "failure" and a one-line rationale. Skip the rest.',
+    "If a lesson was wrong or incomplete, also save a corrected one with mubit_learned.",
+    'Then end with one short line starting "Memory review:" naming what you credited; do not repeat your answer.'
+  );
+  return lines.join("\n");
+}
+function stripReviewLine(text) {
+  return typeof text === "string" ? text.replace(REVIEW_LINE, "").replace(/\n{3,}/g, "\n\n").trim() : "";
+}
+function str5(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+function oneLine(v, max) {
+  const s = str5(v).replace(/\s+/g, " ");
+  return s.length > max ? `${s.slice(0, max)}\u2026` : s;
+}
+var DEFAULT_MAX, VERDICTS, MAX_TITLE_CHARS, REVIEW_LINE;
+var init_review = __esm({
+  "../claude-code/lib/review.mjs"() {
+    DEFAULT_MAX = 6;
+    VERDICTS = /* @__PURE__ */ new Set(["success", "failure", "partial", "neutral"]);
+    MAX_TITLE_CHARS = 64;
+    REVIEW_LINE = /^[ \t]*(?:[-*>][ \t]+)?[*_]{0,2}memory review[*_]{0,2}:.*$/gim;
+  }
+});
+
+// ../claude-code/lib/scorecard.mjs
+function foldScorecard(rows, currentPromptId) {
+  const list2 = Array.isArray(rows) ? rows.filter(isObject7) : [];
+  const order = [];
+  const prompts = /* @__PURE__ */ new Map();
+  const shown = /* @__PURE__ */ new Map();
+  const tools = /* @__PURE__ */ new Map();
+  const explicit = /* @__PURE__ */ new Map();
+  const turns = /* @__PURE__ */ new Map();
+  const clears = [];
+  let learned = 0;
+  let tokens = 0;
+  let pendingStanding = null;
+  const seePrompt = (id, pos) => {
+    if (!prompts.has(id)) {
+      prompts.set(id, { ...markOf(pos), standing: null });
+      order.push(id);
+    }
+    return (
+      /** @type {any} */
+      prompts.get(id)
+    );
+  };
+  list2.forEach((row, pos) => {
+    const id = str6(row.prompt_id);
+    switch (row.kind) {
+      case "start":
+        tokens += num2(row.tokens);
+        pendingStanding = isObject7(row.lessons) ? row.lessons : {};
+        if (str6(row.source) === "clear") clears.push(pos);
+        break;
+      case "prompt": {
+        if (!id) break;
+        const p = seePrompt(id, pos);
+        flagPrompt(p, row);
+        if (!p.slash && pendingStanding) {
+          p.standing = pendingStanding;
+          pendingStanding = null;
+        }
+        break;
+      }
+      case "shown":
+        if (!id) break;
+        seePrompt(id, pos);
+        tokens += num2(row.tokens);
+        if (isObject7(row.lessons)) shown.set(id, { ...shown.get(id) ?? {}, ...row.lessons });
+        break;
+      case "tool":
+        if (!id) break;
+        tools.set(id, [...tools.get(id) ?? [], { intent: str6(row.intent), failed: row.failed === true }]);
+        break;
+      case "explicit": {
+        if (!id || !Array.isArray(row.ids)) break;
+        const m = explicit.get(id) ?? /* @__PURE__ */ new Map();
+        for (const ref of row.ids) if (typeof ref === "string" && ref) m.set(ref, str6(row.outcome).toLowerCase());
+        explicit.set(id, m);
+        break;
+      }
+      case "learned":
+        learned++;
+        break;
+      case "turn":
+        if (!id) break;
+        seePrompt(id, pos);
+        turns.set(id, row);
+        break;
+      default:
+        break;
+    }
+  });
+  const turnIds = order.filter((id) => !prompts.get(id)?.slash);
+  const ordinal = new Map(turnIds.map((id, i) => [id, i + 1]));
+  const byLesson = /* @__PURE__ */ new Map();
+  let lessonPrompts = 0;
+  let thisTurn = { promptId: str6(currentPromptId), shown: 0, used: [], checkable: false, lessons: [] };
+  turnIds.forEach((id, i) => {
+    const lessons = lessonsOf(prompts.get(id)?.standing ?? null, shown.get(id) ?? null);
+    const refs = Object.keys(lessons);
+    if (refs.length) lessonPrompts++;
+    const turn = turns.get(id) ?? null;
+    const verdicts = explicit.get(id) ?? /* @__PURE__ */ new Map();
+    const next = turnIds[i + 1] ?? "";
+    const views = [];
+    const usedTitles = [];
+    let checkable = false;
+    for (const ref of refs) {
+      const l = lessons[ref];
+      const echo = turn && !str6(turn.api_error) && isObject7(turn.lessons) && isObject7(turn.lessons[ref]) ? triState(turn.lessons[ref].used) : null;
+      const ex = verdicts.get(ref) ?? "";
+      let state = echo === true ? "used" : echo === false ? "not" : "unknown";
+      let verdict = "";
+      if (ex === "success" || ex === "partial") {
+        state = "used";
+        verdict = "worked";
+      } else if (ex === "failure") {
+        state = "used";
+        verdict = "failed";
+      } else if (ex === "neutral") state = "used";
+      if (state === "used" && !verdict) verdict = settle(id, next);
+      const entry = byLesson.get(ref) ?? { title: "", times: 0, states: [], verdicts: [] };
+      entry.title = l.title || entry.title;
+      entry.times++;
+      entry.states.push(state);
+      if (state === "used") entry.verdicts.push({ v: verdict, prompt: num2(ordinal.get(id)) });
+      byLesson.set(ref, entry);
+      if (state !== "unknown") checkable = true;
+      if (state === "used") usedTitles.push(l.title);
+      views.push({
+        ref,
+        handle: l.handle,
+        title: l.title,
+        pointer: l.pointer,
+        used: echo,
+        explicit: ex
+      });
+    }
+    if (id === str6(currentPromptId)) {
+      thisTurn = { promptId: id, shown: refs.length, used: usedTitles, checkable, lessons: views };
+    }
+  });
+  const counts = { shown: 0, used: 0, notUsed: 0, unknown: 0, worked: 0, failed: 0, waiting: 0 };
+  const failed = [];
+  let neverUsed = 0;
+  for (const [ref, l] of byLesson) {
+    counts.shown++;
+    if (l.states.includes("used")) {
+      counts.used++;
+      const bad = l.verdicts.filter((v) => v.v === "failed");
+      if (bad.length) {
+        counts.failed++;
+        failed.push({ ref, title: l.title, prompt: Math.max(...bad.map((v) => v.prompt)) });
+      } else if (l.verdicts.some((v) => v.v === "waiting")) counts.waiting++;
+      else counts.worked++;
+    } else if (l.states.includes("not")) {
+      counts.notUsed++;
+      if (l.times >= NEVER_USED_AFTER) neverUsed++;
+    } else {
+      counts.unknown++;
+    }
+  }
+  failed.sort((a, b) => b.prompt - a.prompt);
+  return {
+    prompts: turnIds.length,
+    lessonPrompts,
+    learned,
+    tokens,
+    lessons: counts,
+    thisTurn,
+    review: { failed, neverUsed }
+  };
+  function settle(id, next) {
+    const nextPrompt = next ? prompts.get(next) : null;
+    const from = num2(prompts.get(id)?.pos);
+    const to = num2(nextPrompt?.pos);
+    if (nextPrompt?.correction && !clears.some((c) => c > from && c < to)) return "failed";
+    const acting = (tools.get(id) ?? []).filter((t) => !READ_ONLY_INTENTS.has(t.intent));
+    if (acting.length && acting[acting.length - 1].failed) return "failed";
+    return nextPrompt ? "worked" : "waiting";
+  }
+}
+function markOf(pos) {
+  return { slash: false, correction: false, pos, flagged: false };
+}
+function flagPrompt(p, row) {
+  if (p.flagged) return;
+  p.flagged = true;
+  p.slash = row.slash === true;
+  p.correction = row.correction === true;
+}
+function renderScorecard(summary, mode) {
+  if (!isObject7(summary) || !summary.thisTurn || num2(summary.thisTurn.shown) <= 0) return "";
+  if (mode !== "full" && mode !== "compact") return "";
+  const s = (
+    /** @type {ScoreSummary} */
+    summary
+  );
+  const l = s.lessons;
+  const verdicts = [
+    l.worked ? `${l.worked} worked` : "",
+    l.failed ? `${l.failed} failed` : "",
+    l.waiting ? `${l.waiting} waiting` : ""
+  ].filter(Boolean);
+  const tail = [
+    s.learned ? `+${s.learned} learned` : "",
+    s.tokens ? `memory added ${formatTokens(s.tokens)} tok` : ""
+  ].filter(Boolean);
+  const head = `mubit \xB7 this session \xB7 lessons on ${s.lessonPrompts} of ${s.prompts} ${plural(s.prompts, "prompt")}`;
+  if (mode === "compact") {
+    return [head, `${l.used} of ${l.shown} ${plural(l.shown, "lesson")} used`, ...verdicts, ...tail].join(DOT);
+  }
+  const lines = [[head, ...tail].join(DOT), `  ${l.shown} ${plural(l.shown, "lesson")} shown`];
+  const usedDetail = verdicts.map((v) => v.endsWith(" waiting") ? `${v} on your reply` : v).join(DOT);
+  const usedLabel = `${l.used} used`;
+  const tree = [
+    l.used ? `${usedLabel.padEnd(Math.max(USED_LABEL_WIDTH, usedLabel.length + 2))}${usedDetail}` : "",
+    l.notUsed ? `${l.notUsed} not used` : "",
+    l.unknown ? `${l.unknown} unknown` : ""
+  ].filter(Boolean);
+  tree.forEach((row, i) => lines.push(`  ${i === tree.length - 1 ? "\u2514" : "\u251C"} ${row}`));
+  const t = s.thisTurn;
+  if (t.used.length) {
+    const named = t.used.slice(0, MAX_TURN_TITLES).map(quote).join(", ");
+    const more = t.used.length - MAX_TURN_TITLES;
+    lines.push(`  this turn: used ${named}${more > 0 ? ` +${more} more` : ""}`);
+  } else {
+    lines.push(`  this turn: shown ${t.shown}, none ${t.checkable ? "used" : "checkable"}`);
+  }
+  const review = [];
+  const failed = s.review?.failed ?? [];
+  if (failed.length) {
+    review.push(`${quote(failed[0].title)} failed on prompt ${failed[0].prompt}`);
+    if (failed.length > 1) review.push(`+${failed.length - 1} more failed`);
+  }
+  const never = num2(s.review?.neverUsed);
+  if (never) review.push(`${never} ${plural(never, "lesson")} shown ${NEVER_USED_AFTER}+ times and never used`);
+  if (review.length) lines.push(`  review: ${review.join(DOT)}`);
+  return lines.join("\n");
+}
+function lessonsOf(standing, recalled) {
+  const out = {};
+  for (const [ref, v] of Object.entries(standing ?? {})) {
+    if (!ref || !isObject7(v)) continue;
+    out[ref] = { title: str6(v.title), handle: str6(v.handle), pointer: false };
+  }
+  for (const [ref, v] of Object.entries(recalled ?? {})) {
+    if (!ref || !isObject7(v)) continue;
+    const prev = out[ref];
+    out[ref] = {
+      title: str6(v.title) || prev?.title || "",
+      handle: str6(v.handle) || prev?.handle || "",
+      pointer: v.pointer === true && (prev ? prev.pointer : true)
+    };
+  }
+  return out;
+}
+function formatTokens(n) {
+  const t = Math.max(0, Math.trunc(num2(n)));
+  return t >= 1e3 ? `${(t / 1e3).toFixed(1)}k` : String(t);
+}
+function plural(n, word) {
+  return n === 1 ? word : `${word}s`;
+}
+function quote(title) {
+  return `"${String(title ?? "").replace(/"/g, "'")}"`;
+}
+function triState(v) {
+  return v === true ? true : v === false ? false : null;
+}
+function isObject7(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+function str6(v) {
+  return typeof v === "string" ? v : "";
+}
+function num2(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+var DOT, MAX_TURN_TITLES, NEVER_USED_AFTER, READ_ONLY_INTENTS, USED_LABEL_WIDTH;
+var init_scorecard = __esm({
+  "../claude-code/lib/scorecard.mjs"() {
+    DOT = " \xB7 ";
+    MAX_TURN_TITLES = 2;
+    NEVER_USED_AFTER = 3;
+    READ_ONLY_INTENTS = /* @__PURE__ */ new Set(["read", "search"]);
+    USED_LABEL_WIDTH = 12;
+  }
+});
+
+// ../claude-code/lib/scorecard-log.mjs
+import {
+  closeSync as closeSync4,
+  fstatSync as fstatSync3,
+  openSync as openSync4,
+  readdirSync as readdirSync3,
+  readFileSync as readFileSync7,
+  readSync as readSync3,
+  statSync as statSync6,
+  writeSync as writeSync4
+} from "node:fs";
+import { dirname as dirname8, join as join11 } from "node:path";
+function scorecardPath(cfg, sessionId) {
+  const id = safeSegment(typeof sessionId === "string" ? sessionId.trim() : "", MAX_ID);
+  if (!id) return "";
+  return join11(resolveDataDir(cfg), SCORE_DIR, `${id}.jsonl`);
+}
+function appendScoreRow(cfg, sessionId, row) {
+  try {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    if (typeof row.kind !== "string" || !row.kind) return false;
+    const p = scorecardPath(cfg, sessionId);
+    if (!p || !ensureDir(dirname8(p))) return false;
+    const line = `${JSON.stringify({ v: SCORE_LOG_VERSION, at: Date.now(), ...row })}
+`;
+    const fd = openSync4(p, "a+");
+    try {
+      const st = fstatSync3(fd);
+      let prefix = "";
+      if (st.size > 0) {
+        const last = Buffer.alloc(1);
+        readSync3(fd, last, 0, 1, st.size - 1);
+        if (last[0] !== 10) prefix = "\n";
+      }
+      writeSync4(fd, prefix + line);
+    } finally {
+      closeSync4(fd);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function readScoreRows(cfg, sessionId, opts = {}) {
+  const p = scorecardPath(cfg, sessionId);
+  if (!p) return [];
+  return readRowsAt(p, opts);
+}
+function readRowsAt(p, opts = {}) {
+  try {
+    const size = statSync6(p).size;
+    const tail = Number(opts?.tailBytes);
+    const want = Number.isFinite(tail) && tail > 0 ? Math.min(tail, MAX_READ_BYTES) : MAX_READ_BYTES;
+    let text;
+    let partialHead = false;
+    if (size > want) {
+      const fd = openSync4(p, "r");
+      try {
+        const buf = Buffer.alloc(want);
+        readSync3(fd, buf, 0, want, size - want);
+        text = buf.toString("utf8");
+      } finally {
+        closeSync4(fd);
+      }
+      partialHead = true;
+    } else {
+      text = readFileSync7(p, "utf8");
+    }
+    const lines = text.split("\n");
+    if (partialHead) lines.shift();
+    const out = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line);
+        if (row && typeof row === "object" && !Array.isArray(row) && typeof row.kind === "string") {
+          out.push(row);
+        }
+      } catch {
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+var SCORE_LOG_VERSION, SCORE_DIR, SCORE_LOG_TTL_MS, MAX_READ_BYTES, MAX_ID;
+var init_scorecard_log = __esm({
+  "../claude-code/lib/scorecard-log.mjs"() {
+    init_state();
+    SCORE_LOG_VERSION = 1;
+    SCORE_DIR = "scorecard";
+    SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    MAX_READ_BYTES = 4 * 1024 * 1024;
+    MAX_ID = 128;
+  }
+});
+
+// ../claude-code/lib/assemble.mjs
+var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS;
+var init_assemble = __esm({
+  "../claude-code/lib/assemble.mjs"() {
+    init_handles();
+    SECTION_KEYS = Object.freeze([
+      "mental_models",
+      "active_rules",
+      "lessons",
+      "archive_blocks",
+      "handoffs",
+      "feedback",
+      "facts",
+      "observations",
+      "working_memory",
+      "traces",
+      "goals",
+      "checkpoints",
+      "logs",
+      "other"
+    ]);
+    EMISSION_ORDER = Object.freeze([
+      "mental_models",
+      "active_rules",
+      "lessons",
+      "facts",
+      "observations",
+      "working_memory",
+      "traces",
+      "goals"
+    ]);
+    RENDER_ORDER = Object.freeze([
+      ...EMISSION_ORDER,
+      ...SECTION_KEYS.filter((k) => !EMISSION_ORDER.includes(k))
+    ]);
+    SECTION_BY_ENTRY_TYPE = Object.freeze({
+      mental_model: "mental_models",
+      rule: "active_rules",
+      lesson: "lessons",
+      fact: "facts",
+      observation: "observations",
+      working_memory: "working_memory",
+      goal: "working_memory",
+      trace: "traces",
+      tool_output: "traces",
+      tool_input: "traces",
+      task_result: "traces",
+      step_outcome: "traces",
+      archive_block: "archive_blocks",
+      checkpoint: "checkpoints",
+      handoff: "handoffs",
+      feedback: "feedback"
+    });
+    HEADINGS = Object.freeze({
+      mental_models: "Mental models",
+      active_rules: "Active rules",
+      lessons: "Lessons",
+      archive_blocks: "Archive blocks",
+      handoffs: "Handoffs",
+      feedback: "Feedback",
+      facts: "Facts",
+      observations: "Observations",
+      working_memory: "Working memory",
+      traces: "Traces",
+      goals: "Goals",
+      checkpoints: "Checkpoints",
+      logs: "Logs",
+      other: "Other"
+    });
+  }
+});
+
+// ../claude-code/lib/terms.mjs
+function termSet(s) {
+  const set = /* @__PURE__ */ new Set();
+  for (const m of String(s ?? "").matchAll(TERM_RE)) set.add(m[0].toLowerCase());
+  return set;
+}
+function matchTerms(terms, text) {
+  return matchIn(haystackOf(text), terms);
+}
+function evaluateUse(entries, reply, opts = {}) {
+  const out = {};
+  try {
+    const exclude = new Set([...opts?.exclude ?? []].filter((t) => typeof t === "string").map((t) => t.toLowerCase()));
+    const list2 = [];
+    for (const e of Array.isArray(entries) ? entries : []) {
+      if (!e || typeof e !== "object" || typeof e.ref !== "string" || !e.ref) continue;
+      const terms = [...new Set((Array.isArray(e.terms) ? e.terms : []).filter((t) => typeof t === "string" && t.length >= TERM_MIN && t.length <= TERM_MAX).map((t) => t.toLowerCase()))];
+      list2.push({ ref: e.ref, terms });
+    }
+    const owners = /* @__PURE__ */ new Map();
+    for (const e of list2) for (const t of e.terms) owners.set(t, (owners.get(t) ?? 0) + 1);
+    const text = typeof reply === "string" ? reply : "";
+    const hay = text.trim() ? haystackOf(text.slice(0, MAX_ANSWER_SCAN)) : "";
+    for (const e of list2) {
+      const candidates = e.terms.filter((t) => owners.get(t) === 1 && !exclude.has(t));
+      const n = candidates.length;
+      if (n === 0) {
+        out[e.ref] = { used: null, matched: [], candidates: 0, reason: "no_distinct_terms" };
+        continue;
+      }
+      if (!hay) {
+        out[e.ref] = { used: null, matched: [], candidates: n, reason: "no_reply" };
+        continue;
+      }
+      const matched = matchIn(hay, candidates);
+      const threshold = n <= 2 ? n : Math.max(2, Math.ceil(n / 4));
+      out[e.ref] = { used: matched.length >= threshold, matched: matched.slice(0, MAX_MATCHED), candidates: n };
+    }
+  } catch {
+  }
+  return out;
+}
+function haystackOf(text) {
+  return ` ${String(text ?? "").toLowerCase().replace(/[^a-z0-9_]+/g, " ")} `;
+}
+function matchIn(hay, terms) {
+  return terms.filter((t) => hay.includes(` ${t}`));
+}
+var TERM_RE, MAX_PROMPT_SCAN, MAX_ANSWER_SCAN, TERM_MIN, TERM_MAX, MAX_MATCHED;
+var init_terms = __esm({
+  "../claude-code/lib/terms.mjs"() {
+    init_assemble();
+    init_handles();
+    init_redact();
+    TERM_RE = /[A-Za-z][A-Za-z0-9_]{3,23}/g;
+    MAX_PROMPT_SCAN = 16 * 1024;
+    MAX_ANSWER_SCAN = 64 * 1024;
+    TERM_MIN = 4;
+    TERM_MAX = 24;
+    MAX_MATCHED = 12;
+  }
+});
+
 // ../claude-code/lib/runid.mjs
 import { spawnSync as spawnSync3 } from "node:child_process";
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync7, readdirSync as readdirSync3, readFileSync as readFileSync7, statSync as statSync6 } from "node:fs";
-import { basename as basename2, dirname as dirname8, join as join11, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync7, readdirSync as readdirSync4, readFileSync as readFileSync8, statSync as statSync7 } from "node:fs";
+import { basename as basename2, dirname as dirname9, join as join12, resolve as resolve6 } from "node:path";
 function agentRole(env = process.env) {
   const host2 = typeof env?.MUBIT_CC_HOST === "string" ? env.MUBIT_CC_HOST.trim().toLowerCase() : "";
   return AGENT_ROLES[host2] ?? DEFAULT_AGENT_ROLE;
 }
 function deriveRunId(cfg, payload = {}, options = {}) {
-  const c = isObject7(cfg) ? cfg : {};
-  const p = isObject7(payload) ? payload : {};
-  const persist = !(isObject7(options) && options.persist === false);
+  const c = isObject8(cfg) ? cfg : {};
+  const p = isObject8(payload) ? payload : {};
+  const persist = !(isObject8(options) && options.persist === false);
   return assertUsableRunId(resolveRunId(c, p, persist));
 }
 function resolveRunId(cfg, payload, persist) {
@@ -2260,7 +3065,7 @@ function directoryRunId(cfg, payload, withBranch) {
   return branch ? `cc-${slug}-${branch}-${digest}` : `cc-${slug}-${digest}`;
 }
 function reusableRun(cfg, payload, prev, strategy) {
-  if (!isObject7(prev)) return "";
+  if (!isObject8(prev)) return "";
   const id = typeof prev.run_id === "string" ? prev.run_id.trim() : "";
   if (!id || FORBIDDEN_RUN_IDS.has(id.toLowerCase())) return "";
   const recorded = typeof prev.strategy === "string" ? prev.strategy.trim() : "";
@@ -2285,7 +3090,7 @@ function assertUsableRunId(id) {
   return s;
 }
 function turnKey(payload) {
-  if (!isObject7(payload)) return "";
+  if (!isObject8(payload)) return "";
   const prompt = typeof payload.prompt_id === "string" ? payload.prompt_id.trim() : "";
   if (prompt) return prompt;
   const turn = typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
@@ -2297,7 +3102,7 @@ function turnNumber(cfg, runId, payload) {
   try {
     const id = safeSegment(turnKey(payload));
     if (!id) return 0;
-    const staged = readJson(join11(runDir(cfg, runId), "turns", `${id}.json`), null);
+    const staged = readJson(join12(runDir(cfg, runId), "turns", `${id}.json`), null);
     const n = Number(staged?.turn_number);
     return Number.isFinite(n) && n > 0 ? n : 0;
   } catch {
@@ -2305,7 +3110,7 @@ function turnNumber(cfg, runId, payload) {
   }
 }
 function deriveAgentId(payload = {}) {
-  const p = isObject7(payload) ? payload : {};
+  const p = isObject8(payload) ? payload : {};
   const role = agentRole();
   const sub = subagentShort(p);
   return sub ? `${role}-sub-${sub}` : role;
@@ -2332,7 +3137,7 @@ function loadSessionMap(sessionId) {
     const file = sessionFileName(sessionId);
     if (!file) return null;
     const stored = readJson(sessionPath(file), null);
-    return isObject7(stored) ? stored : null;
+    return isObject8(stored) ? stored : null;
   } catch {
     return null;
   }
@@ -2340,10 +3145,10 @@ function loadSessionMap(sessionId) {
 function rememberRun(cfg, payload, sessionId, prev, next) {
   const now = Date.now();
   const isSessionStart = !!next.source || payload.hook_event_name === "SessionStart";
-  const moved = !isObject7(prev) || prev.run_id !== next.run_id || clearCount(prev) !== next.clear_count;
-  const lastSeen = isObject7(prev) ? numberOr2(prev.last_seen_at, 0) : 0;
+  const moved = !isObject8(prev) || prev.run_id !== next.run_id || clearCount(prev) !== next.clear_count;
+  const lastSeen = isObject8(prev) ? numberOr2(prev.last_seen_at, 0) : 0;
   if (!moved && !isSessionStart && now - lastSeen < TOUCH_INTERVAL_MS) return;
-  const inherited = isObject7(prev) ? prev : {};
+  const inherited = isObject8(prev) ? prev : {};
   const dir = projectDirOf(cfg, payload);
   saveSessionMap(sessionId, {
     ...inherited,
@@ -2377,7 +3182,7 @@ function normaliseRecord(record) {
     clear_count: 0,
     endpoint_hash: ""
   };
-  if (isObject7(record)) {
+  if (isObject8(record)) {
     for (const [k, v] of Object.entries(record)) {
       if (v !== void 0) out[k] = v;
     }
@@ -2385,7 +3190,7 @@ function normaliseRecord(record) {
   return out;
 }
 function sessionPath(file) {
-  return join11(dataDir({}), "sessions", `${file}.json`);
+  return join12(dataDir({}), "sessions", `${file}.json`);
 }
 function sessionFileName(sessionId) {
   const raw = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -2394,10 +3199,10 @@ function sessionFileName(sessionId) {
   return safe && safe !== "." && safe !== ".." ? safe : "";
 }
 function projectDirOf(cfg, payload = {}) {
-  return usableDir(isObject7(payload) ? payload.cwd : "") || firstString2(cfg.projectDir, process.env.CLAUDE_PROJECT_DIR) || safeCwd2();
+  return usableDir(isObject8(payload) ? payload.cwd : "") || firstString2(cfg.projectDir, process.env.CLAUDE_PROJECT_DIR) || safeCwd2();
 }
 function resolveProjectDir(cfg, payload = {}) {
-  return projectDirOf(isObject7(cfg) ? cfg : {}, payload);
+  return projectDirOf(isObject8(cfg) ? cfg : {}, payload);
 }
 function projectRootOf(dir) {
   return gitToplevel2(dir) || dir;
@@ -2406,7 +3211,7 @@ function usableDir(v) {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return "";
   try {
-    return statSync6(s).isDirectory() ? s : "";
+    return statSync7(s).isDirectory() ? s : "";
   } catch {
     return "";
   }
@@ -2436,8 +3241,8 @@ function hasGitDir2(start) {
   try {
     let cur = resolve6(start);
     for (let i = 0; i < 24; i++) {
-      if (existsSync7(join11(cur, ".git"))) return true;
-      const up = dirname8(cur);
+      if (existsSync7(join12(cur, ".git"))) return true;
+      const up = dirname9(cur);
       if (up === cur) return false;
       cur = up;
     }
@@ -2445,7 +3250,7 @@ function hasGitDir2(start) {
   }
   return false;
 }
-function isObject7(v) {
+function isObject8(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function firstString2(...vals) {
@@ -2459,7 +3264,7 @@ function numberOr2(v, d) {
   return Number.isFinite(n) ? n : d;
 }
 function clearCount(rec) {
-  if (!isObject7(rec)) return 0;
+  if (!isObject8(rec)) return 0;
   const n = Math.trunc(numberOr2(rec.clear_count, 0));
   return n > 0 ? n : 0;
 }
@@ -2472,7 +3277,7 @@ function normaliseSource(v) {
   return SOURCES.has(s) ? s : "";
 }
 function hostSessionId(payload) {
-  const v = isObject7(payload) && typeof payload.session_id === "string" ? payload.session_id.trim() : "";
+  const v = isObject8(payload) && typeof payload.session_id === "string" ? payload.session_id.trim() : "";
   if (!v || PLACEHOLDER_SESSION_IDS.has(v.toLowerCase())) return "";
   return v;
 }
@@ -2521,30 +3326,30 @@ var init_runid = __esm({
 
 // ../claude-code/lib/spool.mjs
 import {
-  closeSync as closeSync4,
+  closeSync as closeSync5,
   existsSync as existsSync8,
   linkSync,
-  openSync as openSync4,
-  readdirSync as readdirSync4,
-  readFileSync as readFileSync8,
+  openSync as openSync5,
+  readdirSync as readdirSync5,
+  readFileSync as readFileSync9,
   renameSync as renameSync4,
-  statSync as statSync7,
+  statSync as statSync8,
   unlinkSync as unlinkSync4,
   writeFileSync as writeFileSync4,
-  writeSync as writeSync4
+  writeSync as writeSync5
 } from "node:fs";
 import { createHash as createHash3, randomBytes } from "node:crypto";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 function spoolDir(cfg, runId) {
-  return join12(runDir(cfg, runId), "spool");
+  return join13(runDir(cfg, runId), "spool");
 }
 function rand6() {
   let s = "";
   try {
     const b = randomBytes(6);
-    for (let i = 0; i < 6; i++) s += ALPHABET[b[i] % ALPHABET.length];
+    for (let i = 0; i < 6; i++) s += ALPHABET2[b[i] % ALPHABET2.length];
   } catch {
-    for (let i = s.length; i < 6; i++) s += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+    for (let i = s.length; i < 6; i++) s += ALPHABET2[Math.floor(Math.random() * ALPHABET2.length)];
   }
   return s;
 }
@@ -2561,7 +3366,7 @@ function appendItem(cfg, runId, item2) {
     }
     if (typeof body !== "string") return "";
     for (let attempt2 = 0; attempt2 < 8; attempt2++) {
-      const target = join12(dir, `${Date.now()}-${rand6()}.json`);
+      const target = join13(dir, `${Date.now()}-${rand6()}.json`);
       if (existsSync8(target)) continue;
       const tmp = `${target}.tmp-${process.pid}`;
       try {
@@ -2588,7 +3393,7 @@ function stampOf(dir, name) {
     if (Number.isFinite(n)) return n;
   }
   try {
-    return statSync7(join12(dir, name)).mtimeMs;
+    return statSync8(join13(dir, name)).mtimeMs;
   } catch {
     return 0;
   }
@@ -2598,7 +3403,7 @@ function spoolStats(cfg, runId) {
     const dir = spoolDir(cfg, runId);
     let entries;
     try {
-      entries = readdirSync4(dir, { withFileTypes: true });
+      entries = readdirSync5(dir, { withFileTypes: true });
     } catch {
       return { count: 0, oldestMs: 0 };
     }
@@ -2616,17 +3421,17 @@ function spoolStats(cfg, runId) {
     return { count: 0, oldestMs: 0 };
   }
 }
-var ALPHABET;
+var ALPHABET2;
 var init_spool = __esm({
   "../claude-code/lib/spool.mjs"() {
     init_state();
-    ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    ALPHABET2 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   }
 });
 
 // ../claude-code/hooks/src/capture.mjs
 var capture_exports = {};
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function pickMode(argv) {
   const args = Array.isArray(argv) ? argv : [];
   if (args.includes("--failure")) return "failure";
@@ -2637,46 +3442,78 @@ function pickMode(argv) {
   return "tool";
 }
 function capture(rawPayload, cfg, mode) {
-  const payload = isObject8(rawPayload) ? rawPayload : {};
-  if (cfg && cfg.capture === false) return;
-  if ((mode === "tool" || mode === "permission") && SKIP_TOOLS.has(str5(payload.tool_name).trim())) return;
+  const payload = isObject9(rawPayload) ? rawPayload : {};
+  if (cfg && cfg.capture === false) return null;
+  if ((mode === "tool" || mode === "permission") && SKIP_TOOLS.has(str7(payload.tool_name).trim())) return null;
+  if (mode === "tool") attempt(() => noteOwnTool(cfg, payload));
   if (mode === "tool" || mode === "permission") {
-    if (attempt(() => isSelfReference(payload.tool_name, payload.tool_input, cfg), false)) return;
+    if (attempt(() => isSelfReference(payload.tool_name, payload.tool_input, cfg), false)) return null;
   }
   if (mode === "tool" || mode === "failure" || mode === "permission") {
-    if (attempt(() => hasDeniedSubject(payload, cfg), false)) return;
+    if (attempt(() => hasDeniedSubject(payload, cfg), false)) return null;
   }
   const runId = attempt(() => deriveRunId(cfg, payload), "");
-  if (!runId) return;
+  if (!runId) return null;
+  const pending = mode === "stop" || mode === "stop-failure" ? attempt(() => {
+    const t = readTurn(cfg, runId, turnKey(payload));
+    return reviewPending(t) ? t : null;
+  }, null) : null;
+  const followUp = mode === "stop" && payload.stop_hook_active === true && !!pending;
+  const afterReview = followUp ? stripReviewLine(str7(payload.last_assistant_message) || str7(payload.message)) : "";
+  const answered = followUp && !!afterReview && Number(pending?.queued_at) > Number(pending?.review_requested_at);
   const item2 = attempt(
     () => {
-      if (mode === "stop-failure") return null;
+      if (mode === "stop-failure" || followUp && !answered) return null;
       if (mode === "permission") return buildPermissionItem(payload, cfg);
+      if (answered) {
+        return buildTurnItem({ ...payload, last_assistant_message: afterReview }, cfg, runId, mode, "queued");
+      }
       return mode === "stop" || mode === "subagent" ? buildTurnItem(payload, cfg, runId, mode) : buildToolItem(payload, cfg, mode, runId);
     },
     null
   );
   if (item2) attempt(() => appendItem(cfg, runId, item2));
   if (mode === "stop") {
-    attempt(() => closeTurn(cfg, runId, payload));
+    const closed = attempt(() => closeTurn(cfg, runId, payload, { followUp, answered }), null);
+    const summary = closed ? attempt(() => foldScorecard(closed.rows, closed.promptId), null) : null;
+    const review = attempt(() => reviewFor(cfg, payload, closed, summary), null);
+    if (review) {
+      attempt(() => markReview(cfg, runId, payload, closed, review.ids));
+      if (attempt(() => drainTriggerFired(cfg, runId), false)) attempt(() => fireDrain(cfg, runId, payload, []));
+      return { decision: "block", reason: review.reason };
+    }
     attempt(() => fireDrain(cfg, runId, payload, outcomeArgs(payload)));
-    return;
+    return attempt(() => cardFor(cfg, summary), null);
+  }
+  if (mode === "stop-failure" && pending) {
+    attempt(() => closeTurn(cfg, runId, payload, { followUp: true, reviewError: apiErrorOf(payload) }));
+    attempt(() => fireDrain(cfg, runId, payload, outcomeArgs(payload)));
+    return null;
   }
   if (mode === "stop-failure") {
-    attempt(() => closeTurn(cfg, runId, payload, apiErrorOf(payload)));
+    attempt(() => closeTurn(cfg, runId, payload, { apiError: apiErrorOf(payload) }));
   }
   if (attempt(() => drainTriggerFired(cfg, runId), false)) {
     attempt(() => fireDrain(cfg, runId, payload, []));
   }
+  return null;
 }
 function apiErrorOf(payload) {
-  const raw = str5(payload.error).trim();
+  const raw = str7(payload.error).trim();
   return raw ? clamp(raw, MAX_API_ERROR_CHARS) : API_ERROR_UNKNOWN;
 }
 function buildToolItem(payload, cfg, mode, runId) {
   const recorded = mode === "tool" && host() === "codex" ? attempt(() => toolCallRecord(payload.transcript_path, payload.tool_use_id), null) : null;
   const failed = mode === "failure" || !!recorded?.failed;
-  const toolName = clamp(str5(payload.tool_name) || "Tool", 128);
+  const toolName = clamp(str7(payload.tool_name) || "Tool", 128);
+  if (!str7(payload.agent_id) && !ownToolName(payload.tool_name)) {
+    attempt(() => appendScoreRow(cfg, payload.session_id, {
+      kind: "tool",
+      prompt_id: turnKey(payload),
+      failed,
+      intent: toolIntent(payload.tool_name, payload.tool_input)
+    }));
+  }
   const changes = failed ? [] : attempt(() => fileChanges(payload.tool_name, payload.tool_input, payload.tool_response), []);
   if (changes.length) attempt(() => recordFileChanges(cfg, runId, changes));
   const cls = attempt(
@@ -2707,9 +3544,9 @@ function buildToolItem(payload, cfg, mode, runId) {
     importance: cls.importance,
     metadata: {
       tool: toolName,
-      tool_use_id: str5(payload.tool_use_id),
-      hook_event: str5(payload.hook_event_name) || (failed ? "PostToolUseFailure" : "PostToolUse"),
-      session_id: str5(payload.session_id),
+      tool_use_id: str7(payload.tool_use_id),
+      hook_event: str7(payload.hook_event_name) || (failed ? "PostToolUseFailure" : "PostToolUse"),
+      session_id: str7(payload.session_id),
       prompt_id: turnKey(payload),
       // The host names it `duration_ms`; `execution_time_ms` is the older payload name and
       // stays as a fallback. The metadata key keeps the old spelling because it is already
@@ -2733,13 +3570,13 @@ function buildToolItem(payload, cfg, mode, runId) {
       // files" on every `Read` in the store.
       ...changes.length ? { files: changes } : {},
       truncated: !!(params.truncated || tail.truncated),
-      redactions: num2(scrubbed.redactions) + num2(params.redactions) + num2(tail.redactions),
-      ...isObject8(cls.metadata) ? cls.metadata : {}
+      redactions: num3(scrubbed.redactions) + num3(params.redactions) + num3(tail.redactions),
+      ...isObject9(cls.metadata) ? cls.metadata : {}
     }
   });
 }
 function buildPermissionItem(payload, cfg) {
-  const toolName = clamp(str5(payload.tool_name) || "Tool", 128);
+  const toolName = clamp(str7(payload.tool_name) || "Tool", 128);
   const scrubbed = attempt(() => redactParams(payload.tool_input, cfg), { params: null, redactions: 0 });
   const params = attempt(
     () => redactText(renderParams(scrubbed.params), cfg, "param"),
@@ -2755,39 +3592,39 @@ function buildPermissionItem(payload, cfg) {
     importance: "medium",
     metadata: {
       tool: toolName,
-      hook_event: str5(payload.hook_event_name) || "PermissionRequest",
-      session_id: str5(payload.session_id),
+      hook_event: str7(payload.hook_event_name) || "PermissionRequest",
+      session_id: str7(payload.session_id),
       prompt_id: turnKey(payload),
       permission_requested: true,
       // Deliberately not an `outcome`: this event fires *before* the human answers, and the
       // plugin never learns what they said. Stamping `ok` here would be a claim about a
       // decision nobody recorded.
       truncated: !!params.truncated,
-      redactions: num2(scrubbed.redactions) + num2(params.redactions)
+      redactions: num3(scrubbed.redactions) + num3(params.redactions)
     }
   });
 }
-function buildTurnItem(payload, cfg, runId, mode) {
+function buildTurnItem(payload, cfg, runId, mode, suffix = "") {
   const event = mode === "subagent" ? "SubagentStop" : "Stop";
   const cls = attempt(
     () => classifyTurn("", "", {
       event,
-      agent_id: str5(payload.agent_id),
-      agent_type: str5(payload.agent_type)
+      agent_id: str7(payload.agent_id),
+      agent_type: str7(payload.agent_type)
     }),
     { intent: "task_result", importance: "medium", contentType: "text", agentId: "", agentType: "" }
   );
   const turn = attempt(() => readTurn(cfg, runId, turnKey(payload)), null);
   const own = mode === "subagent" ? attempt(() => firstUserText(payload.agent_transcript_path), "") : "";
-  const staged = own || str5(turn?.prompt) || str5(payload.prompt);
-  const answer = str5(payload.last_assistant_message) || str5(payload.message);
+  const staged = own || str7(turn?.prompt) || str7(payload.prompt);
+  const answer = str7(payload.last_assistant_message) || str7(payload.message);
   if (!staged && !answer) return null;
   const q = attempt(() => redactText(staged, cfg, "output"), { text: "", redactions: 0, truncated: false });
   const a = attempt(() => redactText(answer, cfg, "output"), { text: "", redactions: 0, truncated: false });
   const text = `Q: ${q.text}
 
 A: ${a.text}`;
-  const subAgent = str5(cls.agentId);
+  const subAgent = str7(cls.agentId);
   const handoff = mode === "subagent" ? {
     from_agent_id: attempt(() => deriveAgentId(payload), ""),
     to_agent_id: attempt(() => deriveAgentId({}), ""),
@@ -2798,25 +3635,25 @@ A: ${a.text}`;
   return item({
     cfg,
     payload,
-    id: mode === "subagent" ? `cc-sub-${idPart(payload.agent_id) || "anon"}-${idPart(turnKey(payload)) || idPart(payload.session_id) || "turn"}` : `cc-stop-${idPart(turnKey(payload)) || idPart(payload.session_id) || "turn"}`,
+    id: mode === "subagent" ? `cc-sub-${idPart(payload.agent_id) || "anon"}-${idPart(turnKey(payload)) || idPart(payload.session_id) || "turn"}` : `cc-stop-${idPart(turnKey(payload)) || idPart(payload.session_id) || "turn"}${suffix ? `-${suffix}` : ""}`,
     text,
     intent: cls.intent,
     importance: cls.importance,
     metadata: {
-      hook_event: str5(payload.hook_event_name) || event,
-      session_id: str5(payload.session_id),
+      hook_event: str7(payload.hook_event_name) || event,
+      session_id: str7(payload.session_id),
       prompt_id: turnKey(payload),
       // Payload first, then the ordinal `stage-prompt` staged — Codex sends no `turn_number`
       // on any event, so without the second source every item here recorded 0.
       turn_number: attempt(() => turnNumber(cfg, runId, payload), 0),
-      ...subAgent ? { agent_id: subAgent, agent_type: str5(cls.agentType) } : {},
+      ...subAgent ? { agent_id: subAgent, agent_type: str7(cls.agentType) } : {},
       ...subAgent ? { mubit_agent_id: attempt(() => deriveAgentId(payload), "") } : {},
       ...handoff,
       // The path itself, so a later reader can rejoin this subagent to its own rollout —
       // which is what `persistSubRun` names as the next step on real per-subagent isolation.
-      ...str5(payload.agent_transcript_path) ? { agent_transcript_path: str5(payload.agent_transcript_path) } : {},
+      ...str7(payload.agent_transcript_path) ? { agent_transcript_path: str7(payload.agent_transcript_path) } : {},
       truncated: !!(q.truncated || a.truncated),
-      redactions: num2(q.redactions) + num2(a.redactions)
+      redactions: num3(q.redactions) + num3(a.redactions)
     }
   });
 }
@@ -2851,18 +3688,18 @@ function item(o) {
     // empty string would read as "the host said the model is blank".
     metadata_json: safeJson(withActor(withModel(o.metadata, o.payload), actor))
   };
-  const userId = str5(cfg.userId);
+  const userId = str7(cfg.userId);
   if (userId) out.user_id = userId;
   return out;
 }
 function withModel(metadata, payload) {
-  const base = isObject8(metadata) ? metadata : {};
+  const base = isObject9(metadata) ? metadata : {};
   if ("model" in base) return base;
-  const model = clamp(str5(payload?.model), 128);
+  const model = clamp(str7(payload?.model), 128);
   return model ? { ...base, model } : base;
 }
 function withActor(metadata, actor) {
-  const base = isObject8(metadata) ? metadata : {};
+  const base = isObject9(metadata) ? metadata : {};
   return actor ? { ...base, actor } : base;
 }
 function renderParams(params) {
@@ -2913,7 +3750,7 @@ function outputText(v, depth = 0) {
       return v.map((x) => outputText(x, depth + 1)).filter(Boolean).join("\n");
     }
     if (typeof v.text === "string") return v.text;
-    if (isObject8(v.file) && typeof v.file.content === "string") return v.file.content;
+    if (isObject9(v.file) && typeof v.file.content === "string") return v.file.content;
     if (typeof v.content === "string") return v.content;
     if (Array.isArray(v.content)) return outputText(v.content, depth + 1);
     if (typeof v.output === "string") return v.output;
@@ -2926,31 +3763,57 @@ function outputText(v, depth = 0) {
   }
 }
 function errorText(payload) {
-  const direct = str5(payload.error) || str5(payload.tool_error) || str5(payload.error_message);
+  const direct = str7(payload.error) || str7(payload.tool_error) || str7(payload.error_message);
   if (direct) return direct;
   return outputText(payload.error ?? payload.tool_response ?? payload.tool_output);
 }
 function turnPath(cfg, runId, promptId) {
   const id = idPart(promptId);
   if (!id) return "";
-  return join13(resolveDataDir(cfg), "runs", idPart(runId), "turns", `${id}.json`);
+  return join14(resolveDataDir(cfg), "runs", idPart(runId), "turns", `${id}.json`);
 }
 function readTurn(cfg, runId, promptId) {
   const p = turnPath(cfg, runId, promptId);
   if (!p) return null;
   const v = readJson(p, null);
-  return isObject8(v) ? v : null;
+  return isObject9(v) ? v : null;
 }
-function closeTurn(cfg, runId, payload, apiError = "") {
-  const p = turnPath(cfg, runId, turnKey(payload));
-  if (!p) return;
+function closeTurn(cfg, runId, payload, opts = {}) {
+  const apiError = str7(opts.apiError);
+  const followUp = opts.followUp === true;
+  const answered = followUp && opts.answered === true;
+  const reviewError = str7(opts.reviewError);
+  const promptId = turnKey(payload);
+  const p = turnPath(cfg, runId, promptId);
+  if (!p) return null;
   const prev = readJson(p, null);
-  const base = isObject8(prev) ? prev : {
-    prompt_id: turnKey(payload),
-    session_id: str5(payload.session_id),
+  const base = isObject9(prev) ? prev : {
+    prompt_id: promptId,
+    session_id: str7(payload.session_id),
     started_at: Date.now()
   };
-  const evidence = apiError ? null : attempt(() => usedEvidence(base, payload), null);
+  const sessionId = str7(payload.session_id);
+  const logged = cfg?.capture !== false && !!sessionId;
+  const rows = logged ? attempt(() => readScoreRows(cfg, sessionId), []) : [];
+  const standing = attempt(() => standingFor(rows, promptId), []);
+  const prevEvidence = isObject9(base.used_evidence) ? base.used_evidence : null;
+  const raw = str7(payload.last_assistant_message) || str7(payload.message);
+  const reply = answered ? stripReviewLine(raw) : raw;
+  const measured = answered ? { ...payload, last_assistant_message: reply } : payload;
+  let evidence = null;
+  if (!apiError) {
+    if (followUp && !answered) {
+      evidence = prevEvidence;
+    } else {
+      const v1 = attempt(() => usedEvidence(base, measured), null);
+      const entries = attempt(() => entryEvidence(base, standing, measured), null);
+      const fresh = v1 || entries ? { ...v1 ?? {}, ...entries ? { entry_method: ENTRY_SIGNAL_METHOD, entries } : {} } : null;
+      evidence = answered ? mergeEvidence(prevEvidence, fresh) : fresh;
+    }
+  }
+  const explicit = attempt(() => explicitFor(rows, promptId, base), { ids: [], byRef: {} });
+  const toolFailed = !apiError && attempt(() => lastActingToolFailed(rows, promptId), false);
+  const endedWithQuestion = followUp && !answered ? base.ended_with_question === true : /\?\s*$/.test(reply.trim());
   const closed = {
     ...base,
     // Absent when nothing was staged to look for. An absent key means "unmeasured" and the
@@ -2959,17 +3822,184 @@ function closeTurn(cfg, runId, payload, apiError = "") {
     // existed as an injection the model ignored.
     ...evidence ? { used_evidence: evidence } : {},
     ...apiError ? { [API_ERROR_KEY2]: apiError } : {},
+    ...explicit.ids.length ? { explicit_ids: explicit.ids, explicit: explicit.byRef } : {},
+    ...followUp ? { review_closed_at: Date.now() } : {},
+    ...reviewError ? { review_error: reviewError } : {},
+    ended_with_question: endedWithQuestion,
     ended_at: Date.now(),
     outcome_pending: true
   };
+  if (toolFailed) {
+    closed.outcome = "failure";
+    closed.failure_reason = "tool_failure";
+  } else if (str7(base.failure_reason) === "tool_failure") {
+    delete closed.outcome;
+    delete closed.failure_reason;
+  }
   writeJsonAtomic(p, closed);
   attempt(() => appendLedger(resolveDataDir(cfg), runId, turnLedgerRow(closed, runId, Date.now())));
+  if (logged) {
+    const entries = isObject9(closed.used_evidence?.entries) ? closed.used_evidence.entries : {};
+    const explicitSet = new Set(explicit.ids);
+    const row = {
+      kind: "turn",
+      prompt_id: promptId,
+      run_id: runId,
+      lessons: lessonsOfTurn(base, standing, entries),
+      used_refs: Object.keys(entries).filter((r) => entries[r]?.used === true && !explicitSet.has(r)),
+      ...apiError ? { api_error: apiError } : {},
+      ended_with_question: endedWithQuestion
+    };
+    if (attempt(() => appendScoreRow(cfg, sessionId, row), false)) rows.push({ v: 1, at: Date.now(), ...row });
+  }
+  return { turn: closed, rows, promptId };
+}
+function mergeEvidence(prev, next) {
+  if (!isObject9(prev)) return next;
+  if (!isObject9(next)) return prev;
+  const rank = (e) => e?.used === true ? 2 : e?.used === false ? 1 : 0;
+  const base = rank(next) > rank(prev) ? next : prev;
+  const a = isObject9(prev.entries) ? prev.entries : {};
+  const b = isObject9(next.entries) ? next.entries : {};
+  const entries = {};
+  for (const ref of /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])) {
+    entries[ref] = rank(b[ref]) > rank(a[ref]) ? b[ref] : a[ref];
+  }
+  const { entries: _drop, ...v1 } = base;
+  return Object.keys(entries).length ? { ...v1, entry_method: ENTRY_SIGNAL_METHOD, entries } : v1;
+}
+function standingFor(rows, promptId) {
+  let start = -1;
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i].kind === "start") {
+    start = i;
+    break;
+  }
+  if (start < 0 || !isObject9(rows[start].lessons)) return [];
+  const first = rows.slice(start + 1).find((r) => r.kind === "prompt" && r.slash !== true);
+  if (!first || first.prompt_id !== promptId) return [];
+  return Object.entries(rows[start].lessons).filter(([ref, v]) => ref && isObject9(v)).map(([ref, v]) => ({ ref, terms: Array.isArray(v.terms) ? v.terms : [] }));
+}
+function entryEvidence(turn, standing, payload) {
+  const shown = Array.isArray(turn.shown) ? turn.shown.filter((e) => isObject9(e) && str7(e.ref)) : [];
+  const refs = new Set(shown.map((e) => e.ref));
+  const list2 = [
+    ...shown.map((e) => ({ ref: e.ref, terms: Array.isArray(e.terms) ? e.terms : [] })),
+    ...standing.filter((e) => !refs.has(e.ref))
+  ];
+  if (!list2.length) return null;
+  const reply = str7(payload.last_assistant_message) || str7(payload.message);
+  return evaluateUse(list2, reply, { exclude: termSet(str7(turn.prompt)) });
+}
+function lessonsOfTurn(turn, standing, entries) {
+  const refs = [
+    ...(Array.isArray(turn.shown) ? turn.shown : []).filter((e) => isObject9(e) && str7(e.ref) && str7(e.type) === "lesson").map((e) => e.ref),
+    ...standing.map((e) => e.ref)
+  ];
+  const out = {};
+  for (const ref of refs) {
+    const e = isObject9(entries[ref]) ? entries[ref] : null;
+    out[ref] = {
+      used: e && typeof e.used === "boolean" ? e.used : null,
+      matched: e && Array.isArray(e.matched) ? e.matched.slice(0, MAX_EVIDENCE_TERMS) : []
+    };
+  }
+  return out;
+}
+function explicitFor(rows, promptId, turn) {
+  const byRef = isObject9(turn.explicit) ? { ...turn.explicit } : {};
+  const ids = Array.isArray(turn.explicit_ids) ? turn.explicit_ids.filter((v) => typeof v === "string" && v) : [];
+  for (const r of rows) {
+    if (r.kind !== "explicit" || r.prompt_id !== promptId || !Array.isArray(r.ids)) continue;
+    for (const ref of r.ids) {
+      if (typeof ref !== "string" || !ref) continue;
+      if (!ids.includes(ref)) ids.push(ref);
+      byRef[ref] = str7(r.outcome);
+    }
+  }
+  return { ids, byRef };
+}
+function lastActingToolFailed(rows, promptId) {
+  const acting = rows.filter((r) => r.kind === "tool" && r.prompt_id === promptId && !READ_ONLY_INTENTS2.has(str7(r.intent)));
+  return acting.length > 0 && acting[acting.length - 1].failed === true;
+}
+function reviewPending(turn) {
+  return !!turn && Number(turn.review_requested_at) > 0 && !(Number(turn.review_closed_at) > 0);
+}
+function reviewFor(cfg, payload, closed, summary) {
+  if (!closed || !summary) return null;
+  const candidates = reviewCandidates(summary.thisTurn.lessons);
+  const ok = shouldReview({
+    outcomeReview: str7(cfg?.outcomeReview),
+    outcomeMode: str7(cfg?.outcomeMode),
+    stopHookActive: payload.stop_hook_active === true,
+    alreadyRequested: Number(closed.turn.review_requested_at) > 0,
+    apiError: str7(closed.turn[API_ERROR_KEY2]),
+    isSubagent: !!str7(payload.agent_id),
+    candidates
+  });
+  if (!ok) return null;
+  const reason = reviewReason(candidates);
+  return reason ? { ids: candidates.map((c) => c.ref), reason } : null;
+}
+function markReview(cfg, runId, payload, closed, ids) {
+  const p = turnPath(cfg, runId, closed.promptId);
+  if (p) writeJsonAtomic(p, { ...closed.turn, review_requested_at: Date.now(), review_ids: ids });
+  appendScoreRow(cfg, payload.session_id, { kind: "review", prompt_id: closed.promptId, ids });
+}
+function cardFor(cfg, summary) {
+  const mode = str7(cfg?.sessionScore) || "full";
+  if (!summary || mode === "off") return null;
+  const text = renderScorecard(summary, mode);
+  return text ? { systemMessage: text, suppressOutput: true } : null;
+}
+function ownToolName(name) {
+  const n = str7(name);
+  for (const prefix of OWN_MCP_PREFIXES3) if (n.startsWith(prefix)) return n.slice(prefix.length);
+  return "";
+}
+function noteOwnTool(cfg, payload) {
+  const tool = ownToolName(payload.tool_name);
+  if (tool !== "mubit_outcome" && tool !== "mubit_learned") return;
+  if (resultIsError(payload.tool_response)) return;
+  const sessionId = str7(payload.session_id);
+  if (!sessionId) return;
+  const promptId = turnKey(payload);
+  if (tool === "mubit_learned") {
+    appendScoreRow(cfg, sessionId, { kind: "learned", prompt_id: promptId });
+    return;
+  }
+  if (str7(payload.agent_id)) return;
+  const input = isObject9(payload.tool_input) ? payload.tool_input : {};
+  const outcome = str7(input.outcome).trim().toLowerCase();
+  if (!VERDICTS2.has(outcome)) return;
+  const primary = str7(input.reference_id).trim();
+  const raw = [
+    ...primary && primary !== "global" ? [primary] : [],
+    ...Array.isArray(input.entry_ids) ? input.entry_ids : []
+  ];
+  const resolved = resolveHandles(raw, knownRefsFromRows(readScoreRows(cfg, sessionId)));
+  const unresolved = new Set(resolved.unresolved);
+  const ids = [...new Set(resolved.ids.filter((id) => id && id !== "global" && !unresolved.has(id)))];
+  if (!ids.length) return;
+  appendScoreRow(cfg, sessionId, { kind: "explicit", prompt_id: promptId, ids, outcome });
+  const p = turnPath(cfg, deriveRunId(cfg, payload), promptId);
+  const prev = p ? readJson(p, null) : null;
+  if (!isObject9(prev)) return;
+  const explicitIds = Array.isArray(prev.explicit_ids) ? prev.explicit_ids.filter((v) => typeof v === "string") : [];
+  writeJsonAtomic(p, {
+    ...prev,
+    explicit_ids: [.../* @__PURE__ */ new Set([...explicitIds, ...ids])],
+    explicit: { ...isObject9(prev.explicit) ? prev.explicit : {}, ...Object.fromEntries(ids.map((id) => [id, outcome])) }
+  });
+}
+function resultIsError(response) {
+  return isObject9(response) && response.isError === true;
 }
 function usedEvidence(turn, payload) {
-  const recall = isObject8(turn.recall) ? turn.recall : null;
+  const recall = isObject9(turn.recall) ? turn.recall : null;
   if (!recall || !Array.isArray(recall.terms)) return null;
   const terms = recall.terms.filter((t) => typeof t === "string" && t.length >= TERM_MIN_CHARS && t.length <= TERM_MAX_CHARS).map((t) => t.toLowerCase()).slice(0, MAX_TERMS_READ);
-  const answer = str5(payload.last_assistant_message) || str5(payload.message);
+  const answer = str7(payload.last_assistant_message) || str7(payload.message);
   const out = {
     method: USED_SIGNAL_METHOD,
     at: Date.now(),
@@ -2986,15 +4016,11 @@ function usedEvidence(turn, payload) {
     out.reason = "no_reply";
     return out;
   }
-  const hits = matchTerms(terms, answer.slice(0, MAX_ANSWER_SCAN));
+  const hits = matchTerms(terms, answer.slice(0, MAX_ANSWER_SCAN2));
   out.matched = hits.length;
   out.terms = hits.slice(0, MAX_EVIDENCE_TERMS);
   out.used = hits.length > 0;
   return out;
-}
-function matchTerms(terms, text) {
-  const hay = ` ${text.toLowerCase().replace(/[^a-z0-9_]+/g, " ")} `;
-  return terms.filter((t) => hay.includes(` ${t}`));
 }
 function drainTriggerFired(cfg, runId) {
   const stats = spoolStats(cfg, runId);
@@ -3009,14 +4035,14 @@ function outcomeArgs(payload) {
 }
 function fireDrain(cfg, runId, payload, args) {
   const handoff = stashPayload(cfg, {
-    hook_event_name: str5(payload.hook_event_name),
-    session_id: str5(payload.session_id),
+    hook_event_name: str7(payload.hook_event_name),
+    session_id: str7(payload.session_id),
     prompt_id: turnKey(payload),
-    transcript_path: str5(payload.transcript_path),
-    cwd: str5(payload.cwd),
-    permission_mode: str5(payload.permission_mode),
-    agent_id: str5(payload.agent_id),
-    agent_type: str5(payload.agent_type),
+    transcript_path: str7(payload.transcript_path),
+    cwd: str7(payload.cwd),
+    permission_mode: str7(payload.permission_mode),
+    agent_id: str7(payload.agent_id),
+    agent_type: str7(payload.agent_type),
     // Resolved here rather than in the child: the child reads this stash, not the payload.
     turn_number: attempt(() => turnNumber(cfg, runId, payload), 0),
     run_id: runId
@@ -3024,15 +4050,15 @@ function fireDrain(cfg, runId, payload, args) {
   spawnDetached(cfg, "drain", args, handoff);
 }
 function hasDeniedSubject(payload, cfg) {
-  const input = isObject8(payload.tool_input) ? payload.tool_input : {};
-  const projectDir2 = str5(cfg?.projectDir);
+  const input = isObject9(payload.tool_input) ? payload.tool_input : {};
+  const projectDir2 = str7(cfg?.projectDir);
   for (const key of PATH_KEYS3) {
     const v = input[key];
     if (typeof v === "string" && v && isDeniedPath(v, cfg, projectDir2)) return true;
   }
   const edits = Array.isArray(input.edits) ? input.edits.slice(0, MAX_RENDER_ITEMS) : [];
   for (const e of edits) {
-    if (!isObject8(e)) continue;
+    if (!isObject9(e)) continue;
     for (const key of PATH_KEYS3) {
       const v = e[key];
       if (typeof v === "string" && v && isDeniedPath(v, cfg, projectDir2)) return true;
@@ -3053,13 +4079,13 @@ function attempt(fn, fallback = (
     return fallback;
   }
 }
-function isObject8(v) {
+function isObject9(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
-function str5(v) {
+function str7(v) {
   return typeof v === "string" ? v : "";
 }
-function num2(v) {
+function num3(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
@@ -3080,7 +4106,7 @@ function idPart(v) {
 }
 function fallbackId(payload, text) {
   let h = 2166136261;
-  const seed = `${str5(payload.session_id)}|${turnKey(payload)}|${str5(payload.tool_name)}|${text}`;
+  const seed = `${str7(payload.session_id)}|${turnKey(payload)}|${str7(payload.tool_name)}|${text}`;
   for (let i = 0; i < seed.length; i++) {
     h ^= seed.charCodeAt(i);
     h = Math.imul(h, 16777619) >>> 0;
@@ -3088,11 +4114,11 @@ function fallbackId(payload, text) {
   return `anon-${h.toString(16).padStart(8, "0")}`;
 }
 function intentOr(v) {
-  const s = str5(v).trim();
+  const s = str7(v).trim();
   return s && s !== "unclassified" ? s : "tool_output";
 }
 function importanceOr(v) {
-  const s = str5(v).trim().toLowerCase();
+  const s = str7(v).trim().toLowerCase();
   return ["low", "medium", "high", "critical"].includes(s) ? s : "medium";
 }
 function safeJson(v) {
@@ -3103,7 +4129,7 @@ function safeJson(v) {
     return "{}";
   }
 }
-var BUDGET_MS, PATH_KEYS3, SKIP_TOOLS, MAX_RENDER_DEPTH, MAX_RENDER_ITEMS, MAX_VALUE_CHARS, MAX_ID_CHARS, USED_SIGNAL_METHOD, MAX_EVIDENCE_TERMS, MAX_ANSWER_SCAN, MAX_TERMS_READ, TERM_MIN_CHARS, TERM_MAX_CHARS, API_ERROR_KEY2, MAX_API_ERROR_CHARS, API_ERROR_UNKNOWN, MODE2;
+var BUDGET_MS, PATH_KEYS3, SKIP_TOOLS, MAX_RENDER_DEPTH, MAX_RENDER_ITEMS, MAX_VALUE_CHARS, MAX_ID_CHARS, USED_SIGNAL_METHOD, ENTRY_SIGNAL_METHOD, OWN_MCP_PREFIXES3, VERDICTS2, READ_ONLY_INTENTS2, MAX_EVIDENCE_TERMS, MAX_ANSWER_SCAN2, MAX_TERMS_READ, TERM_MIN_CHARS, TERM_MAX_CHARS, API_ERROR_KEY2, MAX_API_ERROR_CHARS, API_ERROR_UNKNOWN, MODE2;
 var init_capture = __esm({
   async "../claude-code/hooks/src/capture.mjs"() {
     init_actor();
@@ -3113,6 +4139,11 @@ var init_capture = __esm({
     init_classify();
     init_ledger();
     init_filechange();
+    init_handles();
+    init_review();
+    init_scorecard();
+    init_scorecard_log();
+    init_terms();
     init_redact();
     init_runid();
     init_spool();
@@ -3143,8 +4174,12 @@ var init_capture = __esm({
     MAX_VALUE_CHARS = 4096;
     MAX_ID_CHARS = 160;
     USED_SIGNAL_METHOD = "memory-term-echo/v1";
+    ENTRY_SIGNAL_METHOD = "memory-term-echo/v2-entry";
+    OWN_MCP_PREFIXES3 = ["mcp__plugin_mubit-memory_mubit__", "mcp__mubit__"];
+    VERDICTS2 = /* @__PURE__ */ new Set(["success", "failure", "partial", "neutral"]);
+    READ_ONLY_INTENTS2 = /* @__PURE__ */ new Set(["read", "search"]);
     MAX_EVIDENCE_TERMS = 12;
-    MAX_ANSWER_SCAN = 64 * 1024;
+    MAX_ANSWER_SCAN2 = 64 * 1024;
     MAX_TERMS_READ = 64;
     TERM_MIN_CHARS = 4;
     TERM_MAX_CHARS = 24;
@@ -3155,8 +4190,7 @@ var init_capture = __esm({
     await runHook("capture", {
       budgetMs: BUDGET_MS,
       body: (payload, cfg) => {
-        capture(payload, cfg, MODE2);
-        return { suppressOutput: true };
+        return capture(payload, cfg, MODE2) ?? { suppressOutput: true };
       }
     });
   }
