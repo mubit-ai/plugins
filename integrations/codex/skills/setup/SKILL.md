@@ -53,16 +53,17 @@ read the trust hashes:
 node "<plugin-root>/scripts/setup.mjs" "<plugin-root>"
 ```
 
-**Read step 3 before you run it**, because that command records hook trust and that is the
-user's decision, not yours. Pass `--no-trust` to do everything except that, and
-`--with-pre-tool` to include the `PreToolUse` registration. The script merges rather than
-overwrites, backs up both files it touches, and trusts only hooks under this plugin root.
+**Read steps 2a and 3 before you run it**, because that command approves two tools and records
+hook trust, and both are the user's decision, not yours. Pass `--no-trust` to do everything
+except those two, and `--with-pre-tool` to include the `PreToolUse` registration. The script
+merges rather than overwrites, backs up both files it touches, and trusts only hooks under this
+plugin root.
 
 What follows is what it does, and what to tell the user about each part. If the script is
 missing — an older install — do it by hand as described. It is the same install, with one
-thing that is easy to leave out and has no fallback: **the `MUBIT_CC_DATA_DIR` pin in step
-0a**, which both later steps carry. The MCP bundle gets no `boot.mjs`, so if you omit it there
-is nothing downstream to recover it from.
+thing that is easy to leave out: **the `MUBIT_CC_DATA_DIR` pin in step 0a**, which both later
+steps carry. Without it every process falls back to searching for the directory, and the search
+can pick one the user's Claude Code install does not use.
 
 ## Step 0a — resolve the data directory, and pin it
 
@@ -126,11 +127,28 @@ codex mcp add mubit \
 `--env` is not optional. The server derives the run id itself, with the same strategy the hooks
 use, so a server reading a different data directory writes `/mubit-memory:remember` into a run
 that pre-prompt recall never reads — and on an authenticated machine it fails auth instead,
-because the credentials live in that directory too. Nothing else supplies it: unlike a hook,
-the MCP bundle has no `boot.mjs` to synthesise it.
+because the credentials live in that directory too. The MCP bundle runs `boot.mjs` like a hook
+does, which falls back to the pin in `$CODEX_HOME/hooks.json` and then to a search; `--env`
+makes the answer explicit.
 
 The server must be named `mubit`: the model sees each tool as `mcp__<server>__<tool>`, and
 every skill in this plugin names `mcp__mubit__…`. Confirm with `codex mcp list`.
+
+## Step 2a — approve the two credit tools, and ask first
+
+Codex asks the user to approve every MCP tool call. The outcome review asks the model to call
+`mcp__mubit__mubit_outcome` and `mcp__mubit__mubit_learned` at the end of a turn that showed
+lessons, so without an approval that is a prompt on every such turn. Setup approves those two,
+and only those two, in `$CODEX_HOME/config.toml`: one `[mcp_servers.mubit.tools.<tool>]` table
+each, carrying `approval_mode = "approve"`, where `<tool>` is the name without the
+`mcp__mubit__` prefix.
+
+Tell the user which two tools these are before running setup without `--no-trust`. An
+`approval_mode` they already set on either tool is kept, and every other Mubit tool still asks.
+`codex mcp remove` drops these tables with the registration, so setup reads them first and
+writes them back after `codex mcp add`, and writes none if the add failed: a tools table with
+no `[mcp_servers.mubit]` beside it stops Codex loading the file. Under `--no-trust` it approves
+nothing and puts back only what was there.
 
 ## Step 3 — trust the hooks, and ask first
 

@@ -306,12 +306,12 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
   const sessionScore = enumOf(
     pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
     ["off", "compact", "full"],
-    host(e) === "codex" ? "off" : "full"
+    "full"
   );
   const outcomeReview = enumOf(
     pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
     ["off", "nudge", "stop"],
-    host(e) === "codex" ? "nudge" : "stop"
+    "stop"
   );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);

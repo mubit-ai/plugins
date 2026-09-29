@@ -562,12 +562,12 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
   const sessionScore = enumOf(
     pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
     ["off", "compact", "full"],
-    host(e) === "codex" ? "off" : "full"
+    "full"
   );
   const outcomeReview = enumOf(
     pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
     ["off", "nudge", "stop"],
-    host(e) === "codex" ? "nudge" : "stop"
+    "stop"
   );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
@@ -2949,7 +2949,7 @@ await runHook("session-start", {
           hookEventName: "SessionStart",
           additionalContext: unconfiguredBlock(cfg, runId)
         },
-        systemMessage: statusLineHint2 || `mubit: not configured${DOT}run /mubit-memory:auth`
+        systemMessage: statusLineHint2 || `mubit: not configured${DOT}run ${skillOf(cfg)("auth")}`
       };
     }
     const coldStartUntil = armColdStart(cfg);
@@ -3117,8 +3117,11 @@ function spawnResume(cfg, payload, runId, agentId, src) {
     );
   }
 }
+function skillOf(cfg) {
+  return (name) => cfg.host === "codex" ? `mubit-memory:${name}` : `/mubit-memory:${name}`;
+}
 function steerBlock(cfg, runId, lessons, anchor = "", partial = false) {
-  const skill = (name) => cfg.host === "codex" ? `mubit-memory:${name}` : `/mubit-memory:${name}`;
+  const skill = skillOf(cfg);
   const lines = [
     "# Mubit memory is active",
     "",
@@ -3158,7 +3161,7 @@ function unconfiguredBlock(cfg, runId) {
     "",
     `Run: ${runId} (${cfg.mode})`,
     "No Mubit endpoint is set on this machine, so no memory will be injected this session and recall is unavailable \u2014 do not search for it, and do not assume anything was recalled.",
-    "Work is still captured and buffered locally. Run /mubit-memory:auth to sign in and set an endpoint; what has been buffered is sent once one is configured.",
+    `Work is still captured and buffered locally. Run ${skillOf(cfg)("auth")} to sign in and set an endpoint; what has been buffered is sent once one is configured.`,
     ""
   ].join("\n");
 }
@@ -3168,7 +3171,7 @@ function unauthenticatedBlock(cfg, runId) {
     "",
     `Run: ${runId} (${cfg.mode})`,
     "Mubit rejected this machine's API key, so no memory will be injected this session and recall is unavailable \u2014 do not search for it, and do not assume anything was recalled.",
-    "Work is still captured and buffered locally. Run /mubit-memory:auth to sign in again; what has been buffered is sent once the key is accepted.",
+    `Work is still captured and buffered locally. Run ${skillOf(cfg)("auth")} to sign in again; what has been buffered is sent once the key is accepted.`,
     ""
   ].join("\n");
 }
