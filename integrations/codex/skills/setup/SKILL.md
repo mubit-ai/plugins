@@ -169,9 +169,8 @@ Precedence, highest first: `MUBIT_ENDPOINT` / `MUBIT_API_KEY` in the environment
 `<data-dir>/credentials.json` (what `mubit-memory:auth` writes), then
 `<project>/.mubit-cc.json`.
 
-Codex has no plugin settings UI and no `CODEX_PLUGIN_OPTION_*` variables — the strings
-`PLUGIN_OPTION` and `userConfig` appear nowhere in its binary — so those three rungs are the
-whole ladder. Do not send a Codex user to a `/plugin` configure screen; it does not exist here.
+Codex has no plugin settings UI and no `CODEX_PLUGIN_OPTION_*` variables, so those three
+rungs are the whole ladder. Do not send a Codex user to a `/plugin` configure screen; it does not exist here.
 
 **If either value is missing, run `node <root>/scripts/login.mjs`.** It prompts for a key
 without echoing it, checks it against the instance, and writes it to the directory Step 3

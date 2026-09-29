@@ -153,6 +153,9 @@ function pruneStale(cfg = {}) {
     for (const name of jsonFiles(join2(root, "import"))) {
       expire(join2(root, "import", name), 30 * DAY);
     }
+    for (const e of dirEntries(join2(root, "scorecard"))) {
+      if (e.isFile() && e.name.endsWith(".jsonl")) expire(join2(root, "scorecard", e.name), 7 * DAY);
+    }
     for (const e of dirEntries(join2(root, "tmp"))) {
       if (e.isFile()) expire(join2(root, "tmp", e.name), 1 * HOUR);
     }
@@ -660,6 +663,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -733,6 +746,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -878,7 +893,7 @@ var init_config = __esm({
     ];
     CACHE_FILE = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION = 3;
+    CACHE_VERSION = 4;
     MODE = "hosted";
   }
 });
@@ -894,15 +909,50 @@ function implicitOutcomesEnabled(cfg) {
 function decideOutcome(turn) {
   if (!isObject(turn)) return { post: false, reason: "not_a_turn" };
   if (numOr(turn.outcome_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "corrected" };
   if (str2(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
   if (numOr(turn.outcome_attempts, 0) >= MAX_OUTCOME_ATTEMPTS) {
     return { post: false, reason: "attempts_exhausted" };
   }
-  const entryIds = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
-  if (entryIds.length === 0) return { post: false, reason: "nothing_injected" };
-  const failed = str2(turn.outcome).toLowerCase() === "failure";
+  const recalled = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
   const ev = isObject(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (recalled.length === 0 && !entries) return { post: false, reason: "nothing_injected" };
+  const failed = str2(turn.outcome).toLowerCase() === "failure";
+  const toolFailure = failed && str2(turn.failure_reason) === "tool_failure";
+  if (entries) {
+    const refs = Object.keys(entries);
+    const used = refs.filter((r) => entries[r].used === true);
+    const measured = refs.some((r) => entries[r].used === false);
+    if (used.length > 0) {
+      const explicit2 = new Set(explicitIdsOf(turn));
+      const ids2 = used.filter((r) => !explicit2.has(r));
+      if (ids2.length === 0) return { post: false, reason: "explicit_only" };
+      return {
+        post: true,
+        outcome: failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
+        signal: failed ? SIGNAL_FAILURE : SIGNAL_SUCCESS,
+        entryIds: ids2,
+        rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure)
+      };
+    }
+    if (measured && explicitIdsOf(turn).length > 0) return { post: false, reason: "explicit_only" };
+    if (measured) {
+      return {
+        post: true,
+        outcome: OUTCOME_UNUSED,
+        signal: SIGNAL_UNUSED,
+        entryIds: [],
+        rationale: entryRationale(ev, 0, refs.length, failed, toolFailure)
+      };
+    }
+    if (recalled.length === 0) return { post: false, reason: "nothing_injected" };
+  }
   const unused = ev.used === false;
+  const explicit = new Set(explicitIdsOf(turn));
+  if (unused && explicit.size > 0) return { post: false, reason: "explicit_only" };
+  const ids = recalled.filter((r) => !explicit.has(r));
+  if (!unused && ids.length === 0) return { post: false, reason: "explicit_only" };
   return {
     post: true,
     outcome: unused ? OUTCOME_UNUSED : failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
@@ -912,8 +962,36 @@ function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : entryIds,
-    rationale: rationaleFor(ev, unused, failed, entryIds.length)
+    entryIds: unused ? [] : ids,
+    rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure)
+  };
+}
+function decideCorrection(turn) {
+  if (!isObject(turn)) return { post: false, reason: "not_a_turn" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (str2(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
+  if (str2(turn.outcome).toLowerCase() === "failure") return { post: false, reason: "already_failed" };
+  const ev = isObject(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (!entries) return { post: false, reason: "nothing_used" };
+  const explicit = new Set(explicitIdsOf(turn));
+  const ids = Object.keys(entries).filter((r) => entries[r].used === true && !explicit.has(r));
+  if (ids.length === 0) return { post: false, reason: "nothing_used" };
+  return {
+    post: true,
+    outcome: OUTCOME_FAILURE,
+    signal: SIGNAL_FAILURE,
+    entryIds: ids,
+    rationale: `The user's next prompt corrected this Claude Code turn; the reply had used ${ids.length} ${ids.length === 1 ? "memory" : "memories"} (memory-term-echo/v2-entry).`
+  };
+}
+function correctionIdempotencyKey(runId, promptId) {
+  return `cc-correction-${str2(runId)}-${str2(promptId)}`;
+}
+function correctionRequest(o) {
+  return {
+    ...outcomeRequest(o),
+    idempotency_key: correctionIdempotencyKey(o.runId, o.promptId)
   };
 }
 function outcomeIdempotencyKey(runId, promptId) {
@@ -932,17 +1010,40 @@ function outcomeRequest(o) {
     idempotency_key: outcomeIdempotencyKey(o.runId, o.promptId)
   };
 }
-function rationaleFor(ev, unused, failed, n) {
+function rationaleFor(ev, unused, failed, n, toolFailure = false) {
   const method = str2(ev.method);
   const by = method ? ` (${method})` : "";
   const counts = `${numOr(ev.matched, 0)} of ${numOr(ev.candidates, 0)} injected memory terms`;
   if (unused) {
     return `Claude Code injected ${n} ${n === 1 ? "memory" : "memories"} and the reply carried none of their vocabulary \u2014 ${counts}${by}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
   }
+  const ended = toolFailure ? "Claude Code turn ended on a failed tool call" : "Claude Code turn ended in failure";
   if (ev.used === true) {
-    return failed ? `Claude Code turn ended in failure; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
+    return failed ? `${ended}; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
   }
-  return failed ? "Claude Code turn ended in failure after these memories were injected." : "Claude Code turn completed after these memories were injected.";
+  return failed ? `${ended} after these memories were injected.` : "Claude Code turn completed after these memories were injected.";
+}
+function entryRationale(ev, used, of, failed, toolFailure) {
+  const method = str2(ev.entry_method) || "memory-term-echo/v2-entry";
+  const counts = `the reply used ${used} of ${of} injected ${of === 1 ? "memory" : "memories"} (${method})`;
+  if (used === 0) {
+    return `Claude Code turn completed; ${counts}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
+  }
+  if (!failed) return `Claude Code turn completed; ${counts}.`;
+  return toolFailure ? `Claude Code turn ended on a failed tool call; ${counts}.` : `Claude Code turn ended in failure; ${counts}.`;
+}
+function entriesOf(ev) {
+  const e = ev.entries;
+  if (!isObject(e)) return null;
+  const out = {};
+  for (const [ref, v] of Object.entries(e)) {
+    if (ref.trim() && isObject(v)) out[ref] = /** @type {any} */
+    v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function explicitIdsOf(turn) {
+  return Array.isArray(turn.explicit_ids) ? turn.explicit_ids.filter((v) => typeof v === "string" && v.trim()) : [];
 }
 function isObject(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -1034,9 +1135,9 @@ function scrub(text, count) {
 }
 function entropy(s) {
   if (s === null || s === void 0) return 0;
-  const str4 = typeof s === "string" ? s : String(s);
-  if (str4.length === 0) return 0;
-  const buf = Buffer.from(str4, "utf8");
+  const str5 = typeof s === "string" ? s : String(s);
+  if (str5.length === 0) return 0;
+  const buf = Buffer.from(str5, "utf8");
   const n = buf.length;
   if (n === 0) return 0;
   const counts = new Uint32Array(256);
@@ -1349,7 +1450,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1419,7 +1520,7 @@ async function postOutcome(cfg, req, opts = {}) {
       req,
       "reference_id",
       "postOutcome",
-      'pass "global" for run-level attribution and put the real ids in entry_ids[] (\xA71.3)'
+      'pass "global" for run-level attribution and put the real ids in entry_ids[]'
     )
   );
   if (bad) return refuse(cfg, started, bad, { route: ROUTES.outcome });
@@ -1448,7 +1549,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -1539,7 +1640,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function requireItems(req) {
   const items = req && typeof req === "object" ? req.items : void 0;
@@ -2080,7 +2181,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -2259,7 +2360,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -2476,29 +2577,176 @@ var init_runid = __esm({
   }
 });
 
-// ../claude-code/lib/spool.mjs
+// ../claude-code/lib/scorecard-log.mjs
 import {
   closeSync as closeSync3,
-  existsSync as existsSync7,
-  linkSync,
+  fstatSync as fstatSync2,
   openSync as openSync3,
   readdirSync as readdirSync4,
   readFileSync as readFileSync8,
-  renameSync as renameSync4,
+  readSync as readSync2,
   statSync as statSync7,
-  unlinkSync as unlinkSync4,
-  writeFileSync as writeFileSync4,
   writeSync as writeSync4
 } from "node:fs";
+import { dirname as dirname7, join as join11 } from "node:path";
+function scorecardPath(cfg, sessionId) {
+  const id = safeSegment(typeof sessionId === "string" ? sessionId.trim() : "", MAX_ID);
+  if (!id) return "";
+  return join11(resolveDataDir(cfg), SCORE_DIR, `${id}.jsonl`);
+}
+function readScoreRows(cfg, sessionId, opts = {}) {
+  const p = scorecardPath(cfg, sessionId);
+  if (!p) return [];
+  return readRowsAt(p, opts);
+}
+function readRowsAt(p, opts = {}) {
+  try {
+    const size = statSync7(p).size;
+    const tail = Number(opts?.tailBytes);
+    const want = Number.isFinite(tail) && tail > 0 ? Math.min(tail, MAX_READ_BYTES) : MAX_READ_BYTES;
+    let text;
+    let partialHead = false;
+    if (size > want) {
+      const fd = openSync3(p, "r");
+      try {
+        const buf = Buffer.alloc(want);
+        readSync2(fd, buf, 0, want, size - want);
+        text = buf.toString("utf8");
+      } finally {
+        closeSync3(fd);
+      }
+      partialHead = true;
+    } else {
+      text = readFileSync8(p, "utf8");
+    }
+    const lines = text.split("\n");
+    if (partialHead) lines.shift();
+    const out = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line);
+        if (row && typeof row === "object" && !Array.isArray(row) && typeof row.kind === "string") {
+          out.push(row);
+        }
+      } catch {
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+var SCORE_DIR, SCORE_LOG_TTL_MS, MAX_READ_BYTES, MAX_ID;
+var init_scorecard_log = __esm({
+  "../claude-code/lib/scorecard-log.mjs"() {
+    init_state();
+    SCORE_DIR = "scorecard";
+    SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    MAX_READ_BYTES = 4 * 1024 * 1024;
+    MAX_ID = 128;
+  }
+});
+
+// ../claude-code/lib/scorecard.mjs
+function previousTurn(rows, currentPromptId) {
+  const list2 = Array.isArray(rows) ? rows.filter(isObject5) : [];
+  const current = str3(currentPromptId);
+  const prompts = /* @__PURE__ */ new Map();
+  const order = [];
+  const turns = /* @__PURE__ */ new Map();
+  const clears = [];
+  list2.forEach((row, pos) => {
+    if (row.kind === "start" && str3(row.source) === "clear") clears.push(pos);
+    const id2 = str3(row.prompt_id);
+    if (!id2 || !PROMPT_KINDS.has(row.kind)) return;
+    if (!prompts.has(id2)) {
+      prompts.set(id2, markOf(pos));
+      order.push(id2);
+    }
+    const p = (
+      /** @type {PromptMark} */
+      prompts.get(id2)
+    );
+    if (row.kind === "prompt") flagPrompt(p, row);
+    if (row.kind === "turn") turns.set(id2, row);
+  });
+  const at = order.indexOf(current);
+  const before = (at >= 0 ? order.slice(0, at) : order).filter((id2) => !prompts.get(id2)?.slash);
+  const id = before[before.length - 1];
+  if (!id) return null;
+  const from = num3(prompts.get(id)?.pos);
+  const to = at >= 0 ? num3(prompts.get(current)?.pos) : Infinity;
+  return { promptId: id, turn: turns.get(id) ?? null, afterClear: clears.some((c) => c > from && c < to) };
+}
+function correctionTargets(rows) {
+  const list2 = Array.isArray(rows) ? rows.filter(isObject5) : [];
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  list2.forEach((row, i) => {
+    if (row.kind !== "prompt" || row.correction !== true || row.slash === true) return;
+    const prev = previousTurn(list2.slice(0, i), str3(row.prompt_id));
+    const turn = prev?.turn;
+    if (!prev || !turn || prev.afterClear) return;
+    const used = Array.isArray(turn.used_refs) && turn.used_refs.some((r) => typeof r === "string" && r);
+    const runId = str3(turn.run_id);
+    const key = `${runId}
+${prev.promptId}`;
+    if (!used || !runId || seen.has(key)) return;
+    seen.add(key);
+    out.push({ runId, promptId: prev.promptId });
+  });
+  return out;
+}
+function markOf(pos) {
+  return { slash: false, correction: false, pos, flagged: false };
+}
+function flagPrompt(p, row) {
+  if (p.flagged) return;
+  p.flagged = true;
+  p.slash = row.slash === true;
+  p.correction = row.correction === true;
+}
+function isObject5(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+function str3(v) {
+  return typeof v === "string" ? v : "";
+}
+function num3(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+var PROMPT_KINDS;
+var init_scorecard = __esm({
+  "../claude-code/lib/scorecard.mjs"() {
+    PROMPT_KINDS = /* @__PURE__ */ new Set(["prompt", "shown", "turn"]);
+  }
+});
+
+// ../claude-code/lib/spool.mjs
+import {
+  closeSync as closeSync4,
+  existsSync as existsSync7,
+  linkSync,
+  openSync as openSync4,
+  readdirSync as readdirSync5,
+  readFileSync as readFileSync9,
+  renameSync as renameSync4,
+  statSync as statSync8,
+  unlinkSync as unlinkSync4,
+  writeFileSync as writeFileSync4,
+  writeSync as writeSync5
+} from "node:fs";
 import { createHash as createHash4, randomBytes } from "node:crypto";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 function batchIdempotencyKey(runId, items) {
   const ids = (Array.isArray(items) ? items : []).map((it) => it && typeof it === "object" ? String(it.item_id ?? "") : "").join("|");
   const digest = createHash4("sha256").update(`${String(runId ?? "")}|${ids}`, "utf8").digest("hex").slice(0, 16);
   return `cc-batch-${digest}`;
 }
 function spoolDir(cfg, runId) {
-  return join11(runDir(cfg, runId), "spool");
+  return join12(runDir(cfg, runId), "spool");
 }
 function stampOf(dir, name) {
   const m = /^(\d{10,})-/.exec(name);
@@ -2507,7 +2755,7 @@ function stampOf(dir, name) {
     if (Number.isFinite(n)) return n;
   }
   try {
-    return statSync7(join11(dir, name)).mtimeMs;
+    return statSync8(join12(dir, name)).mtimeMs;
   } catch {
     return 0;
   }
@@ -2515,7 +2763,7 @@ function stampOf(dir, name) {
 function orderedNames(dir) {
   let entries;
   try {
-    entries = readdirSync4(dir, { withFileTypes: true });
+    entries = readdirSync5(dir, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -2528,10 +2776,10 @@ function readBatch(cfg, runId, max = DEFAULT_MAX) {
     const dir = spoolDir(cfg, runId);
     for (const name of orderedNames(dir)) {
       if (out.length >= limit) break;
-      const path = join11(dir, name);
+      const path = join12(dir, name);
       let raw;
       try {
-        raw = readFileSync8(path, "utf8");
+        raw = readFileSync9(path, "utf8");
       } catch {
         continue;
       }
@@ -2570,14 +2818,14 @@ function stamp(pid, ts) {
 }
 function readLock(lockPath) {
   try {
-    const raw = readFileSync8(lockPath, "utf8");
+    const raw = readFileSync9(lockPath, "utf8");
     const j = JSON.parse(raw);
     if (!j || typeof j !== "object") return null;
     const pid = Number(j.pid);
     let ts = Number(j.ts);
     if (!Number.isFinite(ts)) {
       try {
-        ts = statSync7(lockPath).mtimeMs;
+        ts = statSync8(lockPath).mtimeMs;
       } catch {
         return null;
       }
@@ -2603,7 +2851,7 @@ function acquireDrainLock(cfg, runId) {
   try {
     const dir = runDir(cfg, runId);
     if (!ensureDir(dir)) return null;
-    const lockPath = join11(dir, "drain.lock");
+    const lockPath = join12(dir, "drain.lock");
     const held = create(lockPath);
     if (held) return { path: lockPath, runId: String(runId ?? ""), pid: process.pid, ts: held };
     const owner = readLock(lockPath);
@@ -2641,16 +2889,16 @@ function create(lockPath) {
     ) return 0;
     let fd;
     try {
-      fd = openSync3(lockPath, "wx");
+      fd = openSync4(lockPath, "wx");
     } catch {
       return 0;
     }
     try {
-      writeSync4(fd, body);
+      writeSync5(fd, body);
     } catch {
     } finally {
       try {
-        closeSync3(fd);
+        closeSync4(fd);
       } catch {
       }
     }
@@ -2677,7 +2925,7 @@ function acquireFlushLease(cfg, runId, name) {
     const safe = safeSegment(name);
     const dir = runDir(cfg, runId);
     if (!safe || !ensureDir(dir)) return open;
-    const lockPath = join11(dir, `flush-${safe}.lock`);
+    const lockPath = join12(dir, `flush-${safe}.lock`);
     const held = create(lockPath);
     if (held) return { path: lockPath, runId: String(runId ?? ""), pid: process.pid, ts: held };
     if (!existsSync7(lockPath)) return open;
@@ -2707,7 +2955,7 @@ function claimHeld(cfg, runId, name) {
   try {
     const safe = safeSegment(name);
     if (!safe) return false;
-    return existsSync7(join11(runDir(cfg, runId), `${safe}.marker`));
+    return existsSync7(join12(runDir(cfg, runId), `${safe}.marker`));
   } catch {
     return false;
   }
@@ -2718,10 +2966,10 @@ function claimOnce(cfg, runId, name) {
     if (!safe) return true;
     const dir = runDir(cfg, runId);
     ensureDir(dir);
-    const marker = join11(dir, `${safe}.marker`);
+    const marker = join12(dir, `${safe}.marker`);
     let fd;
     try {
-      fd = openSync3(marker, "wx");
+      fd = openSync4(marker, "wx");
     } catch (err) {
       if (
         /** @type {any} */
@@ -2730,11 +2978,11 @@ function claimOnce(cfg, runId, name) {
       return true;
     }
     try {
-      writeSync4(fd, stamp(process.pid, Date.now()));
+      writeSync5(fd, stamp(process.pid, Date.now()));
     } catch {
     } finally {
       try {
-        closeSync3(fd);
+        closeSync4(fd);
       } catch {
       }
     }
@@ -2748,7 +2996,7 @@ function spoolStats(cfg, runId) {
     const dir = spoolDir(cfg, runId);
     let entries;
     try {
-      entries = readdirSync4(dir, { withFileTypes: true });
+      entries = readdirSync5(dir, { withFileTypes: true });
     } catch {
       return { count: 0, oldestMs: 0 };
     }
@@ -2778,8 +3026,8 @@ var init_spool = __esm({
 
 // ../claude-code/hooks/src/session-end.mjs
 var session_end_exports = {};
-import { readdirSync as readdirSync5, unlinkSync as unlinkSync5 } from "node:fs";
-import { join as join12 } from "node:path";
+import { readdirSync as readdirSync6, unlinkSync as unlinkSync5 } from "node:fs";
+import { join as join13 } from "node:path";
 function handOff(cfg, payload, runId) {
   updateMarker(cfg, runId, { reflect: { at: 0, lessons_stored: 0, status: "handoff" } });
   const path = stashPayload(cfg, payload);
@@ -2855,14 +3103,14 @@ async function drainInline(cfg, o) {
         idempotency_key: batchIdempotencyKey(o.runId, items),
         parallel: true,
         items,
-        ...str3(cfg.userId) ? { user_id: str3(cfg.userId) } : {}
+        ...str4(cfg.userId) ? { user_id: str4(cfg.userId) } : {}
       }, { timeoutMs: Math.max(1, Math.min(intOr(cfg.timeoutMs, 4e3), o.deadline - Date.now())) });
       batches++;
       if (!res.ok) {
         log(cfg, "warn", `session-end: ingest failed (${res.state}); items stay spooled`, {
           run_id: o.runId,
           status: res.status ?? 0,
-          error: str3(res.error).slice(0, 300)
+          error: str4(res.error).slice(0, 300)
         });
         failed = true;
         break;
@@ -2891,16 +3139,16 @@ async function drainInline(cfg, o) {
 }
 function recordJob(cfg, runId, body, n) {
   try {
-    const jobId = str3(body?.job_id);
+    const jobId = str4(body?.job_id);
     if (!jobId) return;
-    const p = join12(runDir(cfg, runId), "jobs.json");
+    const p = join13(runDir(cfg, runId), "jobs.json");
     const prev = readJson(p, []);
     const arr = Array.isArray(prev) ? prev.filter((e) => !!e && typeof e === "object") : [];
     arr.push({
       job_id: jobId,
       at: Date.now(),
       items: n,
-      status: str3(body?.status),
+      status: str4(body?.status),
       deduplicated: body?.deduplicated === true
     });
     writeJsonAtomic(p, arr.slice(-JOBS_KEEP));
@@ -2911,19 +3159,19 @@ async function flushOutcomes(cfg, o) {
   if (!implicitOutcomesEnabled(cfg)) return 0;
   let flushed = 0;
   try {
-    const dir = join12(runDir(cfg, o.runId), "turns");
+    const dir = join13(runDir(cfg, o.runId), "turns");
     let names = [];
     try {
-      names = readdirSync5(dir).filter((f) => f.endsWith(".json"));
+      names = readdirSync6(dir).filter((f) => f.endsWith(".json"));
     } catch {
       return 0;
     }
     for (const name of names.slice(0, MAX_TURN_FLUSH)) {
       const budget = o.budget();
       if (budget <= 0) break;
-      const p = join12(dir, name);
+      const p = join13(dir, name);
       const turn = readJson(p, null);
-      if (!isObject5(turn) || turn.outcome_pending !== true) continue;
+      if (!isObject6(turn) || turn.outcome_pending !== true) continue;
       const decision = decideOutcome(turn);
       if (!decision.post) {
         if (decision.reason === "attempts_exhausted") {
@@ -2931,7 +3179,7 @@ async function flushOutcomes(cfg, o) {
         }
         continue;
       }
-      const promptId = str3(turn.prompt_id) || name.replace(/\.json$/, "");
+      const promptId = str4(turn.prompt_id) || name.replace(/\.json$/, "");
       const attempts = numOr2(turn.outcome_attempts, 0);
       writeJsonAtomic(p, { ...turn, outcome_attempts: attempts + 1 });
       const res = await postOutcome(
@@ -2971,6 +3219,48 @@ async function flushOutcomes(cfg, o) {
     log(cfg, "warn", `session-end: outcome flush skipped \u2014 ${messageOf2(err)}`, { run_id: o.runId });
   }
   return flushed;
+}
+async function flushCorrections(cfg, o) {
+  if (!implicitOutcomesEnabled(cfg)) return 0;
+  let sent = 0;
+  try {
+    const targets = correctionTargets(readScoreRows(cfg, o.sessionId)).slice(-MAX_TURN_FLUSH);
+    for (const { runId, promptId } of targets) {
+      const budget = o.budget();
+      if (budget <= 0) break;
+      const p = join13(runDir(cfg, runId), "turns", `${safeSegment(promptId)}.json`);
+      const turn = readJson(p, null);
+      const decision = decideCorrection(turn);
+      if (!decision.post) continue;
+      const res = await postOutcome(
+        cfg,
+        correctionRequest({ runId, agentId: o.agentId, promptId, decision }),
+        { timeoutMs: budget }
+      );
+      if (!res.ok) {
+        log(cfg, "info", `session-end: correction flush failed (${res.state})`, { run_id: runId, prompt_id: promptId });
+        continue;
+      }
+      sent++;
+      const fresh2 = readJson(p, turn);
+      writeJsonAtomic(p, { ...isObject6(fresh2) ? fresh2 : turn, correction_sent_at: Date.now() });
+      appendLedger(resolveDataDir(cfg), runId, {
+        v: 1,
+        kind: "outcome",
+        at: Date.now(),
+        run_id: runId,
+        prompt_id: promptId,
+        outcome: String(decision.outcome ?? ""),
+        signal: numOr2(decision.signal, 0),
+        entry_ids_n: Array.isArray(decision.entryIds) ? decision.entryIds.length : 0,
+        attempts: 1,
+        correction: true
+      });
+    }
+  } catch (err) {
+    log(cfg, "warn", `session-end: correction flush skipped \u2014 ${messageOf2(err)}`, { session_id: o.sessionId });
+  }
+  return sent;
 }
 async function maybeReflect(cfg, o) {
   const idle = { attempted: false, status: "skipped", lessons: 0, at: 0, attempts: 0, error: "" };
@@ -3014,8 +3304,7 @@ async function maybeReflect(cfg, o) {
   const reflectBody = {
     run_id: o.runId,
     include_linked_runs: false,
-    // `include_step_outcomes` folds outcome signals into the evidence
-    // (`control.proto`) — the NEGATIVE ones produce the highest-value lessons.
+    // `include_step_outcomes`: the outcomes posted above are part of what reflect reads.
     include_step_outcomes: true,
     // `last_n_items` bounds the evidence to the most recent items of the run, of every kind
     // and including those outcomes. A session end is the tail of its run, so that bound is
@@ -3023,7 +3312,7 @@ async function maybeReflect(cfg, o) {
     last_n_items: REFLECT_LAST_N
     // `record: false`, because a deadline this client chose is not evidence about the server.
     // `lib/http.mjs` already exempts callers who dial *tighter* than the configured default;
-    // this one is the mirror image and the exemption misses it — the reflect is LLM-backed
+    // this one is the mirror image and the exemption misses it — the reflect is slow
     // and dials deliberately wide, so its abort would be filed as `not_responding` against an
     // instance that was still composing an answer. Five of those inside the window open the
     // breaker, and the breaker gates the ingest *drain*: a merely slow reflection would
@@ -3067,7 +3356,7 @@ async function maybeReflect(cfg, o) {
         run_id: o.runId,
         status: res.status ?? 0,
         attempts,
-        error: str3(res.error).slice(0, 300)
+        error: str4(res.error).slice(0, 300)
       }
     );
     return {
@@ -3076,10 +3365,10 @@ async function maybeReflect(cfg, o) {
       lessons: 0,
       at: Date.now(),
       attempts,
-      error: str3(res.error)
+      error: str4(res.error)
     };
   }
-  const body = isObject5(res.body) ? res.body : {};
+  const body = isObject6(res.body) ? res.body : {};
   const stored = Number.isFinite(Number(body.lessons_stored)) ? Math.max(0, Math.trunc(Number(body.lessons_stored))) : Array.isArray(body.lessons) ? body.lessons.length : 0;
   log(
     cfg,
@@ -3100,10 +3389,10 @@ function breakerOpen(cfg) {
     return false;
   }
 }
-function isObject5(v) {
+function isObject6(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
-function str3(v) {
+function str4(v) {
   return typeof v === "string" ? v.trim() : "";
 }
 function numOr2(v, d) {
@@ -3135,6 +3424,8 @@ var init_session_end = __esm({
     init_markers();
     init_outcome();
     init_runid();
+    init_scorecard_log();
+    init_scorecard();
     init_spool();
     init_state();
     DETACHED = process.env.MUBIT_CC_DETACHED === "1";
@@ -3200,6 +3491,10 @@ var init_session_end = __esm({
           });
           const flushed = await flushOutcomes(cfg, {
             runId,
+            agentId,
+            budget: () => budgetFor(OUTCOME_MS, REFLECT_MS / 2)
+          }) + await flushCorrections(cfg, {
+            sessionId,
             agentId,
             budget: () => budgetFor(OUTCOME_MS, REFLECT_MS / 2)
           });
