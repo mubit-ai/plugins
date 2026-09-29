@@ -1016,10 +1016,40 @@ function decideOutcome(turn) {
   if (numOr(turn.outcome_attempts, 0) >= MAX_OUTCOME_ATTEMPTS) {
     return { post: false, reason: "attempts_exhausted" };
   }
-  const entryIds = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
-  if (entryIds.length === 0) return { post: false, reason: "nothing_injected" };
-  const failed = str2(turn.outcome).toLowerCase() === "failure";
+  const recalled = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
   const ev = isObject2(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (recalled.length === 0 && !entries) return { post: false, reason: "nothing_injected" };
+  const failed = str2(turn.outcome).toLowerCase() === "failure";
+  const toolFailure = failed && str2(turn.failure_reason) === "tool_failure";
+  if (entries) {
+    const refs = Object.keys(entries);
+    const used = refs.filter((r) => entries[r].used === true);
+    const measured = refs.some((r) => entries[r].used === false);
+    if (used.length > 0) {
+      const explicit = new Set(explicitIdsOf(turn));
+      const ids = used.filter((r) => !explicit.has(r));
+      if (ids.length === 0) return { post: false, reason: "explicit_only" };
+      return {
+        post: true,
+        outcome: failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
+        signal: failed ? SIGNAL_FAILURE : SIGNAL_SUCCESS,
+        entryIds: ids,
+        rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure)
+      };
+    }
+    if (measured && explicitIdsOf(turn).length > 0) return { post: false, reason: "explicit_only" };
+    if (measured) {
+      return {
+        post: true,
+        outcome: OUTCOME_UNUSED,
+        signal: SIGNAL_UNUSED,
+        entryIds: [],
+        rationale: entryRationale(ev, 0, refs.length, failed, toolFailure)
+      };
+    }
+    if (recalled.length === 0) return { post: false, reason: "nothing_injected" };
+  }
   const unused = ev.used === false;
   return {
     post: true,
@@ -1030,8 +1060,35 @@ function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : entryIds,
-    rationale: rationaleFor(ev, unused, failed, entryIds.length)
+    entryIds: unused ? [] : recalled,
+    rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure)
+  };
+}
+function decideCorrection(turn) {
+  if (!isObject2(turn)) return { post: false, reason: "not_a_turn" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (str2(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
+  const ev = isObject2(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (!entries) return { post: false, reason: "nothing_used" };
+  const explicit = new Set(explicitIdsOf(turn));
+  const ids = Object.keys(entries).filter((r) => entries[r].used === true && !explicit.has(r));
+  if (ids.length === 0) return { post: false, reason: "nothing_used" };
+  return {
+    post: true,
+    outcome: OUTCOME_FAILURE,
+    signal: SIGNAL_FAILURE,
+    entryIds: ids,
+    rationale: `The user's next prompt corrected this Claude Code turn; the reply had used ${ids.length} ${ids.length === 1 ? "memory" : "memories"} (memory-term-echo/v2-entry).`
+  };
+}
+function correctionIdempotencyKey(runId, promptId) {
+  return `cc-correction-${str2(runId)}-${str2(promptId)}`;
+}
+function correctionRequest(o) {
+  return {
+    ...outcomeRequest(o),
+    idempotency_key: correctionIdempotencyKey(o.runId, o.promptId)
   };
 }
 function outcomeIdempotencyKey(runId, promptId) {
@@ -1050,17 +1107,40 @@ function outcomeRequest(o) {
     idempotency_key: outcomeIdempotencyKey(o.runId, o.promptId)
   };
 }
-function rationaleFor(ev, unused, failed, n) {
+function rationaleFor(ev, unused, failed, n, toolFailure = false) {
   const method = str2(ev.method);
   const by = method ? ` (${method})` : "";
   const counts = `${numOr(ev.matched, 0)} of ${numOr(ev.candidates, 0)} injected memory terms`;
   if (unused) {
     return `Claude Code injected ${n} ${n === 1 ? "memory" : "memories"} and the reply carried none of their vocabulary \u2014 ${counts}${by}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
   }
+  const ended = toolFailure ? "Claude Code turn ended on a failed tool call" : "Claude Code turn ended in failure";
   if (ev.used === true) {
-    return failed ? `Claude Code turn ended in failure; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
+    return failed ? `${ended}; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
   }
-  return failed ? "Claude Code turn ended in failure after these memories were injected." : "Claude Code turn completed after these memories were injected.";
+  return failed ? `${ended} after these memories were injected.` : "Claude Code turn completed after these memories were injected.";
+}
+function entryRationale(ev, used, of, failed, toolFailure) {
+  const method = str2(ev.entry_method) || "memory-term-echo/v2-entry";
+  const counts = `the reply used ${used} of ${of} injected ${of === 1 ? "memory" : "memories"} (${method})`;
+  if (used === 0) {
+    return `Claude Code ${counts}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
+  }
+  if (!failed) return `Claude Code turn completed; ${counts}.`;
+  return toolFailure ? `Claude Code turn ended on a failed tool call; ${counts}.` : `Claude Code turn ended in failure; ${counts}.`;
+}
+function entriesOf(ev) {
+  const e = ev.entries;
+  if (!isObject2(e)) return null;
+  const out = {};
+  for (const [ref, v] of Object.entries(e)) {
+    if (ref.trim() && isObject2(v)) out[ref] = /** @type {any} */
+    v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function explicitIdsOf(turn) {
+  return Array.isArray(turn.explicit_ids) ? turn.explicit_ids.filter((v) => typeof v === "string" && v.trim()) : [];
 }
 function isObject2(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -2663,6 +2743,7 @@ async function main() {
   const outcomeArg = flagValue(argv, "--with-outcome");
   const wantsOutcome = argv.includes("--with-outcome");
   const pinnedRun = flagValue(argv, "--run");
+  const correctArg = str3(flagValue(argv, "--correct"));
   const payload = await readPayload(payloadPath);
   const cfg = loadConfig(process.env);
   cfgRef = cfg;
@@ -2683,7 +2764,7 @@ async function main() {
   }
   const agentId = deriveAgentId(payload);
   const promptId = str3(outcomeArg) || turnKey(payload);
-  const lock = await acquireConfirmed(cfg, runId, wantsOutcome, started);
+  const lock = await acquireConfirmed(cfg, runId, wantsOutcome || !!correctArg, started);
   if (!lock) {
     log(cfg, "debug", "drain: another drainer holds the lock; standing down", { run_id: runId });
     return;
@@ -2700,6 +2781,7 @@ async function main() {
   try {
     const drained = await drainSpool(cfg, runId, agentId, promptId, started);
     await flushOutcome(cfg, runId, agentId, promptId, wantsOutcome);
+    if (correctArg && !breakerOpen(cfg)) await sendCorrection(cfg, runId, agentId, correctArg);
     log(cfg, "info", `drain: ${drained.sent} item(s) in ${drained.batches} batch(es)`, {
       run_id: runId,
       rejected: drained.rejected,
@@ -2924,6 +3006,36 @@ async function sendOutcome(cfg, runId, agentId, promptId) {
     }
   } catch (err) {
     log(cfg, "warn", `drain: outcome skipped \u2014 ${messageOf3(err)}`, { run_id: runId });
+  }
+}
+async function sendCorrection(cfg, runId, agentId, promptId) {
+  try {
+    if (!implicitOutcomesEnabled(cfg)) return;
+    const p = join12(runDir(cfg, runId), "turns", `${safeSegment(promptId)}.json`);
+    const turn = readJson(p, null);
+    const decision = decideCorrection(turn);
+    if (!decision.post) {
+      log(cfg, "debug", `drain: no correction to post (${decision.reason})`, { run_id: runId, prompt_id: promptId });
+      return;
+    }
+    const res = await postOutcome(
+      cfg,
+      correctionRequest({ runId, agentId, promptId, decision }),
+      { timeoutMs: numOr2(cfg.timeoutMs, 4e3) }
+    );
+    if (!res.ok) {
+      log(cfg, "warn", `drain: correction post failed (${res.state})`, { run_id: runId, prompt_id: promptId });
+      return;
+    }
+    const fresh2 = readJson(p, turn);
+    writeJsonAtomic(p, { ...fresh2 && typeof fresh2 === "object" ? fresh2 : turn, correction_sent_at: Date.now() });
+    appendLedger(
+      resolveDataDir(cfg),
+      runId,
+      { ...outcomeLedgerRow(runId, promptId, decision, 1), correction: true }
+    );
+  } catch (err) {
+    log(cfg, "warn", `drain: correction skipped \u2014 ${messageOf3(err)}`, { run_id: runId });
   }
 }
 function outcomeLedgerRow(runId, promptId, decision, attempts) {
