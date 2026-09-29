@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Mubit Memory",
     "shortDescription": "Persistent memory for Codex",
-    "longDescription": "Mubit Memory gives Codex a memory that survives the session. Every tool call is captured, relevant lessons are recalled before each prompt, outcomes are attributed back so what helps ranks higher next time, and a reflection at session end promotes what was learned beyond the run it was learned in.",
+    "longDescription": "Mubit Memory gives Codex a memory that survives the session. Every tool call is captured, relevant lessons are recalled before each prompt, outcomes are attributed back so what helps ranks higher next time, and a reflection at session end carries what was learned into later sessions.",
     "developerName": "Mubit AI",
     "category": "Productivity",
     "capabilities": [

@@ -2,8 +2,8 @@
 
 Persistent, typed, self-improving memory for the OpenAI Codex CLI. Work is captured
 involuntarily as it happens, relevant lessons are injected before every prompt, outcomes are
-attributed back so what helps ranks higher next time, and a reflection at session end promotes
-what was learned beyond the run it was learned in.
+attributed back so what helps ranks higher next time, and a reflection at session end carries
+what was learned into later sessions.
 
 It is the same plugin as [`../claude-code`](../claude-code): one `lib/`, one set of hook
 bodies, one MCP launcher, built twice. **A Codex session and a Claude Code session started in
@@ -83,9 +83,8 @@ unless you have turned the warnings on.
 
 ## Configuration
 
-Codex has no plugin settings UI and exports no `CODEX_PLUGIN_OPTION_*` variables — the strings
-`PLUGIN_OPTION` and `userConfig` appear nowhere in its binary — so configuration is three
-rungs, highest first:
+Codex has no plugin settings UI and exports no `CODEX_PLUGIN_OPTION_*` variables, so
+configuration is three rungs, highest first:
 
 1. `MUBIT_*` environment variables
 2. `<data-dir>/credentials.json`, written by `mubit-memory:auth`
@@ -118,8 +117,8 @@ The settings worth knowing, all `MUBIT_CC_*` unless noted:
 ### The three-second SessionEnd
 
 Codex clamps a `SessionEnd` hook to three seconds and kills it there, whatever the
-registration asks for. The end-of-session flush — the drain, and the reflect that is the only
-thing promoting a lesson beyond its own run — does not reliably fit. So the hook hands that
+registration asks for. The end-of-session flush — the drain, and the reflect that carries
+lessons into later sessions — does not reliably fit. So the hook hands that
 work to a detached process and returns immediately, which is why `MUBIT_CC_SESSION_END_DETACH`
 defaults on and why turning it off costs you reflections.
 
@@ -154,8 +153,7 @@ A Codex-only user ends up with a `~/.claude/` directory they never asked for.
 `MUBIT_CC_DATA_DIR` moves it, at the cost of the sharing.
 
 Which harness wrote an entry is recorded as its agent role — `codex` or `claude-code` — so the
-two are distinguishable where it matters, and count as two actors where something upstream is
-asking how well attested a lesson is.
+two are distinguishable where it matters.
 
 ### Sharing one run, and when it stops sharing
 
@@ -394,9 +392,8 @@ to this session's role, addressed for review, with zero network — it rides the
 redaction and circuit breaker included — and under the **parent's** run id. A sub-run id never
 reaches the wire, and there is no way to address a note to another run.
 
-"Open" is computed by the command, not by the instance: the instance never flips a handoff's
-`active` flag and has no list route, so the command reads both entry types for the run and
-joins them — open means no feedback names that id. With two sessions live in one data directory
+"Open" is computed by the command: it reads both entry types for the run and joins them — open
+means no feedback names that id. With two sessions live in one data directory
 the command refuses with `ambiguous_run` and names them rather than guessing; pass `--run`.
 
 ---
