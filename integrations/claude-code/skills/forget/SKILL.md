@@ -44,10 +44,9 @@ mubit_outcome  reference_id=<the lesson>  outcome=failure  signal=-1
                rationale="<why it was wrong, in one sentence>"
 ```
 
-The promotion pipeline acts on that. The lesson's confidence drops, it stops surfacing near
-the top of recall, and — this is the part deletion cannot do — the *reason* it was wrong is
-now part of the record. A deleted lesson teaches the system nothing. A down-weighted one
-teaches it something, and the correction survives to shape what gets promoted next.
+That makes the lesson less likely to be recalled, and — this is the part deletion cannot do —
+the *reason* it was wrong is now part of the record. A deleted lesson teaches the system
+nothing. A down-weighted one teaches it something, and the correction survives.
 
 ## When deletion is actually right
 

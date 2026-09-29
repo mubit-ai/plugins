@@ -316,6 +316,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -389,6 +399,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -534,8 +546,20 @@ var init_config = __esm({
     ];
     CACHE_FILE = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION = 3;
+    CACHE_VERSION = 4;
     MODE = "hosted";
+  }
+});
+
+// ../claude-code/lib/handles.mjs
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
   }
 });
 
@@ -543,6 +567,7 @@ var init_config = __esm({
 var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS;
 var init_assemble = __esm({
   "../claude-code/lib/assemble.mjs"() {
+    init_handles();
     SECTION_KEYS = Object.freeze([
       "mental_models",
       "active_rules",
@@ -1125,7 +1150,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1192,7 +1217,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };

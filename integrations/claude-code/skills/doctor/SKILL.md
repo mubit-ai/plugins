@@ -22,7 +22,7 @@ one before it, and the cheap steps answer most questions.
    below will come back clean while the model receives no memory at all. Read
    `recall.empty_reason` for which kind:
    - `policy_denied` — the instance has direct-access recall (rung 1) disabled, and the
-     `agent_routed` fallback is off by default because it costs an LLM call per prompt. Ask
+     `agent_routed` fallback is off by default because it adds seconds to every prompt. Ask
      the operator to enable direct search. `MUBIT_CC_RECALL_FALLBACK=agent_routed` restores
      recall at that cost; `MUBIT_CC_POLICY_TTL_MS=1` re-probes immediately once it is on.
    - `budget_exhausted` — recall ran out of time before the call returned. Raise
@@ -46,12 +46,9 @@ one before it, and the cheap steps answer most questions.
    | `skipped:not-ingested` | " | Nothing was ingested this session, so there was no tail to reflect over. |
    | `skipped:undrained` | " | The spool did not land, so reflecting would have drawn conclusions from a session the server only half has. The next session drains the rest and reflects then. |
 
-   **A `failed` reflect whose `last_error` is an HTTP 504 is the known one.** Reflection over
-   a real run runs long enough that it sits on a cliff, and ordinary latency variance decides
-   it — the identical request, issued four times in a row, has returned 504, 504, 200, 504.
-   That is why this call retries: `attempts: 2` with a 504 means both throws lost, which
-   happens to a minority of sessions and is **not** an instance fault. Do not send the user to check their
-   key, their endpoint or their network for it; the same instance is answering every other
+   **A `failed` reflect whose `last_error` is an HTTP 504 timed out, and the call retries
+   once.** `attempts: 2` with a 504 means both tries timed out. Do not send the user to check
+   their key, their endpoint or their network for it; the same instance is answering every other
    route. What it costs is real, though — that session's lessons stay at `run` scope and are
    invisible to the next session. If it is failing on most sessions rather than some, that is
    worth escalating, and the number to quote is how many consecutive session markers read
@@ -71,10 +68,10 @@ one before it, and the cheap steps answer most questions.
      (`MUBIT_MCP_LESSON_SCOPE`), default `session`. It is a `userConfig` key, so it resolves
      through the ordinary precedence — environment, then `/plugin` → Mubit Memory →
      configure. At `run`, every lesson `mubit_learned` writes stays inside the run that wrote
-     it, and nothing later widens it: reflection stamps `run` too.
+     it.
    - **What is actually stored, by scope** — `node scripts/scope-audit.mjs`. It reports the
-     scope distribution across every run, how many lessons are visible outside the run that
-     wrote them, and whatever promotion metadata the instance stamped. Run it before and
+     scope distribution across every run and how many lessons are visible outside the run that
+     wrote them. Run it before and
      after changing the setting; a single reading says nothing.
 
    A ceiling of `run` with a user who expected cross-session lessons is the whole fault, and
