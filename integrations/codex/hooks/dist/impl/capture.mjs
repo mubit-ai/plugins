@@ -4010,7 +4010,8 @@ function noteOwnTool(cfg, payload) {
   });
 }
 function resultIsError(response) {
-  return isObject9(response) && response.isError === true;
+  const result = typeof response === "string" ? attempt(() => JSON.parse(response), null) : response;
+  return isObject9(result) && result.isError === true;
 }
 function usedEvidence(turn, payload) {
   const recall = isObject9(turn.recall) ? turn.recall : null;
