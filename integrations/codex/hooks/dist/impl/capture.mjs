@@ -3472,19 +3472,24 @@ function capture(rawPayload, cfg, mode) {
   }
   const runId = attempt(() => deriveRunId(cfg, payload), "");
   if (!runId) return null;
-  const pending = mode === "stop" || mode === "stop-failure" ? attempt(() => {
-    const t = readTurn(cfg, runId, turnKey(payload));
-    return reviewPending(t) ? t : null;
-  }, null) : null;
-  const followUp = mode === "stop" && payload.stop_hook_active === true && !!pending;
+  const turn = mode === "stop" || mode === "stop-failure" ? attempt(() => readTurn(cfg, runId, turnKey(payload)), null) : null;
+  const pending = mode === "stop-failure" && reviewPending(turn) ? turn : null;
+  const followUp = mode === "stop" && Number(turn?.review_requested_at) > 0;
   const afterReview = followUp ? stripReviewLine(str7(payload.last_assistant_message) || str7(payload.message)) : "";
-  const answered = followUp && !!afterReview && Number(pending?.queued_at) > Number(pending?.review_requested_at);
+  const answered = followUp && !!afterReview && queuedSinceReview(turn);
+  const continued = mode === "stop" && !followUp && payload.stop_hook_active === true;
   const item2 = attempt(
     () => {
       if (mode === "stop-failure" || followUp && !answered) return null;
       if (mode === "permission") return buildPermissionItem(payload, cfg);
       if (answered) {
-        return buildTurnItem({ ...payload, last_assistant_message: afterReview }, cfg, runId, mode, "queued");
+        return buildTurnItem(
+          { ...payload, last_assistant_message: afterReview },
+          cfg,
+          runId,
+          mode,
+          `queued-${idPart(String(turn?.queued_at ?? ""))}`
+        );
       }
       return mode === "stop" || mode === "subagent" ? buildTurnItem(payload, cfg, runId, mode) : buildToolItem(payload, cfg, mode, runId);
     },
@@ -3492,7 +3497,12 @@ function capture(rawPayload, cfg, mode) {
   );
   if (item2) attempt(() => appendItem(cfg, runId, item2));
   if (mode === "stop") {
-    const closed = attempt(() => closeTurn(cfg, runId, payload, { followUp, answered }), null);
+    const closed = attempt(() => closeTurn(
+      cfg,
+      runId,
+      payload,
+      { followUp, answered, continued, queuedAt: Number(turn?.queued_at) }
+    ), null);
     const summary = closed ? attempt(() => foldScorecard(closed.rows, closed.promptId), null) : null;
     const review = attempt(() => reviewFor(cfg, payload, closed, summary), null);
     if (review) {
@@ -3799,6 +3809,7 @@ function closeTurn(cfg, runId, payload, opts = {}) {
   const apiError = str7(opts.apiError);
   const followUp = opts.followUp === true;
   const answered = followUp && opts.answered === true;
+  const continued = !followUp && opts.continued === true;
   const reviewError = str7(opts.reviewError);
   const promptId = turnKey(payload);
   const p = turnPath(cfg, runId, promptId);
@@ -3825,7 +3836,7 @@ function closeTurn(cfg, runId, payload, opts = {}) {
       const v1 = attempt(() => usedEvidence(base, measured), null);
       const entries = attempt(() => entryEvidence(base, standing, measured), null);
       const fresh = v1 || entries ? { ...v1 ?? {}, ...entries ? { entry_method: ENTRY_SIGNAL_METHOD, entries } : {} } : null;
-      evidence = answered ? mergeEvidence(prevEvidence, fresh) : fresh;
+      evidence = answered || continued ? mergeEvidence(prevEvidence, fresh) : fresh;
     }
   }
   const explicit = attempt(() => explicitFor(rows, promptId, base), { ids: [], byRef: {} });
@@ -3841,6 +3852,8 @@ function closeTurn(cfg, runId, payload, opts = {}) {
     ...apiError ? { [API_ERROR_KEY2]: apiError } : {},
     ...explicit.ids.length ? { explicit_ids: explicit.ids, explicit: explicit.byRef } : {},
     ...followUp ? { review_closed_at: Date.now() } : {},
+    // The answered message's own stamp, so a message queued while this Stop ran stays pending.
+    ...answered ? { queued_answered_at: Number(opts.queuedAt) || Date.now() } : {},
     ...reviewError ? { review_error: reviewError } : {},
     ended_with_question: endedWithQuestion,
     ended_at: Date.now(),
@@ -3941,6 +3954,10 @@ function lastActingToolFailed(rows, promptId) {
 }
 function reviewPending(turn) {
   return !!turn && Number(turn.review_requested_at) > 0 && !(Number(turn.review_closed_at) > 0);
+}
+function queuedSinceReview(turn) {
+  const q = Number(turn?.queued_at);
+  return q > Number(turn?.review_requested_at) && q > (Number(turn?.queued_answered_at) || 0);
 }
 function reviewFor(cfg, payload, closed, summary) {
   if (!closed || !summary) return null;
