@@ -904,6 +904,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -977,6 +987,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -1122,7 +1134,7 @@ var init_config = __esm({
     ];
     CACHE_FILE = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION = 3;
+    CACHE_VERSION = 4;
     MAX_ENV_TAGS = 8;
     MODE = "hosted";
     LANG_FILES = [
