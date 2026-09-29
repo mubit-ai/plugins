@@ -3130,6 +3130,9 @@ function steerBlock(cfg, runId, lessons, anchor = "", partial = false) {
       "Do search when the injected memory falls short: mubit_recall for a topic, mubit_diagnose when a command has failed, mubit_dereference for a reference_id you already hold.",
       `Save what you learn with mubit_learned, and credit what helped with mubit_outcome. ${skill("remember")} and ${skill("recall")} are the explicit forms.`
     );
+    if (cfg.capture && cfg.outcomeReview !== "off") {
+      lines.push("Each memory line starts with a short id in brackets, like [m7k2q]: pass it in entry_ids of mubit_outcome to credit or fault that entry.");
+    }
   }
   if (anchor) {
     lines.push(
