@@ -2599,10 +2599,11 @@ function resolveOutcomeBody(body, knownRefs) {
 function resolveDereferenceBody(body, knownRefs) {
   return resolveFields(body, knownRefs, false);
 }
-function knownRefsFor(cfg, sessionId) {
+function knownRefsFor(cfg, sessionId, runId = "") {
   try {
     const c = cfg ?? {};
-    const own = sessionId ? scorecardPath(c, sessionId) : "";
+    const sid = sessionId || (runId ? latestSessionOf(c, runId) : "");
+    const own = sid ? scorecardPath(c, sid) : "";
     const rows = [];
     for (const p of recentScoreLogs(c).reverse()) if (p !== own) rows.push(...readRowsAt(p));
     if (own) rows.push(...readRowsAt(own));
@@ -2610,6 +2611,27 @@ function knownRefsFor(cfg, sessionId) {
   } catch {
     return [];
   }
+}
+function latestSessionOf(cfg, runId) {
+  const dir = join9(runDir(cfg, runId), "turns");
+  let names;
+  try {
+    names = readdirSync4(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    return "";
+  }
+  const recent = names.map((f) => ({ f, at: mtimeOf(join9(dir, f)) })).sort((a, b) => b.at - a.at).slice(0, TURN_FILES_TO_READ);
+  let best = "";
+  let bestAt = -1;
+  for (const { f } of recent) {
+    const t = readJson(join9(dir, f), null);
+    const sid = isPlainObject3(t) && typeof t.session_id === "string" ? t.session_id.trim() : "";
+    if (sid && num2(t.started_at) > bestAt) {
+      best = sid;
+      bestAt = num2(t.started_at);
+    }
+  }
+  return best;
 }
 function carriesHandle(body, withEntries) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return false;
@@ -2697,7 +2719,7 @@ function installFetchGuard(opts) {
         const parsed = parseBody(init);
         const outcome = isPostTo(input, init, OUTCOME_PATH);
         if (parsed.ok && carriesHandle(parsed.value, outcome)) {
-          const refs = knownRefsFor(opts?.cfg, sessionId);
+          const refs = knownRefsFor(opts?.cfg, sessionId, runId);
           const out = outcome ? resolveOutcomeBody(parsed.value, refs) : resolveDereferenceBody(parsed.value, refs);
           if (out.changed) sendInit = { ...init, body: JSON.stringify(out.body) };
           if (out.unresolved.length) {

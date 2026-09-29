@@ -1012,6 +1012,7 @@ function implicitOutcomesEnabled(cfg) {
 function decideOutcome(turn) {
   if (!isObject2(turn)) return { post: false, reason: "not_a_turn" };
   if (numOr(turn.outcome_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "corrected" };
   if (str2(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
   if (numOr(turn.outcome_attempts, 0) >= MAX_OUTCOME_ATTEMPTS) {
     return { post: false, reason: "attempts_exhausted" };
@@ -1027,14 +1028,14 @@ function decideOutcome(turn) {
     const used = refs.filter((r) => entries[r].used === true);
     const measured = refs.some((r) => entries[r].used === false);
     if (used.length > 0) {
-      const explicit = new Set(explicitIdsOf(turn));
-      const ids = used.filter((r) => !explicit.has(r));
-      if (ids.length === 0) return { post: false, reason: "explicit_only" };
+      const explicit2 = new Set(explicitIdsOf(turn));
+      const ids2 = used.filter((r) => !explicit2.has(r));
+      if (ids2.length === 0) return { post: false, reason: "explicit_only" };
       return {
         post: true,
         outcome: failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
         signal: failed ? SIGNAL_FAILURE : SIGNAL_SUCCESS,
-        entryIds: ids,
+        entryIds: ids2,
         rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure)
       };
     }
@@ -1051,6 +1052,10 @@ function decideOutcome(turn) {
     if (recalled.length === 0) return { post: false, reason: "nothing_injected" };
   }
   const unused = ev.used === false;
+  const explicit = new Set(explicitIdsOf(turn));
+  if (unused && explicit.size > 0) return { post: false, reason: "explicit_only" };
+  const ids = recalled.filter((r) => !explicit.has(r));
+  if (!unused && ids.length === 0) return { post: false, reason: "explicit_only" };
   return {
     post: true,
     outcome: unused ? OUTCOME_UNUSED : failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
@@ -1060,7 +1065,7 @@ function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : recalled,
+    entryIds: unused ? [] : ids,
     rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure)
   };
 }
@@ -1068,6 +1073,7 @@ function decideCorrection(turn) {
   if (!isObject2(turn)) return { post: false, reason: "not_a_turn" };
   if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
   if (str2(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
+  if (str2(turn.outcome).toLowerCase() === "failure") return { post: false, reason: "already_failed" };
   const ev = isObject2(turn.used_evidence) ? turn.used_evidence : {};
   const entries = entriesOf(ev);
   if (!entries) return { post: false, reason: "nothing_used" };
@@ -1124,7 +1130,7 @@ function entryRationale(ev, used, of, failed, toolFailure) {
   const method = str2(ev.entry_method) || "memory-term-echo/v2-entry";
   const counts = `the reply used ${used} of ${of} injected ${of === 1 ? "memory" : "memories"} (${method})`;
   if (used === 0) {
-    return `Claude Code ${counts}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
+    return `Claude Code turn completed; ${counts}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
   }
   if (!failed) return `Claude Code turn completed; ${counts}.`;
   return toolFailure ? `Claude Code turn ended on a failed tool call; ${counts}.` : `Claude Code turn ended in failure; ${counts}.`;
@@ -2707,6 +2713,7 @@ var HARD_STOP_MS = 12e3;
 var JOBS_KEEP = 20;
 var LOCK_CONFIRM_MS = 20;
 var OUTCOME_LOCK_WAIT_MS = 2e3;
+var CORRECTION_LOCK_WAIT_MS = HARD_STOP_MS + 3e3;
 var LOCK_POLL_MS = 25;
 var DEFAULT_BATCH = 32;
 var RETRYABLE_4XX = /* @__PURE__ */ new Set([401, 403, 404, 408, 429]);
@@ -2771,7 +2778,8 @@ async function main() {
   }
   const agentId = deriveAgentId(payload);
   const promptId = str3(outcomeArg) || turnKey(payload);
-  const lock = await acquireConfirmed(cfg, runId, wantsOutcome || !!correctArg, started);
+  const waitMs = correctArg ? CORRECTION_LOCK_WAIT_MS : wantsOutcome ? OUTCOME_LOCK_WAIT_MS : 0;
+  const lock = await acquireConfirmed(cfg, runId, waitMs, started);
   if (!lock) {
     log(cfg, "debug", "drain: another drainer holds the lock; standing down", { run_id: runId });
     return;
@@ -2861,7 +2869,7 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
   }
   return { sent, batches, rejected };
 }
-async function acquireConfirmed(cfg, runId, wantsOutcome, started) {
+async function acquireConfirmed(cfg, runId, waitMs, started) {
   for (; ; ) {
     const lock = acquireDrainLock(cfg, runId);
     if (lock) {
@@ -2869,7 +2877,7 @@ async function acquireConfirmed(cfg, runId, wantsOutcome, started) {
       if (await stillOurs(lock)) return lock;
       heldLock = null;
     }
-    if (!wantsOutcome || Date.now() - started >= OUTCOME_LOCK_WAIT_MS) return null;
+    if (Date.now() - started >= waitMs) return null;
     await sleep(LOCK_POLL_MS);
   }
 }

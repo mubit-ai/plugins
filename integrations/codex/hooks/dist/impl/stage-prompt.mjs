@@ -637,9 +637,9 @@ function scrub(text, count) {
 }
 function entropy(s) {
   if (s === null || s === void 0) return 0;
-  const str3 = typeof s === "string" ? s : String(s);
-  if (str3.length === 0) return 0;
-  const buf = Buffer.from(str3, "utf8");
+  const str4 = typeof s === "string" ? s : String(s);
+  if (str4.length === 0) return 0;
+  const buf = Buffer.from(str4, "utf8");
   const n = buf.length;
   if (n === 0) return 0;
   const counts = new Uint32Array(256);
@@ -1612,6 +1612,63 @@ var init_scorecard_log = __esm({
   }
 });
 
+// ../claude-code/lib/scorecard.mjs
+function previousTurn(rows, currentPromptId) {
+  const list2 = Array.isArray(rows) ? rows.filter(isObject3) : [];
+  const current = str3(currentPromptId);
+  const prompts = /* @__PURE__ */ new Map();
+  const order = [];
+  const turns = /* @__PURE__ */ new Map();
+  const clears = [];
+  list2.forEach((row, pos) => {
+    if (row.kind === "start" && str3(row.source) === "clear") clears.push(pos);
+    const id2 = str3(row.prompt_id);
+    if (!id2 || !PROMPT_KINDS.has(row.kind)) return;
+    if (!prompts.has(id2)) {
+      prompts.set(id2, markOf(pos));
+      order.push(id2);
+    }
+    const p = (
+      /** @type {PromptMark} */
+      prompts.get(id2)
+    );
+    if (row.kind === "prompt") flagPrompt(p, row);
+    if (row.kind === "turn") turns.set(id2, row);
+  });
+  const at = order.indexOf(current);
+  const before = (at >= 0 ? order.slice(0, at) : order).filter((id2) => !prompts.get(id2)?.slash);
+  const id = before[before.length - 1];
+  if (!id) return null;
+  const from = num(prompts.get(id)?.pos);
+  const to = at >= 0 ? num(prompts.get(current)?.pos) : Infinity;
+  return { promptId: id, turn: turns.get(id) ?? null, afterClear: clears.some((c) => c > from && c < to) };
+}
+function markOf(pos) {
+  return { slash: false, correction: false, pos, flagged: false };
+}
+function flagPrompt(p, row) {
+  if (p.flagged) return;
+  p.flagged = true;
+  p.slash = row.slash === true;
+  p.correction = row.correction === true;
+}
+function isObject3(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+function str3(v) {
+  return typeof v === "string" ? v : "";
+}
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+var PROMPT_KINDS;
+var init_scorecard = __esm({
+  "../claude-code/lib/scorecard.mjs"() {
+    PROMPT_KINDS = /* @__PURE__ */ new Set(["prompt", "shown", "turn"]);
+  }
+});
+
 // ../claude-code/lib/spool.mjs
 import {
   closeSync as closeSync3,
@@ -1684,7 +1741,7 @@ function stageTurn(cfg, runId, payload) {
     if (!ensureDir(dir)) return false;
     const file = join10(dir, `${promptId}.json`);
     const prev = readJson(file, null);
-    const base = isObject3(prev) ? prev : {};
+    const base = isObject4(prev) ? prev : {};
     const { text, truncated } = clampPrompt(payload?.prompt);
     const next = {
       ...base,
@@ -1697,6 +1754,7 @@ function stageTurn(cfg, runId, payload) {
       turn_number: Number.isFinite(base.turn_number) && base.turn_number > 0 ? base.turn_number : ordinalFor(dir, !!prev)
     };
     if (truncated) next.prompt_truncated = true;
+    if (typeof base.prompt === "string") next.queued_at = Date.now();
     return writeJsonAtomic(file, next);
   } catch (err) {
     log(cfg, "warn", `stage-prompt: could not stage the turn (${messageOf(err)})`, { run_id: runId });
@@ -1719,16 +1777,10 @@ function scorePrompt(cfg, payload) {
     const prompt = typeof payload?.prompt === "string" ? payload.prompt : "";
     const slash = prompt.trim().startsWith("/");
     const rows = readScoreRows(cfg, sessionId, { tailBytes: LOG_TAIL_BYTES });
-    let prev = null;
-    let afterClear = false;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const r = rows[i];
-      if (r.kind === "start" && r.source === "clear") afterClear = true;
-      if (r.kind === "turn" && typeof r.prompt_id === "string" && r.prompt_id && r.prompt_id !== promptId) {
-        prev = r;
-        break;
-      }
-    }
+    if (rows.some((r) => r.kind === "prompt" && r.prompt_id === promptId)) return;
+    const before = previousTurn(rows, promptId);
+    const prev = before?.turn ?? null;
+    const afterClear = before?.afterClear === true;
     const correction = !slash && !!prev && !afterClear && isCorrection(prompt, { lastReplyEndedWithQuestion: prev?.ended_with_question === true });
     appendScoreRow(cfg, sessionId, { kind: "prompt", prompt_id: promptId, correction, slash });
     if (!correction || !prev || !implicitOutcomesEnabled(cfg)) return;
@@ -1764,7 +1816,7 @@ function writePayload(cfg, payload) {
   const dir = join10(resolveDataDir(cfg), "tmp");
   const file = join10(dir, `${randomUUID()}.json`);
   ensureDir(dir);
-  writeJsonAtomic(file, isObject3(payload) ? payload : {});
+  writeJsonAtomic(file, isObject4(payload) ? payload : {});
   return file;
 }
 function clampPrompt(v) {
@@ -1772,7 +1824,7 @@ function clampPrompt(v) {
   if (Buffer.byteLength(s, "utf8") <= MAX_PROMPT_BYTES) return { text: s, truncated: false };
   return { text: Buffer.from(s, "utf8").subarray(0, MAX_PROMPT_BYTES).toString("utf8"), truncated: true };
 }
-function isObject3(v) {
+function isObject4(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function intOr(v, d) {
@@ -1799,6 +1851,7 @@ var init_stage_prompt = __esm({
     init_outcome();
     init_runid();
     init_scorecard_log();
+    init_scorecard();
     init_spool();
     init_state();
     BUDGET_MS = 250;

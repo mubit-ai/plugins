@@ -3626,6 +3626,7 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
     const file = join16(resolveDataDir(cfg), "runs", safeId(runId), "turns", `${promptId}.json`);
     const prev = readJson(file, null);
     const base = isObject10(prev) ? prev : {};
+    const prevRecall = isObject10(base.recall) ? base.recall : null;
     const next = {
       ...base,
       prompt_id: promptId,
@@ -3633,6 +3634,7 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
       // stages ids, so that they too can be reinforced or corrected. Deduped: the same
       // entry reached through two lanes must not be reinforced twice for one turn.
       recalled: [.../* @__PURE__ */ new Set([
+        ...Array.isArray(base.recalled) ? base.recalled.filter((v) => typeof v === "string" && v) : [],
         ...claimStandingLessons(cfg, runId),
         ...resume ? resume.refIds : [],
         ...outcome.refIds
@@ -3655,6 +3657,13 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
         terms: memoryTerms(cfg, [resume?.block ?? "", outcome.block], str5(payload?.prompt))
       }
     };
+    if (prevRecall) {
+      for (const k of ["sources", "tokens", "chars", "pointers"]) {
+        next.recall[k] = (Number(prevRecall[k]) || 0) + (Number(next.recall[k]) || 0);
+      }
+      const terms = Array.isArray(prevRecall.terms) ? prevRecall.terms : [];
+      next.recall.terms = [.../* @__PURE__ */ new Set([...terms, ...next.recall.terms])];
+    }
     if (typeof next.session_id !== "string") next.session_id = str5(payload?.session_id);
     if (!Number.isFinite(next.started_at)) next.started_at = Date.now();
     const promptTerms = termSet(str5(payload?.prompt).slice(0, MAX_PROMPT_SCAN));
@@ -3666,7 +3675,7 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
       pointer: e.pointer === true,
       terms: entryTerms(cfg, str5(e.text), promptTerms)
     }));
-    next.shown = shown;
+    next.shown = mergeShown(Array.isArray(base.shown) ? base.shown : [], shown);
     writeJsonAtomic(file, next);
     if (cfg.capture !== false) {
       appendShownRow(cfg, payload, promptId, entries, shown, outcome, resume);
@@ -3674,6 +3683,15 @@ function persistRecalled(cfg, runId, promptId, payload, outcome, resume = null) 
   } catch (err) {
     log(cfg, "warn", `prompt-recall: could not stage recalled ids (${messageOf3(err)})`, { run_id: runId });
   }
+}
+function mergeShown(prev, fresh2) {
+  const out = prev.filter((e) => isObject10(e) && typeof e.ref === "string" && e.ref);
+  for (const e of fresh2) {
+    const at = out.findIndex((o) => o.ref === e.ref);
+    if (at < 0) out.push(e);
+    else if (out[at].pointer === true && !e.pointer) out[at] = e;
+  }
+  return out;
 }
 function appendShownRow(cfg, payload, promptId, entries, shown, outcome, resume) {
   try {
