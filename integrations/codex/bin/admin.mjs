@@ -2035,10 +2035,32 @@ var init_runpick = __esm({
   }
 });
 
+// ../claude-code/lib/handles.mjs
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
 // ../claude-code/lib/markers.mjs
 var init_markers = __esm({
   "../claude-code/lib/markers.mjs"() {
     init_state();
+  }
+});
+
+// ../claude-code/lib/scorecard-log.mjs
+var SCORE_LOG_TTL_MS, MAX_READ_BYTES;
+var init_scorecard_log = __esm({
+  "../claude-code/lib/scorecard-log.mjs"() {
+    init_state();
+    SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    MAX_READ_BYTES = 4 * 1024 * 1024;
   }
 });
 
@@ -2067,8 +2089,10 @@ var SHOWING;
 var init_egress = __esm({
   "../claude-code/mcp/src/egress.mjs"() {
     init_activity();
+    init_handles();
     init_markers();
     init_runid();
+    init_scorecard_log();
     init_state();
     SHOWING = {
       "": "this run, plus every lesson stored at a scope that reaches past the run that wrote it",

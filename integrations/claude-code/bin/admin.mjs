@@ -1959,6 +1959,17 @@ function str5(v) {
   return typeof v === "string" ? v.trim() : "";
 }
 
+// lib/handles.mjs
+var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+var LEN = 4;
+var BODY = `[${ALPHABET}]{${LEN}}`;
+var BARE_RE = new RegExp(`^m${BODY}$`);
+var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+
+// lib/scorecard-log.mjs
+var SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+var MAX_READ_BYTES = 4 * 1024 * 1024;
+
 // mcp/src/egress.mjs
 function selectLessons(rows, o) {
   const mine = (r) => o.runId !== "" && (r.runId === o.runId || r.sourceRunId === o.runId);
