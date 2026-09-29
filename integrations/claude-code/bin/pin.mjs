@@ -530,6 +530,13 @@ function safeCwd() {
 // lib/pins.mjs
 import { join as join6 } from "node:path";
 
+// lib/handles.mjs
+var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+var LEN = 4;
+var BODY = `[${ALPHABET}]{${LEN}}`;
+var BARE_RE = new RegExp(`^m${BODY}$`);
+var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+
 // lib/assemble.mjs
 var SECTION_KEYS = Object.freeze([
   "mental_models",

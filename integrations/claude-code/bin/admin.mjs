@@ -1786,6 +1786,13 @@ function clamp2(v, lo, hi, dflt) {
   return Math.min(hi, Math.max(lo, Math.trunc(n)));
 }
 
+// lib/handles.mjs
+var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+var LEN = 4;
+var BODY = `[${ALPHABET}]{${LEN}}`;
+var BARE_RE = new RegExp(`^m${BODY}$`);
+var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+
 // lib/assemble.mjs
 var SECTION_KEYS = Object.freeze([
   "mental_models",
@@ -1958,13 +1965,6 @@ function markerBase(runId) {
 function str5(v) {
   return typeof v === "string" ? v.trim() : "";
 }
-
-// lib/handles.mjs
-var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
-var LEN = 4;
-var BODY = `[${ALPHABET}]{${LEN}}`;
-var BARE_RE = new RegExp(`^m${BODY}$`);
-var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
 
 // lib/scorecard-log.mjs
 var SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;

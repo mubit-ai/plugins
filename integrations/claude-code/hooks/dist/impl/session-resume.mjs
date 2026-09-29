@@ -1056,6 +1056,13 @@ function safeConfig() {
   }
 }
 
+// lib/handles.mjs
+var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+var LEN = 4;
+var BODY = `[${ALPHABET}]{${LEN}}`;
+var BARE_RE = new RegExp(`^m${BODY}$`);
+var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+
 // lib/assemble.mjs
 var SECTION_KEYS = Object.freeze([
   "mental_models",
@@ -1742,7 +1749,8 @@ function fromContext(responseBody, rung) {
     dropped: numOr(b.evidence_dropped_by_budget, 0),
     pointers: 0,
     emptyReason: typeof b.empty_reason === "string" && b.empty_reason ? b.empty_reason : block ? "" : "no_evidence",
-    refIds
+    refIds,
+    entries: []
   };
 }
 function failure(state, error, rung) {
@@ -1756,6 +1764,7 @@ function failure(state, error, rung) {
     pointers: 0,
     emptyReason: "",
     refIds: [],
+    entries: [],
     state: typeof state === "string" ? state : "server_error",
     error: typeof error === "string" ? error : String(error ?? "")
   };

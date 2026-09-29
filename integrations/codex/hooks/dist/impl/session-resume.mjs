@@ -1095,6 +1095,18 @@ var init_hook = __esm({
   }
 });
 
+// ../claude-code/lib/handles.mjs
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
 // ../claude-code/lib/assemble.mjs
 function estimateTokens(text) {
   if (typeof text !== "string" || text.length === 0) return 0;
@@ -1103,6 +1115,7 @@ function estimateTokens(text) {
 var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS, CHARS_PER_TOKEN;
 var init_assemble = __esm({
   "../claude-code/lib/assemble.mjs"() {
+    init_handles();
     SECTION_KEYS = Object.freeze([
       "mental_models",
       "active_rules",
@@ -1784,7 +1797,8 @@ function fromContext(responseBody, rung) {
     dropped: numOr(b.evidence_dropped_by_budget, 0),
     pointers: 0,
     emptyReason: typeof b.empty_reason === "string" && b.empty_reason ? b.empty_reason : block ? "" : "no_evidence",
-    refIds
+    refIds,
+    entries: []
   };
 }
 function failure(state, error, rung) {
@@ -1798,6 +1812,7 @@ function failure(state, error, rung) {
     pointers: 0,
     emptyReason: "",
     refIds: [],
+    entries: [],
     state: typeof state === "string" ? state : "server_error",
     error: typeof error === "string" ? error : String(error ?? "")
   };

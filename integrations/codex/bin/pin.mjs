@@ -551,10 +551,23 @@ var init_config = __esm({
   }
 });
 
+// ../claude-code/lib/handles.mjs
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
 // ../claude-code/lib/assemble.mjs
 var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS;
 var init_assemble = __esm({
   "../claude-code/lib/assemble.mjs"() {
+    init_handles();
     SECTION_KEYS = Object.freeze([
       "mental_models",
       "active_rules",

@@ -1845,6 +1845,18 @@ var init_activity = __esm({
   }
 });
 
+// ../claude-code/lib/handles.mjs
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
 // ../claude-code/lib/assemble.mjs
 function estimateTokens(text) {
   if (typeof text !== "string" || text.length === 0) return 0;
@@ -1862,6 +1874,7 @@ function firstClause(text) {
 var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS, CHARS_PER_TOKEN, POINTER_MARK, MAX_POINTER_CHARS, MIN_POINTER_CHARS;
 var init_assemble = __esm({
   "../claude-code/lib/assemble.mjs"() {
+    init_handles();
     SECTION_KEYS = Object.freeze([
       "mental_models",
       "active_rules",
@@ -2032,18 +2045,6 @@ var init_runpick = __esm({
     POISONED_RUN_ID2 = "default";
     MARKER_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
     MARKER_AMBIGUOUS_MS = 5 * 60 * 1e3;
-  }
-});
-
-// ../claude-code/lib/handles.mjs
-var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
-var init_handles = __esm({
-  "../claude-code/lib/handles.mjs"() {
-    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
-    LEN = 4;
-    BODY = `[${ALPHABET}]{${LEN}}`;
-    BARE_RE = new RegExp(`^m${BODY}$`);
-    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
   }
 });
 

@@ -1451,11 +1451,20 @@ function writeCarry(cfg, runId, outcome, meta = {}) {
       dropped: int2(outcome?.dropped, 0),
       pointers: int2(outcome?.pointers, 0),
       empty_reason: typeof outcome?.emptyReason === "string" ? outcome.emptyReason : "",
-      ref_ids: Array.isArray(outcome?.refIds) ? outcome.refIds.filter((v) => typeof v === "string" && v.trim()) : []
+      ref_ids: Array.isArray(outcome?.refIds) ? outcome.refIds.filter((v) => typeof v === "string" && v.trim()) : [],
+      entries: entriesOf(outcome?.entries)
     });
   } catch {
     return false;
   }
+}
+var MAX_ENTRIES = 64;
+function entriesOf(v) {
+  if (!Array.isArray(v)) return [];
+  return v.filter((e) => isObject2(e) && typeof e.ref === "string").slice(0, MAX_ENTRIES);
+}
+function isObject2(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function num2(v, d) {
   const n = typeof v === "number" ? v : Number(v);
@@ -1543,6 +1552,32 @@ import { createHash as createHash3 } from "node:crypto";
 import { unlinkSync as unlinkSync4 } from "node:fs";
 import { join as join9 } from "node:path";
 
+// lib/handles.mjs
+var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+var LEN = 4;
+var BODY = `[${ALPHABET}]{${LEN}}`;
+var BARE_RE = new RegExp(`^m${BODY}$`);
+var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+function handleFor(ref) {
+  const s = typeof ref === "string" ? ref.trim() : "";
+  if (!s) return "";
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  let out = "m";
+  for (let i = 0; i < LEN; i++) {
+    out += ALPHABET[h % ALPHABET.length];
+    h = Math.floor(h / ALPHABET.length);
+  }
+  return out;
+}
+function handleTag(ref) {
+  const h = handleFor(ref);
+  return h ? `[${h}]` : "";
+}
+
 // lib/assemble.mjs
 var SECTION_KEYS = Object.freeze([
   "mental_models",
@@ -1624,7 +1659,7 @@ function estimateTokens(text) {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 function assembleContext(evidence, opts = {}) {
-  const o = isObject2(opts) ? opts : {};
+  const o = isObject3(opts) ? opts : {};
   const budget = positiveInt2(o.tokenBudget, DEFAULT_TOKEN_BUDGET);
   const perSection = positiveInt2(o.perSection, 0);
   const allowed = Array.isArray(o.sections) && o.sections.length ? new Set(o.sections.filter((s) => typeof s === "string").map((s) => s.trim())) : null;
@@ -1634,15 +1669,17 @@ function assembleContext(evidence, opts = {}) {
   let candidates = 0;
   for (let i = 0; i < list2.length; i++) {
     const e = list2[i];
-    if (!isObject2(e)) continue;
+    if (!isObject3(e)) continue;
     const text = oneLine(e.content);
     if (!text) continue;
-    const section = sectionFor(str2(e.origin_entry_type) || str2(e.entry_type));
+    const type = (str2(e.origin_entry_type) || str2(e.entry_type)).toLowerCase();
+    const section = sectionFor(type);
     if (allowed && !allowed.has(section)) continue;
     candidates++;
     const bucket = bySection.get(section) ?? [];
     bucket.push({
       ref: str2(e.reference_id),
+      type,
       text,
       score: finite(e.score, 0),
       stale: e.is_stale === true,
@@ -1658,12 +1695,14 @@ function assembleContext(evidence, opts = {}) {
       sourceRefIds: [],
       dropped: 0,
       pointers: 0,
-      emptyReason: "no_evidence"
+      emptyReason: "no_evidence",
+      entries: []
     };
   }
   const parts = [];
   const sourceRefIds = [];
   const seenRefs = /* @__PURE__ */ new Set();
+  const entries = [];
   const sections = [];
   let used = 0;
   let rendered = 0;
@@ -1681,9 +1720,10 @@ function assembleContext(evidence, opts = {}) {
       if (perSection > 0 && count >= perSection) {
         continue;
       }
-      const full = `- ${item.stale ? "(stale) " : ""}${item.text}
+      const tag = handleTag(item.ref);
+      const full = `- ${tag ? `${tag} ` : ""}${item.stale ? "(stale) " : ""}${item.text}
 `;
-      const pointer = seen && item.ref && seen.has(item.ref) ? `- ${POINTER_MARK} ${item.stale ? "(stale) " : ""}${item.ref} \u2014 ${firstClause(item.text)}
+      const pointer = seen && item.ref && seen.has(item.ref) ? `- ${POINTER_MARK} ${item.stale ? "(stale) " : ""}${tag} \u2014 ${firstClause(item.text)}
 ` : "";
       const degraded = !!pointer && pointer.length < full.length;
       const line = degraded ? pointer : full;
@@ -1702,6 +1742,18 @@ function assembleContext(evidence, opts = {}) {
         seenRefs.add(item.ref);
         sourceRefIds.push(item.ref);
       }
+      if (!item.ref || entries.every((x) => x.ref !== item.ref)) {
+        entries.push({
+          ref: item.ref,
+          handle: handleFor(item.ref),
+          section: key,
+          type: item.type,
+          text: item.text,
+          title: firstClause(item.text),
+          pointer: degraded,
+          stale: item.stale
+        });
+      }
     }
     if (count > 0) sections.push({ section: key, count });
   }
@@ -1717,7 +1769,8 @@ function assembleContext(evidence, opts = {}) {
     // A degraded entry is rendered, not dropped: it counts here and nowhere else, so a
     // reader can tell a block that shrank from a block that lost half its evidence.
     pointers,
-    emptyReason: rendered > 0 ? "" : "budget_exhausted"
+    emptyReason: rendered > 0 ? "" : "budget_exhausted",
+    entries: rendered > 0 ? entries : []
   };
 }
 function firstClause(text) {
@@ -1746,7 +1799,7 @@ function oneLine(v) {
 function str2(v) {
   return typeof v === "string" ? v.trim() : "";
 }
-function isObject2(v) {
+function isObject3(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function finite(v, d) {
@@ -2113,11 +2166,11 @@ function readRules(cfg, runId) {
   try {
     if (!runId) return [];
     const stored = readJson(join8(runDir(cfg, runId), RULES_FILE), null);
-    if (!isObject3(stored)) return [];
+    if (!isObject4(stored)) return [];
     if (!Array.isArray(stored.rules)) return [];
     const out = [];
     for (const r of stored.rules) {
-      if (!isObject3(r)) continue;
+      if (!isObject4(r)) continue;
       const text = clamp(r.text);
       if (!text) continue;
       out.push({ ref: segment(r.ref), text });
@@ -2129,7 +2182,7 @@ function readRules(cfg, runId) {
   }
 }
 function normalise(e) {
-  if (!isObject3(e)) return null;
+  if (!isObject4(e)) return null;
   if (e.is_stale === true) return null;
   const type = str3(e.origin_entry_type) || str3(e.entry_type) || str3(e.lesson_type);
   if (type.toLowerCase() !== "rule") return null;
@@ -2164,7 +2217,7 @@ function segment(v) {
 function str3(v) {
   return typeof v === "string" ? v.trim() : "";
 }
-function isObject3(v) {
+function isObject4(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -2304,11 +2357,11 @@ async function rungThree(cfg, o) {
   return fromContext(res.body, 3);
 }
 function fromContext(responseBody, rung) {
-  const b = isObject4(responseBody) ? responseBody : {};
+  const b = isObject5(responseBody) ? responseBody : {};
   const block = typeof b.context_block === "string" ? b.context_block.trim() : "";
   const refIds = Array.isArray(b.sources) ? [...new Set(b.sources.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()))] : [];
   const summaries = Array.isArray(b.section_summaries) ? b.section_summaries : [];
-  const counted = summaries.reduce((n, s) => n + (isObject4(s) ? numOr(s.count, 0) : 0), 0);
+  const counted = summaries.reduce((n, s) => n + (isObject5(s) ? numOr(s.count, 0) : 0), 0);
   return {
     failed: false,
     rung,
@@ -2318,11 +2371,12 @@ function fromContext(responseBody, rung) {
     dropped: numOr(b.evidence_dropped_by_budget, 0),
     pointers: 0,
     emptyReason: typeof b.empty_reason === "string" && b.empty_reason ? b.empty_reason : block ? "" : "no_evidence",
-    refIds
+    refIds,
+    entries: []
   };
 }
 function fromEvidence(cfg, responseBody, rung, o) {
-  const b = isObject4(responseBody) ? responseBody : {};
+  const b = isObject5(responseBody) ? responseBody : {};
   const evidence = Array.isArray(b.evidence) ? b.evidence : [];
   if (o?.runId) recordRules(cfg, o.runId, evidence);
   const a = assembleContext(evidence, {
@@ -2342,7 +2396,8 @@ function fromEvidence(cfg, responseBody, rung, o) {
     emptyReason: a.emptyReason,
     // §4.10/§5.5: a degraded entry is still in here. Dropping a repeat would break
     // attribution for exactly the memories that are helping most.
-    refIds: a.sourceRefIds
+    refIds: a.sourceRefIds,
+    entries: a.entries
   };
 }
 function tokenBudgetOf(cfg, o) {
@@ -2370,7 +2425,8 @@ function empty(rung, reason) {
     dropped: 0,
     pointers: 0,
     emptyReason: reason,
-    refIds: []
+    refIds: [],
+    entries: []
   };
 }
 function failure(state, error, rung) {
@@ -2384,6 +2440,7 @@ function failure(state, error, rung) {
     pointers: 0,
     emptyReason: "",
     refIds: [],
+    entries: [],
     state: typeof state === "string" ? state : "server_error",
     error: typeof error === "string" ? error : String(error ?? "")
   };
@@ -2396,7 +2453,7 @@ function policyPath(cfg) {
 function readPolicyDenial(cfg) {
   try {
     const v = readJson(policyPath(cfg), null);
-    if (!isObject4(v) || v.direct_bypass !== "denied") return false;
+    if (!isObject5(v) || v.direct_bypass !== "denied") return false;
     const ttl = intOr(cfg.policyTtlMs, 0) || intOr(v.ttl_ms, 0) || POLICY_TTL_MS;
     const observed = numOr(v.observed_at, 0);
     return observed > 0 && Date.now() - observed < ttl;
@@ -2425,7 +2482,7 @@ function remaining(cfg, deadline2) {
   if (left <= 0) return 0;
   return Math.max(1, Math.min(left, intOr(cfg.timeoutMs, 4e3)));
 }
-function isObject4(v) {
+function isObject5(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function numOr(v, d) {
@@ -2471,9 +2528,9 @@ var MAX_SESSION_FILE = 128;
 var GIT_TIMEOUT_MS = 2e3;
 var TOUCH_INTERVAL_MS = 60 * 1e3;
 function deriveRunId(cfg, payload = {}, options = {}) {
-  const c = isObject5(cfg) ? cfg : {};
-  const p = isObject5(payload) ? payload : {};
-  const persist = !(isObject5(options) && options.persist === false);
+  const c = isObject6(cfg) ? cfg : {};
+  const p = isObject6(payload) ? payload : {};
+  const persist = !(isObject6(options) && options.persist === false);
   return assertUsableRunId(resolveRunId(c, p, persist));
 }
 function resolveRunId(cfg, payload, persist) {
@@ -2542,7 +2599,7 @@ function directoryRunId(cfg, payload, withBranch) {
   return branch ? `cc-${slug}-${branch}-${digest}` : `cc-${slug}-${digest}`;
 }
 function reusableRun(cfg, payload, prev, strategy) {
-  if (!isObject5(prev)) return "";
+  if (!isObject6(prev)) return "";
   const id = typeof prev.run_id === "string" ? prev.run_id.trim() : "";
   if (!id || FORBIDDEN_RUN_IDS.has(id.toLowerCase())) return "";
   const recorded = typeof prev.strategy === "string" ? prev.strategy.trim() : "";
@@ -2567,14 +2624,14 @@ function assertUsableRunId(id) {
   return s;
 }
 function turnKey(payload) {
-  if (!isObject5(payload)) return "";
+  if (!isObject6(payload)) return "";
   const prompt = typeof payload.prompt_id === "string" ? payload.prompt_id.trim() : "";
   if (prompt) return prompt;
   const turn = typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
   return turn;
 }
 function deriveAgentId(payload = {}) {
-  const p = isObject5(payload) ? payload : {};
+  const p = isObject6(payload) ? payload : {};
   const role = agentRole();
   const sub = subagentShort(p);
   return sub ? `${role}-sub-${sub}` : role;
@@ -2601,7 +2658,7 @@ function loadSessionMap(sessionId) {
     const file = sessionFileName(sessionId);
     if (!file) return null;
     const stored = readJson(sessionPath(file), null);
-    return isObject5(stored) ? stored : null;
+    return isObject6(stored) ? stored : null;
   } catch {
     return null;
   }
@@ -2609,10 +2666,10 @@ function loadSessionMap(sessionId) {
 function rememberRun(cfg, payload, sessionId, prev, next) {
   const now = Date.now();
   const isSessionStart = !!next.source || payload.hook_event_name === "SessionStart";
-  const moved = !isObject5(prev) || prev.run_id !== next.run_id || clearCount(prev) !== next.clear_count;
-  const lastSeen = isObject5(prev) ? numberOr2(prev.last_seen_at, 0) : 0;
+  const moved = !isObject6(prev) || prev.run_id !== next.run_id || clearCount(prev) !== next.clear_count;
+  const lastSeen = isObject6(prev) ? numberOr2(prev.last_seen_at, 0) : 0;
   if (!moved && !isSessionStart && now - lastSeen < TOUCH_INTERVAL_MS) return;
-  const inherited = isObject5(prev) ? prev : {};
+  const inherited = isObject6(prev) ? prev : {};
   const dir = projectDirOf(cfg, payload);
   saveSessionMap(sessionId, {
     ...inherited,
@@ -2646,7 +2703,7 @@ function normaliseRecord(record) {
     clear_count: 0,
     endpoint_hash: ""
   };
-  if (isObject5(record)) {
+  if (isObject6(record)) {
     for (const [k, v] of Object.entries(record)) {
       if (v !== void 0) out[k] = v;
     }
@@ -2663,10 +2720,10 @@ function sessionFileName(sessionId) {
   return safe && safe !== "." && safe !== ".." ? safe : "";
 }
 function projectDirOf(cfg, payload = {}) {
-  return usableDir(isObject5(payload) ? payload.cwd : "") || firstString(cfg.projectDir, process.env.CLAUDE_PROJECT_DIR) || safeCwd2();
+  return usableDir(isObject6(payload) ? payload.cwd : "") || firstString(cfg.projectDir, process.env.CLAUDE_PROJECT_DIR) || safeCwd2();
 }
 function resolveProjectDir(cfg, payload = {}) {
-  return projectDirOf(isObject5(cfg) ? cfg : {}, payload);
+  return projectDirOf(isObject6(cfg) ? cfg : {}, payload);
 }
 function projectRootOf(dir) {
   return gitToplevel2(dir) || dir;
@@ -2714,7 +2771,7 @@ function hasGitDir2(start) {
   }
   return false;
 }
-function isObject5(v) {
+function isObject6(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function firstString(...vals) {
@@ -2728,7 +2785,7 @@ function numberOr2(v, d) {
   return Number.isFinite(n) ? n : d;
 }
 function clearCount(rec) {
-  if (!isObject5(rec)) return 0;
+  if (!isObject6(rec)) return 0;
   const n = Math.trunc(numberOr2(rec.clear_count, 0));
   return n > 0 ? n : 0;
 }
@@ -2741,7 +2798,7 @@ function normaliseSource(v) {
   return SOURCES.has(s) ? s : "";
 }
 function hostSessionId(payload) {
-  const v = isObject5(payload) && typeof payload.session_id === "string" ? payload.session_id.trim() : "";
+  const v = isObject6(payload) && typeof payload.session_id === "string" ? payload.session_id.trim() : "";
   if (!v || PLACEHOLDER_SESSION_IDS.has(v.toLowerCase())) return "";
   return v;
 }
@@ -2786,12 +2843,12 @@ function readSeen(cfg, runId, sessionId = "") {
     const p = seenPath(cfg, runId, sessionId);
     if (!p) return emptySeen();
     const raw = readJson(p, null);
-    if (!isObject6(raw) || !isObject6(raw.refs)) return emptySeen();
+    if (!isObject7(raw) || !isObject7(raw.refs)) return emptySeen();
     const cutoff = Date.now() - SEEN_TTL_MS;
     const out = emptySeen();
     out.updatedAt = num3(raw.updated_at, 0);
     for (const [id, v] of Object.entries(raw.refs)) {
-      if (!id || !id.trim() || !isObject6(v)) continue;
+      if (!id || !id.trim() || !isObject7(v)) continue;
       const last = num3(v.last, 0);
       if (!(last > 0) || last < cutoff) continue;
       const first = num3(v.first, 0);
@@ -2807,7 +2864,7 @@ function readSeen(cfg, runId, sessionId = "") {
     return emptySeen();
   }
 }
-function isObject6(v) {
+function isObject7(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function num3(v, d) {
