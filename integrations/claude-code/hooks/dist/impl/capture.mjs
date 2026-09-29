@@ -2997,7 +2997,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
     );
   }
   return s;
@@ -3464,7 +3464,7 @@ function buildToolItem(payload, cfg, mode, runId) {
   return item({
     cfg,
     payload,
-    // §5.4: "item_id is stable per tool call so a retried drain deduplicates." Derived from
+    // "item_id is stable per tool call so a retried drain deduplicates." Derived from
     // `tool_use_id` and nothing else — a timestamp in here would make every retry a new
     // entry, which is the exact failure the dedup exists to prevent.
     id: `cc-${idPart(payload.tool_use_id) || fallbackId(payload, text)}`,

@@ -1529,7 +1529,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1602,7 +1602,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -1924,7 +1924,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
     );
   }
   return s;
@@ -2539,7 +2539,7 @@ ${tail}`, cfg, "output"),
   );
   const actor = attempt(() => readActor(cfg), "");
   appendItem(cfg, runId, {
-    // §1.3: `item_id` and `content_type` are REQUIRED — a missing one is a 422 for the whole
+    // `item_id` and `content_type` are REQUIRED — a missing one is a 422 for the whole
     // batch. Derived from (session, counter) and never from a clock, so a retried drain
     // deduplicates instead of writing a second anchor for one compaction.
     item_id: clamp(`cc-precompact-${idPart(payload.session_id) || idPart(runId) || "anon"}-${label.slice(LABEL_PREFIX.length)}`, MAX_ID_CHARS),

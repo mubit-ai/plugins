@@ -1890,7 +1890,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1972,7 +1972,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -2346,7 +2346,7 @@ async function ladder(cfg, o) {
     // Omitted rather than sent when it resolves to nothing: absent IS `relevance`
     // server-side, so there is no shape of request this spread cannot express.
     ...rankBy ? { rank_by: rankBy } : {},
-    // §5.2: opting out of the cross-run lesson overlay, and the ONLY field here that is sent
+    // Opting out of the cross-run lesson overlay, and the ONLY field here that is sent
     // to make the request cheaper rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
     //
     // Omitted rather than sent as `false` when the overlay is wanted: absent IS `false`
@@ -2454,7 +2454,7 @@ function fromEvidence(cfg, responseBody, rung, o) {
     dropped: a.dropped,
     pointers: a.pointers,
     emptyReason: a.emptyReason,
-    // §4.10/§5.5: a degraded entry is still in here. Dropping a repeat would break
+    // A degraded entry is still in here. Dropping a repeat would break
     // attribution for exactly the memories that are helping most.
     refIds: a.sourceRefIds,
     entries: a.entries
@@ -2698,7 +2698,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
     );
   }
   return s;
@@ -3049,7 +3049,7 @@ var init_recall_refresh = __esm({
           query,
           deadline: started + REFRESH_BUDGET_MS,
           seen,
-          // §5.2 — the same rule over the same query text `prompt-recall` would have used.
+          // The same rule over the same query text `prompt-recall` would have used.
           // Carry-forward moves WHEN the call happens, never what it asks for: a handoff prompt
           // ranked by similarity in the background is the same bug, one turn later.
           rankBy: rankForRecall(cfg, query),
