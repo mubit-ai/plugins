@@ -1239,7 +1239,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function isPoisonedRunId(body) {
   return !!body && typeof body === "object" && !Array.isArray(body) && body.run_id === POISONED_RUN_ID;
@@ -1486,8 +1486,8 @@ async function listActivity(cfg, params2 = {}, opts = {}) {
   return ok({
     ...corrected,
     nextPageToken: res.data.nextPageToken,
-    // The server's count, over the server's filtering, before paging. It over-counts by
-    // `droppedDerived` whenever the re-filter had to do work.
+    // The response's own count. It over-counts by `droppedDerived` whenever the re-filter had
+    // to do work.
     totalVisible: res.data.totalVisible
   });
 }

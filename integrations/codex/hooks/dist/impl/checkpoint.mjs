@@ -1693,7 +1693,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function isPoisonedRunId(body) {
   return !!body && typeof body === "object" && !Array.isArray(body) && body.run_id === POISONED_RUN_ID;
@@ -1924,7 +1924,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -2548,7 +2548,7 @@ ${tail}`, cfg, "output"),
     intent: str3(cls.intent) || "checkpoint",
     importance: importanceOr(cls.importance),
     source: "agent",
-    // Unix SECONDS (`control.proto`); milliseconds here dates every memory to the year 57000.
+    // Unix SECONDS; milliseconds here dates every memory to the year 57000.
     occurrence_time: Math.floor(Date.now() / 1e3),
     // From the payload's directory, not the launch one: after a mid-session `cd` the run id
     // follows the new repo, and `repo:`/`branch:` have to follow it or the item lands in the

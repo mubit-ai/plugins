@@ -1209,7 +1209,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;

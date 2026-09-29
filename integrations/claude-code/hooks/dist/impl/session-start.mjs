@@ -1701,7 +1701,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function isPoisonedRunId(body) {
   return !!body && typeof body === "object" && !Array.isArray(body) && body.run_id === POISONED_RUN_ID;
@@ -2068,8 +2068,8 @@ async function listActivity(cfg, params2 = {}, opts = {}) {
   return ok({
     ...corrected,
     nextPageToken: res.data.nextPageToken,
-    // The server's count, over the server's filtering, before paging. It over-counts by
-    // `droppedDerived` whenever the re-filter had to do work.
+    // The response's own count. It over-counts by `droppedDerived` whenever the re-filter had
+    // to do work.
     totalVisible: res.data.totalVisible
   });
 }
@@ -2158,7 +2158,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -2713,7 +2713,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -3060,7 +3060,7 @@ await runHook("session-start", {
         hookEventName: "SessionStart",
         additionalContext: steerBlock(cfg, runId, lessons, anchor, lessonsPartial)
       },
-      // §16.2's hint fires once, ever, per install, so on that one session it *takes* the
+      // The status-line hint fires once, ever, per install, so on that one session it *takes* the
       // line rather than being appended to it: `systemMessage` is one line by contract, and
       // the run and mode it would displace are already named in the steer block above.
       systemMessage: statusLineHint2 || summary
@@ -3268,7 +3268,7 @@ function probeStatusLine(cfg) {
       notified_at: nag ? now : notifiedAt
     });
     if (!nag) return "";
-    log(cfg, "info", "session-start: status line never invoked; emitting the one-time \xA716.2 hint");
+    log(cfg, "info", "session-start: status line never invoked; emitting the one-time status-line hint");
     return statusLineHint();
   } catch {
     return "";

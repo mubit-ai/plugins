@@ -700,7 +700,7 @@ function toolCallRecord(transcriptPath, toolUseId, opts = {}) {
     const exitCode = Number.isFinite(item2.exit_code) ? Number(item2.exit_code) : null;
     return {
       found: true,
-      // § `status` is the host's own verdict and is what to trust. `exit_code` is the
+      // `status` is the host's own verdict and is what to trust. `exit_code` is the
       //   fallback for a record shape that carries one without the other.
       failed: status ? status === "failed" : exitCode !== null && exitCode !== 0,
       exitCode,
@@ -1641,7 +1641,7 @@ var TOOL_TABLE = {
   Write: ["trace", "medium"],
   MultiEdit: ["trace", "medium"],
   NotebookEdit: ["trace", "medium"],
-  // Shell — also subject to §4.4 self-reference suppression, which runs upstream of this
+  // Shell — also subject to self-reference suppression, which runs upstream of this
   // module in `capture.mjs` step 2.
   Bash: ["tool_output", "low"],
   BashOutput: ["tool_output", "low"],
@@ -2997,7 +2997,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -3464,7 +3464,7 @@ function buildToolItem(payload, cfg, mode, runId) {
   return item({
     cfg,
     payload,
-    // "item_id is stable per tool call so a retried drain deduplicates." Derived from
+    // item_id is stable per tool call, so a retried drain deduplicates. Derived from
     // `tool_use_id` and nothing else — a timestamp in here would make every retry a new
     // entry, which is the exact failure the dedup exists to prevent.
     id: `cc-${idPart(payload.tool_use_id) || fallbackId(payload, text)}`,
@@ -3596,8 +3596,7 @@ function item(o) {
     intent: intentOr(o.intent),
     importance: importanceOr(o.importance),
     source: "agent",
-    // Unix SECONDS, as in the §5.4 example — `occurrence_time` is an int64 of seconds
-    // (control.proto) and handing it milliseconds dates every memory to the year 57000.
+    // Unix SECONDS — `occurrence_time` is an int64 of seconds, and handing it milliseconds dates every memory to the year 57000.
     occurrence_time: Math.floor(Date.now() / 1e3),
     // The tags are derived from a directory too, and they ride on every ingested item. A
     // run id that follows a mid-session `cd` while `repo:`/`branch:` stay on the launch repo

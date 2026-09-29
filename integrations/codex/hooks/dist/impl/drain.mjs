@@ -1739,7 +1739,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function requireItems(req) {
   const items = req && typeof req === "object" ? req.items : void 0;
@@ -1900,7 +1900,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -2355,7 +2355,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;

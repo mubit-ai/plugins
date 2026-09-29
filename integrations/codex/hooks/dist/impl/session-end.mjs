@@ -1640,7 +1640,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function requireItems(req) {
   const items = req && typeof req === "object" ? req.items : void 0;
@@ -2181,7 +2181,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -2360,7 +2360,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -3304,8 +3304,7 @@ async function maybeReflect(cfg, o) {
   const reflectBody = {
     run_id: o.runId,
     include_linked_runs: false,
-    // `include_step_outcomes` folds outcome signals into the evidence
-    // (`control.proto`) — the NEGATIVE ones produce the highest-value lessons.
+    // `include_step_outcomes`: the outcomes posted above are part of what reflect reads.
     include_step_outcomes: true,
     // `last_n_items` bounds the evidence to the most recent items of the run, of every kind
     // and including those outcomes. A session end is the tail of its run, so that bound is
@@ -3313,7 +3312,7 @@ async function maybeReflect(cfg, o) {
     last_n_items: REFLECT_LAST_N
     // `record: false`, because a deadline this client chose is not evidence about the server.
     // `lib/http.mjs` already exempts callers who dial *tighter* than the configured default;
-    // this one is the mirror image and the exemption misses it — the reflect is LLM-backed
+    // this one is the mirror image and the exemption misses it — the reflect is slow
     // and dials deliberately wide, so its abort would be filed as `not_responding` against an
     // instance that was still composing an answer. Five of those inside the window open the
     // breaker, and the breaker gates the ingest *drain*: a merely slow reflection would

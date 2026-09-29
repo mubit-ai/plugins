@@ -1306,7 +1306,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -1749,7 +1749,7 @@ function stageTurn(cfg, runId, payload) {
       prompt_id: promptId,
       session_id: typeof payload?.session_id === "string" ? payload.session_id : "",
       started_at: Number.isFinite(base.started_at) ? base.started_at : Date.now(),
-      // The other half of the §5.3 race: never overwrite ids `prompt-recall` already staged.
+      // The other half of the staging race: never overwrite ids `prompt-recall` already staged.
       recalled: Array.isArray(base.recalled) ? base.recalled : [],
       turn_number: Number.isFinite(base.turn_number) && base.turn_number > 0 ? base.turn_number : ordinalFor(dir, !!prev)
     };

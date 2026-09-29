@@ -1411,7 +1411,7 @@ async function exportActivity(cfg, params2 = {}) {
     return fail(
       400,
       "bad_request",
-      "export requires a run id: the route takes no limit, and an empty run_id means every run this key can see \u2014 which is an unbounded response read into one string"
+      "export requires a run id: the route takes no limit, so an unscoped export is an unbounded response read into one string"
     );
   }
   const req = {
@@ -1493,8 +1493,8 @@ async function listActivity(cfg, params2 = {}, opts = {}) {
   return ok({
     ...corrected,
     nextPageToken: res.data.nextPageToken,
-    // The server's count, over the server's filtering, before paging. It over-counts by
-    // `droppedDerived` whenever the re-filter had to do work.
+    // The response's own count. It over-counts by `droppedDerived` whenever the re-filter had
+    // to do work.
     totalVisible: res.data.totalVisible
   });
 }

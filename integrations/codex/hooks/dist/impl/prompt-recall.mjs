@@ -1850,7 +1850,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -2113,13 +2113,13 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function requireMode(req) {
   const mode = req && typeof req === "object" ? req.mode : void 0;
   if (typeof mode === "string" && QUERY_MODES.includes(mode)) return "";
   const shown = mode === void 0 ? "(omitted)" : JSON.stringify(mode);
-  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed server-side and costs an LLM call per prompt with no error.`;
+  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed, which is slower on every prompt, with no error.`;
 }
 function safeMode(req) {
   const m = req && typeof req === "object" ? req.mode : void 0;
@@ -2635,30 +2635,30 @@ async function ladder(cfg, o) {
     limit: QUERY_LIMIT,
     entry_types: [...ENTRY_TYPES],
     include_working_memory: true,
-    // `env_tags` is accepted on the query route but not on the context route — version-aware
-    // tag scoring is capability rungs 1-2 gain over rung 3, not something they give up.
+    // `env_tags` is accepted on the query route but not on the context route — a capability
+    // rungs 1-2 gain over rung 3, not something they give up.
     // Tagged from the directory this prompt was sent in, not the one the session launched
-    // in — the same reason the run id reads the payload. A recall scored against `repo:`
-    // tags from the wrong repo is worse than one scored against none.
+    // in — the same reason the run id reads the payload. A recall tagged with the wrong repo
+    // is worse than an untagged one.
     env_tags: envTags(cfg, o.projectDir),
     // `rank_by` is the same trap as `env_tags` above, one field further on. `/context`
     // accepts no ranking field of ANY kind,
     // which makes freshness the second capability rungs 1-2 gain over rung 3 rather than
     // something they give up. What makes it a trap rather than a limitation: turning rung 3
     // on (`recallAssemble: "server"`) does not fail, warn, or fall back: it silently reverts
-    // every recall to the default fusion weights, and "where were we?" quietly goes back to
+    // every recall to the default ordering, and "where were we?" quietly goes back to
     // answering with whatever is most similar. Documented in the README's `recallAssemble`
     // row for the same reason.
     //
     // Omitted rather than sent when it resolves to nothing: absent IS `relevance`
     // server-side, so there is no shape of request this spread cannot express.
     ...rankBy ? { rank_by: rankBy } : {},
-    // Opting out of the cross-run lesson overlay, and the ONLY field here that is sent
-    // to make the request cheaper rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
+    // Opting out of cross-run lessons, and the ONLY field here that is sent to make the
+    // request faster rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
     //
-    // Omitted rather than sent as `false` when the overlay is wanted: absent IS `false`
-    // server-side, and a request log that only ever shows the field when somebody declined
-    // the lane is easier to read than one where every request carries it.
+    // Omitted rather than sent as `false` when they are wanted: absent IS `false`, and a
+    // request log that only ever shows the field when somebody declined them is easier to
+    // read than one where every request carries it.
     ...crossRun ? {} : { prefer_current_run: true }
   };
   let denied = readPolicyDenial(cfg);
@@ -2673,7 +2673,7 @@ async function ladder(cfg, o) {
     if (res2.status === 403) {
       cachePolicyDenial(cfg);
       if (cfg.recallFallback !== "agent_routed") {
-        log(cfg, "warn", 'prompt-recall: direct_bypass is disabled by instance policy and MUBIT_CC_RECALL_FALLBACK is "none", so this recall returns empty. Ask your operator to enable direct search, or set MUBIT_CC_RECALL_FALLBACK=agent_routed to pay an LLM call per prompt instead.', { run_id: o.runId });
+        log(cfg, "warn", 'prompt-recall: direct_bypass is disabled by instance policy and MUBIT_CC_RECALL_FALLBACK is "none", so this recall returns empty. Ask your operator to enable direct search, or set MUBIT_CC_RECALL_FALLBACK=agent_routed to accept a slower recall instead.', { run_id: o.runId });
         return empty(1, "policy_denied");
       }
       log(
@@ -3005,7 +3005,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;

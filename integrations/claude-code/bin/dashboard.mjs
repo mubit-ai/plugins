@@ -1242,13 +1242,13 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function requireMode(req) {
   const mode = req && typeof req === "object" ? req.mode : void 0;
   if (typeof mode === "string" && QUERY_MODES.includes(mode)) return "";
   const shown = mode === void 0 ? "(omitted)" : JSON.stringify(mode);
-  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed server-side and costs an LLM call per prompt with no error.`;
+  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed, which is slower on every prompt, with no error.`;
 }
 function safeMode(req) {
   const m = req && typeof req === "object" ? req.mode : void 0;
@@ -1858,8 +1858,8 @@ async function listActivity(cfg, params2 = {}, opts = {}) {
   return ok({
     ...corrected,
     nextPageToken: res.data.nextPageToken,
-    // The server's count, over the server's filtering, before paging. It over-counts by
-    // `droppedDerived` whenever the re-filter had to do work.
+    // The response's own count. It over-counts by `droppedDerived` whenever the re-filter had
+    // to do work.
     totalVisible: res.data.totalVisible
   });
 }
@@ -2251,7 +2251,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -3737,8 +3737,8 @@ async function getRoute(ctx, res, path, url) {
   }
   if (path === "/api/lessons") {
     const payload = await lessonsPayload(cfg, {
-      // An empty `run` means every run, and that is the only spelling it gets. A second
-      // `allRuns` parameter would just be a second way to pin this tab back to one run, which
+      // An empty `run` is how this tab asks for lessons from all runs, and that is the only
+      // spelling it gets. A second `allRuns` parameter would just be a second way to pin this tab back to one run, which
       // is the bug that made a global lesson from another run structurally invisible.
       run: String(url.searchParams.get("run") ?? ""),
       // A rendering context, never a filter: it is what `fromOtherRun` is measured against.
