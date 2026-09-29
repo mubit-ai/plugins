@@ -12,9 +12,8 @@ When you do:
 2. Read the evidence. If it answers the question, stop.
 3. Only if the first call returned nothing usable, issue one reformulated call.
 
-Never fan out into parallel searches across sub-topics. Mubit retrieval is hybrid
-(semantic + lexical + recency + graph); one well-formed query beats four keyword slices at
-a quarter of the latency. Two calls is the ceiling.
+Never fan out into parallel searches across sub-topics: one well-formed query beats four
+keyword slices at a quarter of the latency. Two calls is the ceiling.
 
 Cite what you use by its `reference_id`, and call `mcp__mubit__mubit_outcome` with those
 `entry_ids` when recalled memory turns out to be right or wrong. That feedback is what makes
@@ -23,8 +22,8 @@ the next recall better.
 ## Writing the query
 
 Query with the *question*, not with keywords. "Why does the drain hook retry twice on a
-5xx" retrieves better than "drain retry 5xx", because the semantic half of the hybrid index
-has something to match on and the lexical half still catches the identifiers. Include the
+5xx" retrieves better than "drain retry 5xx": a full question matches better, and the
+identifiers inside it still count. Include the
 identifiers you already know — file names, symbol names, error strings — inside the
 sentence rather than instead of it.
 
