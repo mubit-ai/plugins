@@ -37,6 +37,9 @@ jobs:
   test:
     name: tests and manifests
     runs-on: ubuntu-latest
+    # A green run takes under three minutes. Without a bound, a hung test holds the runner for
+    # the platform's six-hour default.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
