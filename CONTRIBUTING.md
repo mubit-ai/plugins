@@ -40,8 +40,8 @@ the hook-timing assertions and produces failures that are about your machine, no
 cd integrations/codex && npm test
 ```
 
-`npm ci` does not work here. `package.json` names a `file:../mcp` sibling that lives in the
-source repository, so resolving the tree fails before it starts. One test needs a real parser
+`npm ci` does not work here: `package.json` has a development dependency this repository does
+not carry, so resolving the tree fails before it starts. One test needs a real parser
 (`test/engine-floor.test.mjs` checks that the shipped bundle parses on the oldest Node we claim
 to support), so install that single package out-of-tree and copy it in, the way CI does:
 
@@ -68,8 +68,7 @@ git diff -- hooks/dist mcp/dist/index.js bin
 ```
 
 A clean diff means the committed artifacts already match their source. `MUBIT_CC_BUILD_SKIP_SERVER=1`
-skips the vendored MCP server, which is built from the private sibling package and cannot be
-regenerated from this tree. Do not run `npm run clean` here: it deletes `mcp/dist/server.js`,
+skips the vendored MCP server, which cannot be regenerated from this tree. Do not run `npm run clean` here: it deletes `mcp/dist/server.js`,
 and nothing in this repository can rebuild it.
 
 Anything under `integrations/claude-code/lib/` or `hooks/src/` is shared by both plugins, so a

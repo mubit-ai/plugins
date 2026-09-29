@@ -276,7 +276,7 @@ var DEFAULT_MCP_TOOLS = [
 ];
 var CACHE_FILE = "config.json";
 var CACHE_TTL_MS = 300 * 1e3;
-var CACHE_VERSION = 3;
+var CACHE_VERSION = 4;
 function screaming(key) {
   return String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
 }
@@ -382,6 +382,16 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -455,6 +465,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -594,7 +606,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -768,7 +780,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
