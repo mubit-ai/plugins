@@ -6,8 +6,9 @@
 # workflow starts, GitHub is already serving the commit, and a later force-push does not
 # un-publish a blob that anyone can still fetch by SHA. CI here is a detector. This is the gate.
 #
-# It scans **the commits being pushed**, not the working tree, because pushing a branch you are
-# not standing on is ordinary and scanning the wrong tree would pass.
+# It scans **every commit being pushed**, not the working tree and not only the tip: pushing a
+# branch you are not standing on is ordinary, and a commit that adds a leak stays fetchable by
+# SHA after a later one deletes it.
 #
 # Install (once per clone; it covers every worktree):
 #
@@ -42,20 +43,42 @@ fi
 status=0
 checked=''
 
+# Files a commit adds or changes relative to its first parent; every file for a root commit.
+changed_files() {
+  git diff --name-only -z --diff-filter=AMRC "$1^" "$1" 2>/dev/null || git ls-tree -r -z --name-only "$1"
+}
+
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
   [ "$local_sha" = "$ZERO" ] && continue          # deleting a remote branch
 
-  # Several refs in one push often share a tip; scan each commit once.
-  case " $checked " in *" $local_sha "*) continue ;; esac
-  checked="$checked $local_sha"
-
-  short=$(git rev-parse --short "$local_sha" 2>/dev/null || echo "$local_sha")
-  printf 'leakcheck: scanning %s (%s)\n' "$short" "${local_ref##*/}" >&2
-
-  if ! node "$SCANNER" --strict --quiet --rev "$local_sha" --no-annotations >&2; then
-    status=1
+  # Every commit the remote does not have yet is published, not only the tip: a leak added in
+  # one commit and deleted in the next is still fetchable by SHA. A remote tip we cannot resolve
+  # (someone else pushed) falls back to "not on any remote-tracking branch".
+  if [ "$remote_sha" = "$ZERO" ] || ! commits=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null); then
+    commits=$(git rev-list "$local_sha" --not --remotes 2>/dev/null)
   fi
+  [ -n "$commits" ] || commits=$local_sha
+
+  for sha in $commits; do
+    # Several refs in one push often share commits; scan each one once.
+    case " $checked " in *" $sha "*) continue ;; esac
+    checked="$checked $sha"
+
+    short=$(git rev-parse --short "$sha" 2>/dev/null || echo "$sha")
+
+    # The tip gets the whole-tree scan. An earlier commit can only add a leak in a file it
+    # touched, so it is scanned on those files alone — a full scan per commit is ~20 s.
+    if [ "$sha" = "$local_sha" ]; then
+      printf 'leakcheck: scanning %s (%s)\n' "$short" "${local_ref##*/}" >&2
+      node "$SCANNER" --strict --quiet --rev "$sha" --no-annotations >&2 || status=1
+    else
+      [ -n "$(changed_files "$sha" | tr -d '\0')" ] || continue
+      printf 'leakcheck: scanning %s (%s, changed files)\n' "$short" "${local_ref##*/}" >&2
+      changed_files "$sha" | xargs -0 node "$SCANNER" --strict --quiet --no-annotations --rev "$sha" --paths >&2 \
+        || status=1
+    fi
+  done
 done
 
 if [ "$status" -ne 0 ]; then

@@ -42,7 +42,7 @@ The default is one page of the newest activity for the newest run in this data d
 `--all-runs` asks across every run the key can see.
 
 Filters: `--type` (repeatable), `--since` / `--until` as RFC3339, `--agent`, `--user`, and
-`--exclude-derived` for the entries the instance promoted for itself rather than ones a client
+`--exclude-derived` for the entries the instance derived itself rather than ones a client
 wrote. `--full` returns every field untruncated; the default is five keys per entry.
 
 Output: a table by default, `--jsonl` for one object per line, `--json` for one envelope. The
@@ -66,18 +66,16 @@ reply** — the command prints it, and a file the user cannot find is a file the
 `--out` refuses to overwrite, and refuses any path inside the plugin data directory: an export
 there sits outside the TTL sweep, so it would live forever and nothing would ever mention it
 again. It warns when the destination is inside a git working tree that is not ignoring it.
-`--all-runs` is refused with `--export`, because that route takes no limit and a run is the
-only bound on how much comes back.
+`--all-runs` cannot be combined with `--export`: an export covers one run.
 
 ## What to say about the numbers
 
 Three of the things this prints are **findings**, not decoration, and they are the reason the
 answer can be trusted. Relay them rather than summarising them away:
 
-1. **"the instance did not honour exclude_derived"** means derived entries came back under a
-   request that excluded them, and this client dropped them locally. The listing is correct;
-   the server's filter is not. That is worth telling the user, because it is the difference
-   between a filter and a claim about a filter.
+1. **"the instance did not honour exclude_derived"** means derived entries came back and this
+   client dropped them locally, so the listing is still correct. Say so, so the user knows the
+   filter was applied here.
 2. **"the instance did not honour the compact projection"** means content was truncated here
    rather than upstream. Nothing was lost — `--full` or an export has all of it.
 3. **"this answer is incomplete"** on a `--scan` means it stopped at a bound (entry cap, wall

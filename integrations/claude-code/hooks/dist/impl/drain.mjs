@@ -159,6 +159,9 @@ function pruneStale(cfg = {}) {
     for (const name of jsonFiles(join(root, "import"))) {
       expire(join(root, "import", name), 30 * DAY);
     }
+    for (const e of dirEntries(join(root, "scorecard"))) {
+      if (e.isFile() && e.name.endsWith(".jsonl")) expire(join(root, "scorecard", e.name), 7 * DAY);
+    }
     for (const e of dirEntries(join(root, "tmp"))) {
       if (e.isFile()) expire(join(root, "tmp", e.name), 1 * HOUR);
     }
@@ -639,7 +642,7 @@ var DEFAULT_MCP_TOOLS = [
 ];
 var CACHE_FILE2 = "config.json";
 var CACHE_TTL_MS = 300 * 1e3;
-var CACHE_VERSION2 = 3;
+var CACHE_VERSION2 = 4;
 function screaming(key) {
   return String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
 }
@@ -759,6 +762,16 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -832,6 +845,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -997,15 +1012,50 @@ function implicitOutcomesEnabled(cfg) {
 function decideOutcome(turn) {
   if (!isObject2(turn)) return { post: false, reason: "not_a_turn" };
   if (numOr(turn.outcome_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "corrected" };
   if (str2(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
   if (numOr(turn.outcome_attempts, 0) >= MAX_OUTCOME_ATTEMPTS) {
     return { post: false, reason: "attempts_exhausted" };
   }
-  const entryIds = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
-  if (entryIds.length === 0) return { post: false, reason: "nothing_injected" };
-  const failed = str2(turn.outcome).toLowerCase() === "failure";
+  const recalled = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
   const ev = isObject2(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (recalled.length === 0 && !entries) return { post: false, reason: "nothing_injected" };
+  const failed = str2(turn.outcome).toLowerCase() === "failure";
+  const toolFailure = failed && str2(turn.failure_reason) === "tool_failure";
+  if (entries) {
+    const refs = Object.keys(entries);
+    const used = refs.filter((r) => entries[r].used === true);
+    const measured = refs.some((r) => entries[r].used === false);
+    if (used.length > 0) {
+      const explicit2 = new Set(explicitIdsOf(turn));
+      const ids2 = used.filter((r) => !explicit2.has(r));
+      if (ids2.length === 0) return { post: false, reason: "explicit_only" };
+      return {
+        post: true,
+        outcome: failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
+        signal: failed ? SIGNAL_FAILURE : SIGNAL_SUCCESS,
+        entryIds: ids2,
+        rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure)
+      };
+    }
+    if (measured && explicitIdsOf(turn).length > 0) return { post: false, reason: "explicit_only" };
+    if (measured) {
+      return {
+        post: true,
+        outcome: OUTCOME_UNUSED,
+        signal: SIGNAL_UNUSED,
+        entryIds: [],
+        rationale: entryRationale(ev, 0, refs.length, failed, toolFailure)
+      };
+    }
+    if (recalled.length === 0) return { post: false, reason: "nothing_injected" };
+  }
   const unused = ev.used === false;
+  const explicit = new Set(explicitIdsOf(turn));
+  if (unused && explicit.size > 0) return { post: false, reason: "explicit_only" };
+  const ids = recalled.filter((r) => !explicit.has(r));
+  if (!unused && ids.length === 0) return { post: false, reason: "explicit_only" };
   return {
     post: true,
     outcome: unused ? OUTCOME_UNUSED : failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
@@ -1015,8 +1065,36 @@ function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : entryIds,
-    rationale: rationaleFor(ev, unused, failed, entryIds.length)
+    entryIds: unused ? [] : ids,
+    rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure)
+  };
+}
+function decideCorrection(turn) {
+  if (!isObject2(turn)) return { post: false, reason: "not_a_turn" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (str2(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
+  if (str2(turn.outcome).toLowerCase() === "failure") return { post: false, reason: "already_failed" };
+  const ev = isObject2(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (!entries) return { post: false, reason: "nothing_used" };
+  const explicit = new Set(explicitIdsOf(turn));
+  const ids = Object.keys(entries).filter((r) => entries[r].used === true && !explicit.has(r));
+  if (ids.length === 0) return { post: false, reason: "nothing_used" };
+  return {
+    post: true,
+    outcome: OUTCOME_FAILURE,
+    signal: SIGNAL_FAILURE,
+    entryIds: ids,
+    rationale: `The user's next prompt corrected this Claude Code turn; the reply had used ${ids.length} ${ids.length === 1 ? "memory" : "memories"} (memory-term-echo/v2-entry).`
+  };
+}
+function correctionIdempotencyKey(runId, promptId) {
+  return `cc-correction-${str2(runId)}-${str2(promptId)}`;
+}
+function correctionRequest(o) {
+  return {
+    ...outcomeRequest(o),
+    idempotency_key: correctionIdempotencyKey(o.runId, o.promptId)
   };
 }
 function outcomeIdempotencyKey(runId, promptId) {
@@ -1035,17 +1113,40 @@ function outcomeRequest(o) {
     idempotency_key: outcomeIdempotencyKey(o.runId, o.promptId)
   };
 }
-function rationaleFor(ev, unused, failed, n) {
+function rationaleFor(ev, unused, failed, n, toolFailure = false) {
   const method = str2(ev.method);
   const by = method ? ` (${method})` : "";
   const counts = `${numOr(ev.matched, 0)} of ${numOr(ev.candidates, 0)} injected memory terms`;
   if (unused) {
     return `Claude Code injected ${n} ${n === 1 ? "memory" : "memories"} and the reply carried none of their vocabulary \u2014 ${counts}${by}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
   }
+  const ended = toolFailure ? "Claude Code turn ended on a failed tool call" : "Claude Code turn ended in failure";
   if (ev.used === true) {
-    return failed ? `Claude Code turn ended in failure; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
+    return failed ? `${ended}; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
   }
-  return failed ? "Claude Code turn ended in failure after these memories were injected." : "Claude Code turn completed after these memories were injected.";
+  return failed ? `${ended} after these memories were injected.` : "Claude Code turn completed after these memories were injected.";
+}
+function entryRationale(ev, used, of, failed, toolFailure) {
+  const method = str2(ev.entry_method) || "memory-term-echo/v2-entry";
+  const counts = `the reply used ${used} of ${of} injected ${of === 1 ? "memory" : "memories"} (${method})`;
+  if (used === 0) {
+    return `Claude Code turn completed; ${counts}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
+  }
+  if (!failed) return `Claude Code turn completed; ${counts}.`;
+  return toolFailure ? `Claude Code turn ended on a failed tool call; ${counts}.` : `Claude Code turn ended in failure; ${counts}.`;
+}
+function entriesOf(ev) {
+  const e = ev.entries;
+  if (!isObject2(e)) return null;
+  const out = {};
+  for (const [ref, v] of Object.entries(e)) {
+    if (ref.trim() && isObject2(v)) out[ref] = /** @type {any} */
+    v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function explicitIdsOf(turn) {
+  return Array.isArray(turn.explicit_ids) ? turn.explicit_ids.filter((v) => typeof v === "string" && v.trim()) : [];
 }
 function isObject2(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -1429,7 +1530,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1499,7 +1600,7 @@ async function postOutcome(cfg, req, opts = {}) {
       req,
       "reference_id",
       "postOutcome",
-      'pass "global" for run-level attribution and put the real ids in entry_ids[] (\xA71.3)'
+      'pass "global" for run-level attribution and put the real ids in entry_ids[]'
     )
   );
   if (bad) return refuse(cfg, started, bad, { route: ROUTES.outcome });
@@ -1519,7 +1620,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -1813,6 +1914,13 @@ function updateMarker(cfg, runId, patch = {}) {
 
 // lib/pins.mjs
 import { join as join9 } from "node:path";
+
+// lib/handles.mjs
+var ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+var LEN = 4;
+var BODY = `[${ALPHABET}]{${LEN}}`;
+var BARE_RE = new RegExp(`^m${BODY}$`);
+var TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
 
 // lib/assemble.mjs
 var SECTION_KEYS = Object.freeze([
@@ -2172,7 +2280,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine.`
     );
   }
   return s;
@@ -2605,6 +2713,7 @@ var HARD_STOP_MS = 12e3;
 var JOBS_KEEP = 20;
 var LOCK_CONFIRM_MS = 20;
 var OUTCOME_LOCK_WAIT_MS = 2e3;
+var CORRECTION_LOCK_WAIT_MS = HARD_STOP_MS + 3e3;
 var LOCK_POLL_MS = 25;
 var DEFAULT_BATCH = 32;
 var RETRYABLE_4XX = /* @__PURE__ */ new Set([401, 403, 404, 408, 429]);
@@ -2648,6 +2757,7 @@ async function main() {
   const outcomeArg = flagValue(argv, "--with-outcome");
   const wantsOutcome = argv.includes("--with-outcome");
   const pinnedRun = flagValue(argv, "--run");
+  const correctArg = str3(flagValue(argv, "--correct"));
   const payload = await readPayload(payloadPath);
   const cfg = loadConfig(process.env);
   cfgRef = cfg;
@@ -2668,7 +2778,8 @@ async function main() {
   }
   const agentId = deriveAgentId(payload);
   const promptId = str3(outcomeArg) || turnKey(payload);
-  const lock = await acquireConfirmed(cfg, runId, wantsOutcome, started);
+  const waitMs = correctArg ? CORRECTION_LOCK_WAIT_MS : wantsOutcome ? OUTCOME_LOCK_WAIT_MS : 0;
+  const lock = await acquireConfirmed(cfg, runId, waitMs, started);
   if (!lock) {
     log(cfg, "debug", "drain: another drainer holds the lock; standing down", { run_id: runId });
     return;
@@ -2685,6 +2796,7 @@ async function main() {
   try {
     const drained = await drainSpool(cfg, runId, agentId, promptId, started);
     await flushOutcome(cfg, runId, agentId, promptId, wantsOutcome);
+    if (correctArg && !breakerOpen(cfg)) await sendCorrection(cfg, runId, agentId, correctArg);
     log(cfg, "info", `drain: ${drained.sent} item(s) in ${drained.batches} batch(es)`, {
       run_id: runId,
       rejected: drained.rejected,
@@ -2757,7 +2869,7 @@ async function drainSpool(cfg, runId, agentId, promptId, started) {
   }
   return { sent, batches, rejected };
 }
-async function acquireConfirmed(cfg, runId, wantsOutcome, started) {
+async function acquireConfirmed(cfg, runId, waitMs, started) {
   for (; ; ) {
     const lock = acquireDrainLock(cfg, runId);
     if (lock) {
@@ -2765,7 +2877,7 @@ async function acquireConfirmed(cfg, runId, wantsOutcome, started) {
       if (await stillOurs(lock)) return lock;
       heldLock = null;
     }
-    if (!wantsOutcome || Date.now() - started >= OUTCOME_LOCK_WAIT_MS) return null;
+    if (Date.now() - started >= waitMs) return null;
     await sleep(LOCK_POLL_MS);
   }
 }
@@ -2909,6 +3021,36 @@ async function sendOutcome(cfg, runId, agentId, promptId) {
     }
   } catch (err) {
     log(cfg, "warn", `drain: outcome skipped \u2014 ${messageOf3(err)}`, { run_id: runId });
+  }
+}
+async function sendCorrection(cfg, runId, agentId, promptId) {
+  try {
+    if (!implicitOutcomesEnabled(cfg)) return;
+    const p = join12(runDir(cfg, runId), "turns", `${safeSegment(promptId)}.json`);
+    const turn = readJson(p, null);
+    const decision = decideCorrection(turn);
+    if (!decision.post) {
+      log(cfg, "debug", `drain: no correction to post (${decision.reason})`, { run_id: runId, prompt_id: promptId });
+      return;
+    }
+    const res = await postOutcome(
+      cfg,
+      correctionRequest({ runId, agentId, promptId, decision }),
+      { timeoutMs: numOr2(cfg.timeoutMs, 4e3) }
+    );
+    if (!res.ok) {
+      log(cfg, "warn", `drain: correction post failed (${res.state})`, { run_id: runId, prompt_id: promptId });
+      return;
+    }
+    const fresh2 = readJson(p, turn);
+    writeJsonAtomic(p, { ...fresh2 && typeof fresh2 === "object" ? fresh2 : turn, correction_sent_at: Date.now() });
+    appendLedger(
+      resolveDataDir(cfg),
+      runId,
+      { ...outcomeLedgerRow(runId, promptId, decision, 1), correction: true }
+    );
+  } catch (err) {
+    log(cfg, "warn", `drain: correction skipped \u2014 ${messageOf3(err)}`, { run_id: runId });
   }
 }
 function outcomeLedgerRow(runId, promptId, decision, attempts) {

@@ -196,7 +196,7 @@ Start a new session in a real project and just work. You do not invoke anything.
 | When | What the plugin does |
 | --- | --- |
 | Session starts | Derives a run id from your directory, registers the agent, pulls up to 5 standing (`global`) lessons, and injects a short block telling the model memory is active and which tool to reach for |
-| Every prompt you send | Queries memory and injects what is relevant, within a 1500 ms budget and a 1500-token cap. Zero LLM calls — assembly is local |
+| Every prompt you send | Queries memory and injects what is relevant, within a 1500 ms budget and a 1500-token cap. Assembled locally |
 | Every tool call | Redacts and spools it. Zero network on the hot path. `apply_patch` is recorded with the files it touched |
 | A permission request | Recorded as the attempt it was — the only record a denial leaves. Never decided |
 | A subagent starts | Given the parent run's pins and a recalled block of its own — the only memory it will ever see |
@@ -392,7 +392,7 @@ unset it raises a config error rather than quietly deriving a different run.
 
 `MUBIT_CC_SESSION_END_DETACH`, default `1`. Codex clamps a `SessionEnd` hook to three seconds
 and kills it there, whatever the registration asks for. The end-of-session drain and the
-reflect — the only thing promoting a lesson beyond its run — do not reliably fit, so the hook
+reflect — which carries lessons into later sessions — do not reliably fit, so the hook
 hands them to a detached process. Turning this off costs you reflections. A detached child can
 still be reaped with the terminal; if that matters, run `mubit-memory:reflect` at the end of a
 long session.
@@ -416,6 +416,19 @@ command. It only ever warns — it never allows, denies or rewrites, on any path
 `if:` predicate on a registration, so this costs a process spawn on *every* shell command
 whether the feature is on or not, which is why `setup` leaves the registration out unless you
 pass `--with-pre-tool`.
+
+### Crediting memory, and the scorecard — mostly off here
+
+Every injected memory line now starts with a short id such as `[m7k2q]`, which `mubit_outcome`
+accepts and the plugin maps back to the entry's reference id. `MUBIT_CC_OUTCOME_REVIEW`,
+default `nudge` under Codex, adds one sentence to the memory block asking the model to credit
+what helped or misled it before finishing; `off` drops it. `stop` also has the Stop hook ask
+for a short review once per turn — the default in Claude Code, but a Stop continuation has not
+been verified under Codex.
+
+`MUBIT_CC_SESSION_SCORE`, default `off` under Codex, prints the memory scorecard under each
+reply that showed a lesson (`full` or `compact`). The
+[Claude Code guide](../../claude-code/docs/user-guide.md#the-session-scorecard) explains both.
 
 ### Quieting it temporarily
 
