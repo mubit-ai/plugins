@@ -267,7 +267,8 @@ function isTextPath(path) {
   const ext = extname(path).toLowerCase();
   if (CONFIG.textExtensions.includes(ext)) return true;
   // Extensionless files that are conventionally text.
-  return ['LICENSE', 'README', 'Makefile', 'Dockerfile'].includes(path.split('/').pop() || '');
+  return ['LICENSE', 'README', 'Makefile', 'Dockerfile', '.gitignore', '.gitattributes', '.npmignore',
+    '.npmrc', '.editorconfig', '.nvmrc'].includes(path.split('/').pop() || '');
 }
 
 function ruleApplies(rule, path) {

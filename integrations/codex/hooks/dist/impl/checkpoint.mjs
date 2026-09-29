@@ -470,6 +470,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -543,6 +553,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -688,7 +700,7 @@ var init_config = __esm({
     ];
     CACHE_FILE2 = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION2 = 3;
+    CACHE_VERSION2 = 4;
     MAX_ENV_TAGS = 8;
     MODE = "hosted";
     LANG_FILES = [
@@ -1517,7 +1529,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1590,7 +1602,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -1681,7 +1693,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function isPoisonedRunId(body) {
   return !!body && typeof body === "object" && !Array.isArray(body) && body.run_id === POISONED_RUN_ID;
@@ -1912,7 +1924,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -2527,7 +2539,7 @@ ${tail}`, cfg, "output"),
   );
   const actor = attempt(() => readActor(cfg), "");
   appendItem(cfg, runId, {
-    // §1.3: `item_id` and `content_type` are REQUIRED — a missing one is a 422 for the whole
+    // `item_id` and `content_type` are REQUIRED — a missing one is a 422 for the whole
     // batch. Derived from (session, counter) and never from a clock, so a retried drain
     // deduplicates instead of writing a second anchor for one compaction.
     item_id: clamp(`cc-precompact-${idPart(payload.session_id) || idPart(runId) || "anon"}-${label.slice(LABEL_PREFIX.length)}`, MAX_ID_CHARS),
@@ -2536,7 +2548,7 @@ ${tail}`, cfg, "output"),
     intent: str3(cls.intent) || "checkpoint",
     importance: importanceOr(cls.importance),
     source: "agent",
-    // Unix SECONDS (`control.proto`); milliseconds here dates every memory to the year 57000.
+    // Unix SECONDS; milliseconds here dates every memory to the year 57000.
     occurrence_time: Math.floor(Date.now() / 1e3),
     // From the payload's directory, not the launch one: after a mid-session `cd` the run id
     // follows the new repo, and `repo:`/`branch:` have to follow it or the item lands in the

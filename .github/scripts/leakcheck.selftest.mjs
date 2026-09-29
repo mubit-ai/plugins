@@ -229,6 +229,12 @@ const CASES = [
     ].join('\n'),
     expect: ['tenancy-collapse', 'isolation-defect-disclosure'],
   },
+  {
+    // Extensionless dotfiles are text, and they are published like everything else.
+    path: 'b/.gitignore',
+    body: '# bundles are committed artifacts (build-guide section 11)\n*.local\n',
+    expect: ['internal-doc-reference'],
+  },
 ];
 
 let failures = 0;
@@ -314,6 +320,51 @@ try {
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
+
+/**
+ * A push publishes every commit it carries, not only the tip, and a blob stays fetchable by SHA
+ * after a later commit deletes it. So the hook must refuse a branch whose leak lives only in an
+ * intermediate commit — and must still let a clean branch through.
+ */
+function checkPrePushScansEveryCommit() {
+  const repo = mkdtempSync(join(tmpdir(), 'leakcheck-prepush-'));
+  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const push = (sha) => {
+    try {
+      execFileSync('sh', [join(repo, '.githooks/pre-push'), 'origin', 'https://example.invalid/r.git'], {
+        cwd: repo, input: `refs/heads/x ${sha} refs/heads/x ${'0'.repeat(40)}\n`, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return 0;
+    } catch (e) {
+      return /** @type {any} */ (e).status ?? 1;
+    }
+  };
+  try {
+    g('init', '-q');
+    g('config', 'user.email', 'selftest@example.com');
+    g('config', 'user.name', 'selftest');
+    cpSync(SOURCE_GITHUB, join(repo, '.github'), { recursive: true });
+    rmSync(join(repo, '.github/leakcheck/baseline.json'), { force: true });
+    cpSync(join(SOURCE_GITHUB, '..', '.githooks'), join(repo, '.githooks'), { recursive: true });
+    writeFileSync(join(repo, 'README.md'), 'A clean tree.\n');
+    g('add', '-A');
+    g('commit', '-qm', 'clean');
+    const clean = g('rev-parse', 'HEAD').trim();
+    if (push(clean) !== 0) fail('pre-push refused a branch with no findings');
+
+    writeFileSync(join(repo, 'leak.mjs'), '// see crates/control/src/overlay.rs\nexport {};\n');
+    g('add', '-A');
+    g('commit', '-qm', 'leak');
+    rmSync(join(repo, 'leak.mjs'));
+    g('add', '-A');
+    g('commit', '-qm', 'remove it again');
+    const tip = g('rev-parse', 'HEAD').trim();
+    if (push(tip) === 0) fail('pre-push passed a branch whose leak is only in an intermediate commit');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+checkPrePushScansEveryCommit();
 
 if (failures) {
   process.stdout.write(`\nleakcheck.selftest: ${failures} failure(s) — the gate is not seeing what it claims to.\n`);

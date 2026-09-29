@@ -43,8 +43,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/handoff.mjs" list --open --data-dir "${MUBIT_CC_
 
 Without `--open`, every handoff in the run, each with the feedback that answered it. "Open"
 is computed by this command, not by the instance: a handoff is open when no feedback entry
-names its id. The instance never flips a handoff's `active` flag, so do not read that field as
-its state.
+names its id. Do not read a handoff's `active` field as its state.
 
 ## Answer
 
