@@ -66,7 +66,7 @@ every other check below comes back clean while the model receives no memory at a
 `recall.empty_reason` for which kind:
 
 - `policy_denied` — the instance has direct-access recall (rung 1) disabled, and the
-  `agent_routed` fallback is off by default because it costs an LLM call per prompt. Ask the
+  `agent_routed` fallback is off by default because it adds seconds to every prompt. Ask the
   operator to enable direct search. `MUBIT_CC_RECALL_FALLBACK=agent_routed` restores recall at
   that cost; `MUBIT_CC_POLICY_TTL_MS=1` re-probes immediately once it is on.
 - `budget_exhausted` — recall ran out of time before the call returned. Raise

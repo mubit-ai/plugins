@@ -32,10 +32,10 @@ and keep it self-contained: it will be read months later with none of this conve
 around it.
 
 `mubit_learned` returns when the write is **queued**, not stored. Do not immediately search
-for what you just saved; it will not be there yet. Ingest runs asynchronously — the item is
-embedded and indexed after the call returns, so a search fired in the same turn honestly
+for what you just saved; it will not be there yet. Ingest runs asynchronously — the item
+becomes searchable a little after the call returns, so a search fired in the same turn honestly
 returns nothing and that is not a sign that memory is broken. The same applies to
-`/mubit-memory:reflect`: reflection only sees items the server has already indexed, so
+`/mubit-memory:reflect`: reflection only sees items that are already searchable, so
 reflecting seconds after a write reports zero lessons where reflecting a minute later
 reports them.
 
