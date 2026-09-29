@@ -2,8 +2,8 @@
 
 // hooks/src/stage-prompt.mjs
 import { randomUUID } from "node:crypto";
-import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join8 } from "node:path";
+import { readdirSync as readdirSync5 } from "node:fs";
+import { join as join9 } from "node:path";
 
 // lib/config.mjs
 import { createHash } from "node:crypto";
@@ -195,7 +195,7 @@ var DEFAULT_MCP_TOOLS = [
 ];
 var CACHE_FILE = "config.json";
 var CACHE_TTL_MS = 300 * 1e3;
-var CACHE_VERSION = 3;
+var CACHE_VERSION = 4;
 function screaming(key) {
   return String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
 }
@@ -301,6 +301,16 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -374,6 +384,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -504,6 +516,39 @@ function safeCwd() {
   }
 }
 
+// lib/correction.mjs
+var SCAN_CHARS = 300;
+var LEADING_NO = /^(?:no|nope)(?:\s*[,.!;:—–-]|\s*$)/;
+var POLITE_NO = /^(?:no|nope)[\s,.!]*(?:problem|worries|thanks|thank you|need|rush|biggie)\b/;
+var BARE_NO = /^(?:no|nope)[\s.!]*$/;
+var PHRASES = [
+  /^(?:wrong|incorrect)\b/,
+  /\b(?:that'?s|that is|this is|it'?s|it is)\s+(?:wrong|incorrect|not right|not it|not what i (?:asked|wanted|meant))\b/,
+  /\bnot what i (?:asked|wanted|meant)\b/,
+  /\b(?:you|it|this|that) broke\b/,
+  /\bstill (?:failing|fails|broken|erroring|crashing|not working|(?:doesn'?t|does not|isn'?t|is not) work(?:ing)?)\b/,
+  /\b(?:doesn'?t|does not|didn'?t|did not) work\b/,
+  /\b(?:revert|undo) (?:that|this|it|the (?:last|previous))\b/,
+  /\broll back (?:that|this|it|the)\b/,
+  /\byou misunderstood\b/,
+  /\byou(?:'ve| have)? got it wrong\b/
+];
+function isCorrection(prompt, opts = {}) {
+  try {
+    if (typeof prompt !== "string") return false;
+    const trimmed = prompt.trim();
+    if (!trimmed || trimmed.startsWith("/")) return false;
+    const text = trimmed.replace(/```[\s\S]*?(?:```|$)/g, " ").replace(/"[^"\n]*"|“[^”\n]*”|`[^`\n]*`/g, " ").replace(/[‘’]/g, "'").trim().slice(0, SCAN_CHARS).toLowerCase();
+    if (!text) return false;
+    const asked = opts?.lastReplyEndedWithQuestion === true;
+    if (BARE_NO.test(text)) return !asked;
+    if (!asked && LEADING_NO.test(text) && !POLITE_NO.test(text)) return true;
+    return PHRASES.some((re) => re.test(text));
+  } catch {
+    return false;
+  }
+}
+
 // lib/hook.mjs
 import { spawn } from "node:child_process";
 import {
@@ -628,9 +673,9 @@ function scrub(text, count) {
 }
 function entropy(s) {
   if (s === null || s === void 0) return 0;
-  const str2 = typeof s === "string" ? s : String(s);
-  if (str2.length === 0) return 0;
-  const buf = Buffer.from(str2, "utf8");
+  const str3 = typeof s === "string" ? s : String(s);
+  if (str3.length === 0) return 0;
+  const buf = Buffer.from(str3, "utf8");
   const n = buf.length;
   if (n === 0) return 0;
   const counts = new Uint32Array(256);
@@ -1103,6 +1148,19 @@ function safeConfig() {
   }
 }
 
+// lib/outcome.mjs
+var SILENCED_MODES = /* @__PURE__ */ new Set(["off", "explicit"]);
+function implicitOutcomesEnabled(cfg) {
+  const mode = str2(cfg && typeof cfg === "object" ? (
+    /** @type {any} */
+    cfg.outcomeMode
+  ) : "").toLowerCase();
+  return !SILENCED_MODES.has(mode);
+}
+function str2(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+
 // lib/runid.mjs
 import { spawnSync } from "node:child_process";
 import { createHash as createHash2 } from "node:crypto";
@@ -1405,23 +1463,115 @@ function safeCwd2() {
   }
 }
 
-// lib/spool.mjs
+// lib/scorecard-log.mjs
 import {
   closeSync as closeSync2,
-  existsSync as existsSync6,
-  linkSync,
+  fstatSync,
   openSync as openSync2,
   readdirSync as readdirSync3,
   readFileSync as readFileSync6,
-  renameSync as renameSync3,
+  readSync,
   statSync as statSync5,
-  unlinkSync as unlinkSync4,
-  writeFileSync as writeFileSync3,
   writeSync as writeSync3
 } from "node:fs";
-import { join as join7 } from "node:path";
+import { dirname as dirname5, join as join7 } from "node:path";
+var SCORE_LOG_VERSION = 1;
+var SCORE_DIR = "scorecard";
+var SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+var MAX_READ_BYTES = 4 * 1024 * 1024;
+var MAX_ID = 128;
+function scorecardPath(cfg, sessionId) {
+  const id = safeSegment(typeof sessionId === "string" ? sessionId.trim() : "", MAX_ID);
+  if (!id) return "";
+  return join7(resolveDataDir(cfg), SCORE_DIR, `${id}.jsonl`);
+}
+function appendScoreRow(cfg, sessionId, row) {
+  try {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    if (typeof row.kind !== "string" || !row.kind) return false;
+    const p = scorecardPath(cfg, sessionId);
+    if (!p || !ensureDir(dirname5(p))) return false;
+    const line = `${JSON.stringify({ v: SCORE_LOG_VERSION, at: Date.now(), ...row })}
+`;
+    const fd = openSync2(p, "a+");
+    try {
+      const st = fstatSync(fd);
+      let prefix = "";
+      if (st.size > 0) {
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, st.size - 1);
+        if (last[0] !== 10) prefix = "\n";
+      }
+      writeSync3(fd, prefix + line);
+    } finally {
+      closeSync2(fd);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function readScoreRows(cfg, sessionId, opts = {}) {
+  const p = scorecardPath(cfg, sessionId);
+  if (!p) return [];
+  return readRowsAt(p, opts);
+}
+function readRowsAt(p, opts = {}) {
+  try {
+    const size = statSync5(p).size;
+    const tail = Number(opts?.tailBytes);
+    const want = Number.isFinite(tail) && tail > 0 ? Math.min(tail, MAX_READ_BYTES) : MAX_READ_BYTES;
+    let text;
+    let partialHead = false;
+    if (size > want) {
+      const fd = openSync2(p, "r");
+      try {
+        const buf = Buffer.alloc(want);
+        readSync(fd, buf, 0, want, size - want);
+        text = buf.toString("utf8");
+      } finally {
+        closeSync2(fd);
+      }
+      partialHead = true;
+    } else {
+      text = readFileSync6(p, "utf8");
+    }
+    const lines = text.split("\n");
+    if (partialHead) lines.shift();
+    const out = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line);
+        if (row && typeof row === "object" && !Array.isArray(row) && typeof row.kind === "string") {
+          out.push(row);
+        }
+      } catch {
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// lib/spool.mjs
+import {
+  closeSync as closeSync3,
+  existsSync as existsSync6,
+  linkSync,
+  openSync as openSync3,
+  readdirSync as readdirSync4,
+  readFileSync as readFileSync7,
+  renameSync as renameSync3,
+  statSync as statSync6,
+  unlinkSync as unlinkSync4,
+  writeFileSync as writeFileSync3,
+  writeSync as writeSync4
+} from "node:fs";
+import { join as join8 } from "node:path";
 function spoolDir(cfg, runId) {
-  return join7(runDir(cfg, runId), "spool");
+  return join8(runDir(cfg, runId), "spool");
 }
 function stampOf(dir, name) {
   const m = /^(\d{10,})-/.exec(name);
@@ -1430,7 +1580,7 @@ function stampOf(dir, name) {
     if (Number.isFinite(n)) return n;
   }
   try {
-    return statSync5(join7(dir, name)).mtimeMs;
+    return statSync6(join8(dir, name)).mtimeMs;
   } catch {
     return 0;
   }
@@ -1440,7 +1590,7 @@ function spoolStats(cfg, runId) {
     const dir = spoolDir(cfg, runId);
     let entries;
     try {
-      entries = readdirSync3(dir, { withFileTypes: true });
+      entries = readdirSync4(dir, { withFileTypes: true });
     } catch {
       return { count: 0, oldestMs: 0 };
     }
@@ -1462,7 +1612,8 @@ function spoolStats(cfg, runId) {
 // hooks/src/stage-prompt.mjs
 var BUDGET_MS = 250;
 var MAX_PROMPT_BYTES = 64 * 1024;
-var MAX_ID = 128;
+var MAX_ID2 = 128;
+var LOG_TAIL_BYTES = 64 * 1024;
 await runHook("stage-prompt", {
   budgetMs: BUDGET_MS,
   body: async (payload) => {
@@ -1476,17 +1627,18 @@ await runHook("stage-prompt", {
       return { suppressOutput: true };
     }
     stageTurn(cfg, runId, payload);
+    if (cfg.capture !== false) scorePrompt(cfg, payload);
     if (cfg.capture) maybeDrain(cfg, runId, payload);
     return { suppressOutput: true };
   }
 });
 function stageTurn(cfg, runId, payload) {
   try {
-    const promptId = safeSegment(turnKey(payload), MAX_ID);
+    const promptId = safeSegment(turnKey(payload), MAX_ID2);
     if (!promptId) return false;
-    const dir = join8(runDir(cfg, runId), "turns");
+    const dir = join9(runDir(cfg, runId), "turns");
     if (!ensureDir(dir)) return false;
-    const file = join8(dir, `${promptId}.json`);
+    const file = join9(dir, `${promptId}.json`);
     const prev = readJson(file, null);
     const base = isObject3(prev) ? prev : {};
     const { text, truncated } = clampPrompt(payload?.prompt);
@@ -1509,10 +1661,45 @@ function stageTurn(cfg, runId, payload) {
 }
 function ordinalFor(dir, mine) {
   try {
-    const n = readdirSync4(dir).filter((f) => f.endsWith(".json")).length;
+    const n = readdirSync5(dir).filter((f) => f.endsWith(".json")).length;
     return Math.max(1, mine ? n : n + 1);
   } catch {
     return 1;
+  }
+}
+function scorePrompt(cfg, payload) {
+  try {
+    const sessionId = typeof payload?.session_id === "string" ? payload.session_id : "";
+    const promptId = safeSegment(turnKey(payload), MAX_ID2);
+    if (!sessionId || !promptId) return;
+    const prompt = typeof payload?.prompt === "string" ? payload.prompt : "";
+    const slash = prompt.trim().startsWith("/");
+    const rows = readScoreRows(cfg, sessionId, { tailBytes: LOG_TAIL_BYTES });
+    let prev = null;
+    let afterClear = false;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (r.kind === "start" && r.source === "clear") afterClear = true;
+      if (r.kind === "turn" && typeof r.prompt_id === "string" && r.prompt_id && r.prompt_id !== promptId) {
+        prev = r;
+        break;
+      }
+    }
+    const correction = !slash && !!prev && !afterClear && isCorrection(prompt, { lastReplyEndedWithQuestion: prev?.ended_with_question === true });
+    appendScoreRow(cfg, sessionId, { kind: "prompt", prompt_id: promptId, correction, slash });
+    if (!correction || !prev || !implicitOutcomesEnabled(cfg)) return;
+    const used = Array.isArray(prev.used_refs) ? prev.used_refs.filter((v) => typeof v === "string" && v.trim()) : [];
+    const prevRun = typeof prev.run_id === "string" ? prev.run_id : "";
+    if (!used.length || !prevRun) return;
+    spawnDetached(
+      cfg,
+      "drain",
+      ["--correct", String(prev.prompt_id), "--run", prevRun],
+      writePayload(cfg, payload)
+    );
+    log(cfg, "debug", "stage-prompt: correction of the previous turn", { prompt_id: String(prev.prompt_id) });
+  } catch (err) {
+    log(cfg, "warn", `stage-prompt: could not score the prompt (${messageOf(err)})`);
   }
 }
 function maybeDrain(cfg, runId, payload) {
@@ -1530,8 +1717,8 @@ function maybeDrain(cfg, runId, payload) {
   }
 }
 function writePayload(cfg, payload) {
-  const dir = join8(resolveDataDir(cfg), "tmp");
-  const file = join8(dir, `${randomUUID()}.json`);
+  const dir = join9(resolveDataDir(cfg), "tmp");
+  const file = join9(dir, `${randomUUID()}.json`);
   ensureDir(dir);
   writeJsonAtomic(file, isObject3(payload) ? payload : {});
   return file;
