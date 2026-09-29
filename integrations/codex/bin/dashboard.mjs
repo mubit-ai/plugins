@@ -569,6 +569,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -642,6 +652,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -787,7 +799,7 @@ var init_config = __esm({
     ];
     CACHE_FILE = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION = 3;
+    CACHE_VERSION = 4;
     MODE = "hosted";
   }
 });
@@ -1057,7 +1069,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1127,7 +1139,7 @@ async function postOutcome(cfg, req, opts = {}) {
       req,
       "reference_id",
       "postOutcome",
-      'pass "global" for run-level attribution and put the real ids in entry_ids[] (\xA71.3)'
+      'pass "global" for run-level attribution and put the real ids in entry_ids[]'
     )
   );
   if (bad) return refuse(cfg, started, bad, { route: ROUTES.outcome });
@@ -1150,7 +1162,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -1241,13 +1253,13 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function requireMode(req) {
   const mode = req && typeof req === "object" ? req.mode : void 0;
   if (typeof mode === "string" && QUERY_MODES.includes(mode)) return "";
   const shown = mode === void 0 ? "(omitted)" : JSON.stringify(mode);
-  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed server-side and costs an LLM call per prompt with no error.`;
+  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed, which is slower on every prompt, with no error.`;
 }
 function safeMode(req) {
   const m = req && typeof req === "object" ? req.mode : void 0;
@@ -1877,8 +1889,8 @@ async function listActivity(cfg, params2 = {}, opts = {}) {
   return ok({
     ...corrected,
     nextPageToken: res.data.nextPageToken,
-    // The server's count, over the server's filtering, before paging. It over-counts by
-    // `droppedDerived` whenever the re-filter had to do work.
+    // The response's own count. It over-counts by `droppedDerived` whenever the re-filter had
+    // to do work.
     totalVisible: res.data.totalVisible
   });
 }
@@ -2103,15 +2115,50 @@ var init_activity = __esm({
 function decideOutcome(turn) {
   if (!isObject(turn)) return { post: false, reason: "not_a_turn" };
   if (numOr(turn.outcome_sent_at, 0) > 0) return { post: false, reason: "already_sent" };
+  if (numOr(turn.correction_sent_at, 0) > 0) return { post: false, reason: "corrected" };
   if (str4(turn[API_ERROR_KEY])) return { post: false, reason: "api_failed" };
   if (numOr(turn.outcome_attempts, 0) >= MAX_OUTCOME_ATTEMPTS) {
     return { post: false, reason: "attempts_exhausted" };
   }
-  const entryIds = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
-  if (entryIds.length === 0) return { post: false, reason: "nothing_injected" };
-  const failed = str4(turn.outcome).toLowerCase() === "failure";
+  const recalled = Array.isArray(turn.recalled) ? turn.recalled.filter((v) => typeof v === "string" && v.trim()) : [];
   const ev = isObject(turn.used_evidence) ? turn.used_evidence : {};
+  const entries = entriesOf(ev);
+  if (recalled.length === 0 && !entries) return { post: false, reason: "nothing_injected" };
+  const failed = str4(turn.outcome).toLowerCase() === "failure";
+  const toolFailure = failed && str4(turn.failure_reason) === "tool_failure";
+  if (entries) {
+    const refs = Object.keys(entries);
+    const used = refs.filter((r) => entries[r].used === true);
+    const measured = refs.some((r) => entries[r].used === false);
+    if (used.length > 0) {
+      const explicit2 = new Set(explicitIdsOf(turn));
+      const ids2 = used.filter((r) => !explicit2.has(r));
+      if (ids2.length === 0) return { post: false, reason: "explicit_only" };
+      return {
+        post: true,
+        outcome: failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
+        signal: failed ? SIGNAL_FAILURE : SIGNAL_SUCCESS,
+        entryIds: ids2,
+        rationale: entryRationale(ev, used.length, refs.length, failed, toolFailure)
+      };
+    }
+    if (measured && explicitIdsOf(turn).length > 0) return { post: false, reason: "explicit_only" };
+    if (measured) {
+      return {
+        post: true,
+        outcome: OUTCOME_UNUSED,
+        signal: SIGNAL_UNUSED,
+        entryIds: [],
+        rationale: entryRationale(ev, 0, refs.length, failed, toolFailure)
+      };
+    }
+    if (recalled.length === 0) return { post: false, reason: "nothing_injected" };
+  }
   const unused = ev.used === false;
+  const explicit = new Set(explicitIdsOf(turn));
+  if (unused && explicit.size > 0) return { post: false, reason: "explicit_only" };
+  const ids = recalled.filter((r) => !explicit.has(r));
+  if (!unused && ids.length === 0) return { post: false, reason: "explicit_only" };
   return {
     post: true,
     outcome: unused ? OUTCOME_UNUSED : failed ? OUTCOME_FAILURE : OUTCOME_SUCCESS,
@@ -2121,21 +2168,44 @@ function decideOutcome(turn) {
     // The cost is that the record says a turn was injected-and-unused
     // without saying which entries were ignored — a real limitation, and the honest side of
     // the trade.
-    entryIds: unused ? [] : entryIds,
-    rationale: rationaleFor(ev, unused, failed, entryIds.length)
+    entryIds: unused ? [] : ids,
+    rationale: rationaleFor(ev, unused, failed, recalled.length, toolFailure)
   };
 }
-function rationaleFor(ev, unused, failed, n) {
+function rationaleFor(ev, unused, failed, n, toolFailure = false) {
   const method = str4(ev.method);
   const by = method ? ` (${method})` : "";
   const counts = `${numOr(ev.matched, 0)} of ${numOr(ev.candidates, 0)} injected memory terms`;
   if (unused) {
     return `Claude Code injected ${n} ${n === 1 ? "memory" : "memories"} and the reply carried none of their vocabulary \u2014 ${counts}${by}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
   }
+  const ended = toolFailure ? "Claude Code turn ended on a failed tool call" : "Claude Code turn ended in failure";
   if (ev.used === true) {
-    return failed ? `Claude Code turn ended in failure; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
+    return failed ? `${ended}; the reply carried ${counts}${by}.` : `Claude Code turn completed and the reply carried ${counts}${by}.`;
   }
-  return failed ? "Claude Code turn ended in failure after these memories were injected." : "Claude Code turn completed after these memories were injected.";
+  return failed ? `${ended} after these memories were injected.` : "Claude Code turn completed after these memories were injected.";
+}
+function entryRationale(ev, used, of, failed, toolFailure) {
+  const method = str4(ev.entry_method) || "memory-term-echo/v2-entry";
+  const counts = `the reply used ${used} of ${of} injected ${of === 1 ? "memory" : "memories"} (${method})`;
+  if (used === 0) {
+    return `Claude Code turn completed; ${counts}. Recorded, not penalised: this method cannot see memory the model followed without quoting it.`;
+  }
+  if (!failed) return `Claude Code turn completed; ${counts}.`;
+  return toolFailure ? `Claude Code turn ended on a failed tool call; ${counts}.` : `Claude Code turn ended in failure; ${counts}.`;
+}
+function entriesOf(ev) {
+  const e = ev.entries;
+  if (!isObject(e)) return null;
+  const out = {};
+  for (const [ref, v] of Object.entries(e)) {
+    if (ref.trim() && isObject(v)) out[ref] = /** @type {any} */
+    v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function explicitIdsOf(turn) {
+  return Array.isArray(turn.explicit_ids) ? turn.explicit_ids.filter((v) => typeof v === "string" && v.trim()) : [];
 }
 function isObject(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -2236,7 +2306,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -3754,8 +3824,8 @@ async function getRoute(ctx, res, path, url) {
   }
   if (path === "/api/lessons") {
     const payload = await lessonsPayload(cfg, {
-      // An empty `run` means every run, and that is the only spelling it gets. A second
-      // `allRuns` parameter would just be a second way to pin this tab back to one run, which
+      // An empty `run` is how this tab asks for lessons from all runs, and that is the only
+      // spelling it gets. A second `allRuns` parameter would just be a second way to pin this tab back to one run, which
       // is the bug that made a global lesson from another run structurally invisible.
       run: String(url.searchParams.get("run") ?? ""),
       // A rendering context, never a filter: it is what `fromOtherRun` is measured against.

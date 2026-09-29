@@ -564,6 +564,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -637,6 +647,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -782,7 +794,7 @@ var init_config = __esm({
     ];
     CACHE_FILE = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION = 3;
+    CACHE_VERSION = 4;
     MODE = "hosted";
   }
 });
@@ -1433,7 +1445,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1562,7 +1574,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -1705,7 +1717,7 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function isPoisonedRunId(body) {
   return !!body && typeof body === "object" && !Array.isArray(body) && body.run_id === POISONED_RUN_ID;
@@ -2100,8 +2112,8 @@ async function listActivity(cfg, params2 = {}, opts = {}) {
   return ok({
     ...corrected,
     nextPageToken: res.data.nextPageToken,
-    // The server's count, over the server's filtering, before paging. It over-counts by
-    // `droppedDerived` whenever the re-filter had to do work.
+    // The response's own count. It over-counts by `droppedDerived` whenever the re-filter had
+    // to do work.
     totalVisible: res.data.totalVisible
   });
 }
@@ -2209,7 +2221,7 @@ function defaultMarker(runId = "") {
     state: "unknown",
     updated_at: 0,
     cold_start_until: 0,
-    // `dry_streak` and `last_hit_at` are what make a permanently dead recall path visible.
+    // `dry_streak` and `last_hit_at` are what make a recall path that never returns visible.
     // Everything else here describes the *last* recall, which is exactly the wrong shape for
     // "recall has returned nothing for the last forty prompts": a run of total failures and a
     // healthy run that happened to draw a blank write identical rows. The streak is the only
@@ -2275,6 +2287,128 @@ var init_markers = __esm({
   "../claude-code/lib/markers.mjs"() {
     init_state();
     GROUPS = ["recall", "captured", "lessons", "reflect", "mcp"];
+  }
+});
+
+// ../claude-code/lib/handles.mjs
+function handleFor(ref) {
+  const s = typeof ref === "string" ? ref.trim() : "";
+  if (!s) return "";
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  let out = "m";
+  for (let i = 0; i < LEN; i++) {
+    out += ALPHABET[h % ALPHABET.length];
+    h = Math.floor(h / ALPHABET.length);
+  }
+  return out;
+}
+function handleTag(ref) {
+  const h = handleFor(ref);
+  return h ? `[${h}]` : "";
+}
+function stripHandles(text) {
+  return String(text ?? "").replace(TAG_RE, " ");
+}
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
+// ../claude-code/lib/assemble.mjs
+function estimateTokens(text) {
+  if (typeof text !== "string" || text.length === 0) return 0;
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+function firstClause(text) {
+  const s = typeof text === "string" ? text.trim() : "";
+  if (!s) return "";
+  const stop = s.search(/[.;!?]/);
+  let end = stop > 0 ? Math.min(stop, MAX_POINTER_CHARS) : MAX_POINTER_CHARS;
+  if (end < MIN_POINTER_CHARS) end = Math.min(s.length, MAX_POINTER_CHARS);
+  const clause = s.slice(0, end).trim() || s.slice(0, MAX_POINTER_CHARS).trim();
+  return clause.length < s.length ? `${clause}\u2026` : clause;
+}
+var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS, CHARS_PER_TOKEN, MAX_POINTER_CHARS, MIN_POINTER_CHARS;
+var init_assemble = __esm({
+  "../claude-code/lib/assemble.mjs"() {
+    init_handles();
+    SECTION_KEYS = Object.freeze([
+      "mental_models",
+      "active_rules",
+      "lessons",
+      "archive_blocks",
+      "handoffs",
+      "feedback",
+      "facts",
+      "observations",
+      "working_memory",
+      "traces",
+      "goals",
+      "checkpoints",
+      "logs",
+      "other"
+    ]);
+    EMISSION_ORDER = Object.freeze([
+      "mental_models",
+      "active_rules",
+      "lessons",
+      "facts",
+      "observations",
+      "working_memory",
+      "traces",
+      "goals"
+    ]);
+    RENDER_ORDER = Object.freeze([
+      ...EMISSION_ORDER,
+      ...SECTION_KEYS.filter((k) => !EMISSION_ORDER.includes(k))
+    ]);
+    SECTION_BY_ENTRY_TYPE = Object.freeze({
+      mental_model: "mental_models",
+      rule: "active_rules",
+      lesson: "lessons",
+      fact: "facts",
+      observation: "observations",
+      working_memory: "working_memory",
+      goal: "working_memory",
+      trace: "traces",
+      tool_output: "traces",
+      tool_input: "traces",
+      task_result: "traces",
+      step_outcome: "traces",
+      archive_block: "archive_blocks",
+      checkpoint: "checkpoints",
+      handoff: "handoffs",
+      feedback: "feedback"
+    });
+    HEADINGS = Object.freeze({
+      mental_models: "Mental models",
+      active_rules: "Active rules",
+      lessons: "Lessons",
+      archive_blocks: "Archive blocks",
+      handoffs: "Handoffs",
+      feedback: "Feedback",
+      facts: "Facts",
+      observations: "Observations",
+      working_memory: "Working memory",
+      traces: "Traces",
+      goals: "Goals",
+      checkpoints: "Checkpoints",
+      logs: "Logs",
+      other: "Other"
+    });
+    CHARS_PER_TOKEN = 4;
+    MAX_POINTER_CHARS = 64;
+    MIN_POINTER_CHARS = 24;
   }
 });
 
@@ -2372,11 +2506,203 @@ var init_rules = __esm({
   }
 });
 
+// ../claude-code/lib/scorecard-log.mjs
+import {
+  closeSync as closeSync2,
+  fstatSync,
+  openSync as openSync2,
+  readdirSync as readdirSync3,
+  readFileSync as readFileSync6,
+  readSync,
+  statSync as statSync5,
+  writeSync as writeSync3
+} from "node:fs";
+import { dirname as dirname5, join as join11 } from "node:path";
+function scorecardPath(cfg, sessionId) {
+  const id = safeSegment(typeof sessionId === "string" ? sessionId.trim() : "", MAX_ID);
+  if (!id) return "";
+  return join11(resolveDataDir(cfg), SCORE_DIR, `${id}.jsonl`);
+}
+function appendScoreRow(cfg, sessionId, row) {
+  try {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    if (typeof row.kind !== "string" || !row.kind) return false;
+    const p = scorecardPath(cfg, sessionId);
+    if (!p || !ensureDir(dirname5(p))) return false;
+    const line = `${JSON.stringify({ v: SCORE_LOG_VERSION, at: Date.now(), ...row })}
+`;
+    const fd = openSync2(p, "a+");
+    try {
+      const st = fstatSync(fd);
+      let prefix = "";
+      if (st.size > 0) {
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, st.size - 1);
+        if (last[0] !== 10) prefix = "\n";
+      }
+      writeSync3(fd, prefix + line);
+    } finally {
+      closeSync2(fd);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+var SCORE_LOG_VERSION, SCORE_DIR, SCORE_LOG_TTL_MS, MAX_READ_BYTES, MAX_ID;
+var init_scorecard_log = __esm({
+  "../claude-code/lib/scorecard-log.mjs"() {
+    init_state();
+    SCORE_LOG_VERSION = 1;
+    SCORE_DIR = "scorecard";
+    SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    MAX_READ_BYTES = 4 * 1024 * 1024;
+    MAX_ID = 128;
+  }
+});
+
+// ../claude-code/lib/terms.mjs
+function entryTerms(cfg, text, promptTerms = /* @__PURE__ */ new Set(), max = MAX_ENTRY_TERMS) {
+  try {
+    const raw = stripHandles(String(text ?? ""));
+    if (!raw.trim()) return [];
+    const scrubbed = String(redactText(raw, cfg, "output")?.text ?? "").replace(PLACEHOLDER_RE, " ");
+    const skip = promptTerms instanceof Set ? promptTerms : /* @__PURE__ */ new Set();
+    const cap = Number.isFinite(max) && max > 0 ? Math.trunc(max) : MAX_ENTRY_TERMS;
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const m of scrubbed.matchAll(TERM_RE)) {
+      const t = m[0].toLowerCase();
+      if (seen.has(t) || skip.has(t) || TERM_STOPWORDS.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+      if (out.length >= cap) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+function entryTitle(cfg, text, max = MAX_TITLE_CHARS) {
+  try {
+    const whole = String(text ?? "").replace(/\s+/g, " ").trim();
+    let clause = firstClause(whole);
+    if (clause.endsWith("\u2026") && whole.replace(/[.;!?]+$/, "") === clause.slice(0, -1)) {
+      clause = clause.slice(0, -1);
+    }
+    const t = String(redactText(clause, cfg, "output")?.text ?? "").trim();
+    const cap = Number.isFinite(max) && max > 1 ? Math.trunc(max) : MAX_TITLE_CHARS;
+    return t.length > cap ? `${t.slice(0, cap - 1).trimEnd()}\u2026` : t;
+  } catch {
+    return "";
+  }
+}
+var TERM_RE, TERM_STOPWORDS, MAX_PROMPT_SCAN, MAX_ANSWER_SCAN, MAX_ENTRY_TERMS, MAX_TITLE_CHARS, PLACEHOLDER_RE;
+var init_terms = __esm({
+  "../claude-code/lib/terms.mjs"() {
+    init_assemble();
+    init_handles();
+    init_redact();
+    TERM_RE = /[A-Za-z][A-Za-z0-9_]{3,23}/g;
+    TERM_STOPWORDS = /* @__PURE__ */ new Set([
+      "about",
+      "after",
+      "again",
+      "against",
+      "also",
+      "always",
+      "another",
+      "because",
+      "been",
+      "before",
+      "being",
+      "between",
+      "both",
+      "called",
+      "does",
+      "doing",
+      "done",
+      "each",
+      "else",
+      "even",
+      "ever",
+      "every",
+      "from",
+      "have",
+      "here",
+      "html",
+      "http",
+      "https",
+      "into",
+      "just",
+      "like",
+      "made",
+      "make",
+      "many",
+      "more",
+      "most",
+      "much",
+      "must",
+      "need",
+      "never",
+      "next",
+      "once",
+      "only",
+      "other",
+      "over",
+      "part",
+      "same",
+      "says",
+      "send",
+      "sent",
+      "should",
+      "since",
+      "some",
+      "such",
+      "take",
+      "than",
+      "that",
+      "their",
+      "them",
+      "then",
+      "there",
+      "these",
+      "they",
+      "this",
+      "those",
+      "through",
+      "thing",
+      "time",
+      "under",
+      "until",
+      "very",
+      "want",
+      "well",
+      "were",
+      "what",
+      "when",
+      "where",
+      "which",
+      "while",
+      "will",
+      "with",
+      "without",
+      "would",
+      "your"
+    ]);
+    MAX_PROMPT_SCAN = 16 * 1024;
+    MAX_ANSWER_SCAN = 64 * 1024;
+    MAX_ENTRY_TERMS = 32;
+    MAX_TITLE_CHARS = 48;
+    PLACEHOLDER_RE = /\[REDACTED:[^\]]*\]/gi;
+  }
+});
+
 // ../claude-code/lib/runid.mjs
 import { spawnSync } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync6, readdirSync as readdirSync3, readFileSync as readFileSync6, statSync as statSync5 } from "node:fs";
-import { basename as basename2, dirname as dirname5, join as join11, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync6, readdirSync as readdirSync4, readFileSync as readFileSync7, statSync as statSync6 } from "node:fs";
+import { basename as basename2, dirname as dirname6, join as join12, resolve as resolve4 } from "node:path";
 function agentRole(env = process.env) {
   const host2 = typeof env?.MUBIT_CC_HOST === "string" ? env.MUBIT_CC_HOST.trim().toLowerCase() : "";
   return AGENT_ROLES[host2] ?? DEFAULT_AGENT_ROLE;
@@ -2472,7 +2798,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -2558,7 +2884,7 @@ function normaliseRecord(record) {
   return out;
 }
 function sessionPath(file) {
-  return join11(dataDir({}), "sessions", `${file}.json`);
+  return join12(dataDir({}), "sessions", `${file}.json`);
 }
 function sessionFileName(sessionId) {
   const raw = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -2576,7 +2902,7 @@ function usableDir(v) {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return "";
   try {
-    return statSync5(s).isDirectory() ? s : "";
+    return statSync6(s).isDirectory() ? s : "";
   } catch {
     return "";
   }
@@ -2606,8 +2932,8 @@ function hasGitDir(start) {
   try {
     let cur = resolve4(start);
     for (let i = 0; i < 24; i++) {
-      if (existsSync6(join11(cur, ".git"))) return true;
-      const up = dirname5(cur);
+      if (existsSync6(join12(cur, ".git"))) return true;
+      const up = dirname6(cur);
       if (up === cur) return false;
       cur = up;
     }
@@ -2691,7 +3017,37 @@ var init_runid = __esm({
 
 // ../claude-code/hooks/src/session-start.mjs
 var session_start_exports = {};
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
+function lessonLines(lessons) {
+  return lessons.map((l) => {
+    const tag = handleTag(l.id);
+    return `- ${tag ? `${tag} ` : ""}[${l.type}] ${l.content}`;
+  });
+}
+function appendStart(cfg, payload, lessons) {
+  try {
+    if (cfg.capture === false) return;
+    const sessionId = typeof payload?.session_id === "string" ? payload.session_id.trim() : "";
+    if (!sessionId) return;
+    const withIds = lessons.filter((l) => l.id);
+    const rows = {};
+    for (const l of withIds) {
+      rows[l.id] = {
+        title: entryTitle(cfg, l.content),
+        terms: entryTerms(cfg, l.content, /* @__PURE__ */ new Set()),
+        handle: handleFor(l.id)
+      };
+    }
+    appendScoreRow(cfg, sessionId, {
+      kind: "start",
+      source: sourceOf(payload) || "startup",
+      lessons: rows,
+      refs: withIds.map((l) => l.id),
+      tokens: estimateTokens(lessonLines(lessons).join("\n"))
+    });
+  } catch {
+  }
+}
 function spawnResume(cfg, payload, runId, agentId, src) {
   try {
     if (!cfg.resumeBlock || !cfg.recall) return;
@@ -2712,8 +3068,11 @@ function spawnResume(cfg, payload, runId, agentId, src) {
     );
   }
 }
+function skillOf(cfg) {
+  return (name) => cfg.host === "codex" ? `mubit-memory:${name}` : `/mubit-memory:${name}`;
+}
 function steerBlock(cfg, runId, lessons, anchor = "", partial = false) {
-  const skill = (name) => cfg.host === "codex" ? `mubit-memory:${name}` : `/mubit-memory:${name}`;
+  const skill = skillOf(cfg);
   const lines = [
     "# Mubit memory is active",
     "",
@@ -2725,6 +3084,9 @@ function steerBlock(cfg, runId, lessons, anchor = "", partial = false) {
       "Do search when the injected memory falls short: mubit_recall for a topic, mubit_diagnose when a command has failed, mubit_dereference for a reference_id you already hold.",
       `Save what you learn with mubit_learned, and credit what helped with mubit_outcome. ${skill("remember")} and ${skill("recall")} are the explicit forms.`
     );
+    if (cfg.capture && cfg.outcomeReview !== "off") {
+      lines.push("Each memory line starts with a short id in brackets, like [m7k2q]: pass it in entry_ids of mubit_outcome to credit or fault that entry.");
+    }
   }
   if (anchor) {
     lines.push(
@@ -2736,7 +3098,7 @@ function steerBlock(cfg, runId, lessons, anchor = "", partial = false) {
   if (lessons.length || partial) {
     lines.push("", "## Standing lessons (global)");
     lines.push("Learned from earlier work \u2014 they may be out of date, so verify before relying on one.");
-    for (const l of lessons) lines.push(`- [${l.type}] ${l.content}`);
+    lines.push(...lessonLines(lessons));
     if (partial) {
       lines.push(`This set may be incomplete \u2014 it was read from a listing with more than this page in it. Ask ${skill("recall")} if a constraint seems to be missing.`);
     }
@@ -2750,7 +3112,7 @@ function unconfiguredBlock(cfg, runId) {
     "",
     `Run: ${runId} (${cfg.mode})`,
     "No Mubit endpoint is set on this machine, so no memory will be injected this session and recall is unavailable \u2014 do not search for it, and do not assume anything was recalled.",
-    "Work is still captured and buffered locally. Run /mubit-memory:auth to sign in and set an endpoint; what has been buffered is sent once one is configured.",
+    `Work is still captured and buffered locally. Run ${skillOf(cfg)("auth")} to sign in and set an endpoint; what has been buffered is sent once one is configured.`,
     ""
   ].join("\n");
 }
@@ -2760,7 +3122,7 @@ function unauthenticatedBlock(cfg, runId) {
     "",
     `Run: ${runId} (${cfg.mode})`,
     "Mubit rejected this machine's API key, so no memory will be injected this session and recall is unavailable \u2014 do not search for it, and do not assume anything was recalled.",
-    "Work is still captured and buffered locally. Run /mubit-memory:auth to sign in again; what has been buffered is sent once the key is accepted.",
+    `Work is still captured and buffered locally. Run ${skillOf(cfg)("auth")} to sign in again; what has been buffered is sent once the key is accepted.`,
     ""
   ].join("\n");
 }
@@ -2778,7 +3140,7 @@ function armColdStart(cfg) {
   const grace = Math.max(0, intOr(cfg.coldStartGraceMs, 0));
   if (grace <= 0) return 0;
   try {
-    const path = join12(dataDir(cfg), "coldstart", `${endpointHash(cfg)}.json`);
+    const path = join13(dataDir(cfg), "coldstart", `${endpointHash(cfg)}.json`);
     const stored = readJson(path, null);
     const until = stored && typeof stored === "object" ? intOr(stored.until, 0) : 0;
     if (until > 0) return until;
@@ -2791,7 +3153,7 @@ function armColdStart(cfg) {
 }
 function latestCheckpointId(cfg, runId) {
   try {
-    const path = join12(resolveDataDir(cfg), "runs", safeSegment2(runId), "checkpoints.json");
+    const path = join13(resolveDataDir(cfg), "runs", safeSegment2(runId), "checkpoints.json");
     const stored = readJson(path, []);
     const list2 = Array.isArray(stored) ? stored : Array.isArray(stored?.checkpoints) ? stored.checkpoints : stored?.items;
     if (!Array.isArray(list2)) return "";
@@ -2838,7 +3200,7 @@ function readLessons(body) {
 function probeStatusLine(cfg) {
   try {
     if (cfg.statusLine === false) return "";
-    const p = join12(dataDir(cfg), LIVENESS_FILE);
+    const p = join13(dataDir(cfg), LIVENESS_FILE);
     const now = Date.now();
     const rec = readJson(p, null);
     if (!rec || typeof rec !== "object" || Array.isArray(rec)) {
@@ -2863,7 +3225,7 @@ function probeStatusLine(cfg) {
       notified_at: nag ? now : notifiedAt
     });
     if (!nag) return "";
-    log(cfg, "info", "session-start: status line never invoked; emitting the one-time \xA716.2 hint");
+    log(cfg, "info", "session-start: status line never invoked; emitting the one-time status-line hint");
     return statusLineHint();
   } catch {
     return "";
@@ -2905,7 +3267,11 @@ var init_session_start = __esm({
     init_http();
     init_log();
     init_markers();
+    init_assemble();
+    init_handles();
     init_rules();
+    init_scorecard_log();
+    init_terms();
     init_runid();
     init_state();
     BUDGET_MS = 2500;
@@ -2934,18 +3300,20 @@ var init_session_start = __esm({
           agentId = deriveAgentId(payload);
         } catch (err) {
           log(cfg, "error", `session-start: no usable run id (${messageOf2(err)})`);
+          appendStart(cfg, payload, []);
           return {};
         }
         const statusLineHint2 = probeStatusLine(cfg);
         if (!isConfigured(cfg)) {
           updateMarker(cfg, runId, { mode: cfg.mode, state: "unconfigured", cold_start_until: 0, last_error: "" });
           log(cfg, "debug", "session-start: no endpoint configured", { run_id: runId });
+          appendStart(cfg, payload, []);
           return {
             hookSpecificOutput: {
               hookEventName: "SessionStart",
               additionalContext: unconfiguredBlock(cfg, runId)
             },
-            systemMessage: statusLineHint2 || `mubit: not configured${DOT}run /mubit-memory:auth`
+            systemMessage: statusLineHint2 || `mubit: not configured${DOT}run ${skillOf(cfg)("auth")}`
           };
         }
         const coldStartUntil = armColdStart(cfg);
@@ -2968,6 +3336,7 @@ var init_session_start = __esm({
           };
           if (!warming) out.systemMessage = `mubit: offline (${state})${DOT}capture buffered`;
           if (statusLineHint2) out.systemMessage = statusLineHint2;
+          appendStart(cfg, payload, []);
           return out;
         }
         let authError = "";
@@ -3027,6 +3396,7 @@ var init_session_start = __esm({
             }
           };
           out.systemMessage = statusLineHint2 || `mubit: auth failed${DOT}capture buffered`;
+          appendStart(cfg, payload, []);
           return out;
         }
         updateMarker(cfg, runId, {
@@ -3048,12 +3418,13 @@ var init_session_start = __esm({
         const anchor = src === "compact" ? latestCheckpointId(cfg, runId) : "";
         const standing = lessonsPartial ? "global lessons: partial listing" : `${lessons.length} global lesson${lessons.length === 1 ? "" : "s"}`;
         const summary = `mubit: ${cfg.mode}${DOT}run ${runId}${DOT}${standing}`;
+        appendStart(cfg, payload, lessons);
         return {
           hookSpecificOutput: {
             hookEventName: "SessionStart",
             additionalContext: steerBlock(cfg, runId, lessons, anchor, lessonsPartial)
           },
-          // §16.2's hint fires once, ever, per install, so on that one session it *takes* the
+          // The status-line hint fires once, ever, per install, so on that one session it *takes* the
           // line rather than being appended to it: `systemMessage` is one line by contract, and
           // the run and mode it would displace are already named in the steer block above.
           systemMessage: statusLineHint2 || summary

@@ -370,6 +370,16 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -443,6 +453,8 @@ function resolveAll(e, userFile, creds, projectDir2, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
@@ -588,7 +600,7 @@ var init_config = __esm({
     ];
     CACHE_FILE = "config.json";
     CACHE_TTL_MS = 300 * 1e3;
-    CACHE_VERSION = 3;
+    CACHE_VERSION = 4;
     MAX_ENV_TAGS = 8;
     MODE = "hosted";
     LANG_FILES = [
@@ -1156,6 +1168,37 @@ var init_hook = __esm({
   }
 });
 
+// ../claude-code/lib/handles.mjs
+function handleFor(ref) {
+  const s = typeof ref === "string" ? ref.trim() : "";
+  if (!s) return "";
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  let out = "m";
+  for (let i = 0; i < LEN; i++) {
+    out += ALPHABET[h % ALPHABET.length];
+    h = Math.floor(h / ALPHABET.length);
+  }
+  return out;
+}
+function handleTag(ref) {
+  const h = handleFor(ref);
+  return h ? `[${h}]` : "";
+}
+var ALPHABET, LEN, BODY, BARE_RE, TAG_RE;
+var init_handles = __esm({
+  "../claude-code/lib/handles.mjs"() {
+    ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+    LEN = 4;
+    BODY = `[${ALPHABET}]{${LEN}}`;
+    BARE_RE = new RegExp(`^m${BODY}$`);
+    TAG_RE = new RegExp(`\\[m${BODY}\\]`, "g");
+  }
+});
+
 // ../claude-code/lib/assemble.mjs
 function sectionFor(entryType) {
   const t = typeof entryType === "string" ? entryType.trim().toLowerCase() : "";
@@ -1180,12 +1223,14 @@ function assembleContext(evidence, opts = {}) {
     if (!isObject2(e)) continue;
     const text = oneLine(e.content);
     if (!text) continue;
-    const section = sectionFor(str2(e.origin_entry_type) || str2(e.entry_type));
+    const type = (str2(e.origin_entry_type) || str2(e.entry_type)).toLowerCase();
+    const section = sectionFor(type);
     if (allowed && !allowed.has(section)) continue;
     candidates++;
     const bucket = bySection.get(section) ?? [];
     bucket.push({
       ref: str2(e.reference_id),
+      type,
       text,
       score: finite(e.score, 0),
       stale: e.is_stale === true,
@@ -1201,12 +1246,14 @@ function assembleContext(evidence, opts = {}) {
       sourceRefIds: [],
       dropped: 0,
       pointers: 0,
-      emptyReason: "no_evidence"
+      emptyReason: "no_evidence",
+      entries: []
     };
   }
   const parts = [];
   const sourceRefIds = [];
   const seenRefs = /* @__PURE__ */ new Set();
+  const entries = [];
   const sections = [];
   let used = 0;
   let rendered = 0;
@@ -1224,9 +1271,10 @@ function assembleContext(evidence, opts = {}) {
       if (perSection > 0 && count >= perSection) {
         continue;
       }
-      const full = `- ${item.stale ? "(stale) " : ""}${item.text}
+      const tag = handleTag(item.ref);
+      const full = `- ${tag ? `${tag} ` : ""}${item.stale ? "(stale) " : ""}${item.text}
 `;
-      const pointer = seen && item.ref && seen.has(item.ref) ? `- ${POINTER_MARK} ${item.stale ? "(stale) " : ""}${item.ref} \u2014 ${firstClause(item.text)}
+      const pointer = seen && item.ref && seen.has(item.ref) ? `- ${POINTER_MARK} ${item.stale ? "(stale) " : ""}${tag} \u2014 ${firstClause(item.text)}
 ` : "";
       const degraded = !!pointer && pointer.length < full.length;
       const line = degraded ? pointer : full;
@@ -1245,6 +1293,18 @@ function assembleContext(evidence, opts = {}) {
         seenRefs.add(item.ref);
         sourceRefIds.push(item.ref);
       }
+      if (!item.ref || entries.every((x) => x.ref !== item.ref)) {
+        entries.push({
+          ref: item.ref,
+          handle: handleFor(item.ref),
+          section: key,
+          type: item.type,
+          text: item.text,
+          title: firstClause(item.text),
+          pointer: degraded,
+          stale: item.stale
+        });
+      }
     }
     if (count > 0) sections.push({ section: key, count });
   }
@@ -1260,7 +1320,8 @@ function assembleContext(evidence, opts = {}) {
     // A degraded entry is rendered, not dropped: it counts here and nowhere else, so a
     // reader can tell a block that shrank from a block that lost half its evidence.
     pointers,
-    emptyReason: rendered > 0 ? "" : "budget_exhausted"
+    emptyReason: rendered > 0 ? "" : "budget_exhausted",
+    entries: rendered > 0 ? entries : []
   };
 }
 function firstClause(text) {
@@ -1305,6 +1366,7 @@ function positiveInt2(v, d) {
 var SECTION_KEYS, EMISSION_ORDER, RENDER_ORDER, SECTION_BY_ENTRY_TYPE, HEADINGS, DEFAULT_TOKEN_BUDGET, CHARS_PER_TOKEN, MAX_ITEM_CHARS, POINTER_MARK, MAX_POINTER_CHARS, MIN_POINTER_CHARS;
 var init_assemble = __esm({
   "../claude-code/lib/assemble.mjs"() {
+    init_handles();
     SECTION_KEYS = Object.freeze([
       "mental_models",
       "active_rules",
@@ -1639,7 +1701,7 @@ async function request(cfg, method, path, body, opts = {}) {
       return refuse(
         cfg,
         started,
-        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project (\xA74.3)`,
+        `refusing to send run_id "${POISONED_RUN_ID}" to ${verb} ${route} \u2014 it is the bundled server's placeholder and identifies no project`,
         { route, run_id: POISONED_RUN_ID }
       );
     }
@@ -1721,7 +1783,7 @@ async function dial(cfg, o) {
   try {
     const headers = {
       accept: o.parse === "text" ? "text/plain, */*" : "application/json",
-      // §1.2: `Authorization: Bearer <key>` on everything. With no key configured the header
+      // `Authorization: Bearer <key>` on everything. With no key configured the header
       // is ABSENT rather than empty — `Bearer undefined` is a far harder 401 to diagnose.
       ...authHeaders(cfg)
     };
@@ -1812,13 +1874,13 @@ function requireString(req, field, who, hint) {
   }
   const v = req[field];
   if (typeof v === "string" && v.trim()) return "";
-  return `${who}: "${field}" is required and must be a non-empty string (\xA71.3 \u2014 a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
+  return `${who}: "${field}" is required and must be a non-empty string (a missing field is a 422, not a default)` + (hint ? `; ${hint}` : "");
 }
 function requireMode(req) {
   const mode = req && typeof req === "object" ? req.mode : void 0;
   if (typeof mode === "string" && QUERY_MODES.includes(mode)) return "";
   const shown = mode === void 0 ? "(omitted)" : JSON.stringify(mode);
-  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed server-side and costs an LLM call per prompt with no error.`;
+  return `postQuery: invalid query mode ${shown} \u2014 must be exactly one of ${QUERY_MODES.map((m) => `"${m}"`).join(", ")} (case-sensitive). Anything else \u2014 including an omitted mode \u2014 silently becomes agent_routed, which is slower on every prompt, with no error.`;
 }
 function safeMode(req) {
   const m = req && typeof req === "object" ? req.mode : void 0;
@@ -2276,30 +2338,30 @@ async function ladder(cfg, o) {
     limit: QUERY_LIMIT,
     entry_types: [...ENTRY_TYPES],
     include_working_memory: true,
-    // `env_tags` is accepted on the query route but not on the context route — version-aware
-    // tag scoring is capability rungs 1-2 gain over rung 3, not something they give up.
+    // `env_tags` is accepted on the query route but not on the context route — a capability
+    // rungs 1-2 gain over rung 3, not something they give up.
     // Tagged from the directory this prompt was sent in, not the one the session launched
-    // in — the same reason the run id reads the payload. A recall scored against `repo:`
-    // tags from the wrong repo is worse than one scored against none.
+    // in — the same reason the run id reads the payload. A recall tagged with the wrong repo
+    // is worse than an untagged one.
     env_tags: envTags(cfg, o.projectDir),
     // `rank_by` is the same trap as `env_tags` above, one field further on. `/context`
     // accepts no ranking field of ANY kind,
     // which makes freshness the second capability rungs 1-2 gain over rung 3 rather than
     // something they give up. What makes it a trap rather than a limitation: turning rung 3
     // on (`recallAssemble: "server"`) does not fail, warn, or fall back: it silently reverts
-    // every recall to the default fusion weights, and "where were we?" quietly goes back to
+    // every recall to the default ordering, and "where were we?" quietly goes back to
     // answering with whatever is most similar. Documented in the README's `recallAssemble`
     // row for the same reason.
     //
     // Omitted rather than sent when it resolves to nothing: absent IS `relevance`
     // server-side, so there is no shape of request this spread cannot express.
     ...rankBy ? { rank_by: rankBy } : {},
-    // §5.2: opting out of the cross-run lesson overlay, and the ONLY field here that is sent
-    // to make the request cheaper rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
+    // Opting out of cross-run lessons, and the ONLY field here that is sent to make the
+    // request faster rather than better. See `CROSS_RUN_MIN_BUDGET_MS`.
     //
-    // Omitted rather than sent as `false` when the overlay is wanted: absent IS `false`
-    // server-side, and a request log that only ever shows the field when somebody declined
-    // the lane is easier to read than one where every request carries it.
+    // Omitted rather than sent as `false` when they are wanted: absent IS `false`, and a
+    // request log that only ever shows the field when somebody declined them is easier to
+    // read than one where every request carries it.
     ...crossRun ? {} : { prefer_current_run: true }
   };
   let denied = readPolicyDenial(cfg);
@@ -2314,7 +2376,7 @@ async function ladder(cfg, o) {
     if (res2.status === 403) {
       cachePolicyDenial(cfg);
       if (cfg.recallFallback !== "agent_routed") {
-        log(cfg, "warn", 'prompt-recall: direct_bypass is disabled by instance policy and MUBIT_CC_RECALL_FALLBACK is "none", so this recall returns empty. Ask your operator to enable direct search, or set MUBIT_CC_RECALL_FALLBACK=agent_routed to pay an LLM call per prompt instead.', { run_id: o.runId });
+        log(cfg, "warn", 'prompt-recall: direct_bypass is disabled by instance policy and MUBIT_CC_RECALL_FALLBACK is "none", so this recall returns empty. Ask your operator to enable direct search, or set MUBIT_CC_RECALL_FALLBACK=agent_routed to accept a slower recall instead.', { run_id: o.runId });
         return empty(1, "policy_denied");
       }
       log(
@@ -2379,7 +2441,8 @@ function fromContext(responseBody, rung) {
     dropped: numOr(b.evidence_dropped_by_budget, 0),
     pointers: 0,
     emptyReason: typeof b.empty_reason === "string" && b.empty_reason ? b.empty_reason : block ? "" : "no_evidence",
-    refIds
+    refIds,
+    entries: []
   };
 }
 function fromEvidence(cfg, responseBody, rung, o) {
@@ -2401,9 +2464,10 @@ function fromEvidence(cfg, responseBody, rung, o) {
     dropped: a.dropped,
     pointers: a.pointers,
     emptyReason: a.emptyReason,
-    // §4.10/§5.5: a degraded entry is still in here. Dropping a repeat would break
+    // A degraded entry is still in here. Dropping a repeat would break
     // attribution for exactly the memories that are helping most.
-    refIds: a.sourceRefIds
+    refIds: a.sourceRefIds,
+    entries: a.entries
   };
 }
 function tokenBudgetOf(cfg, o) {
@@ -2431,7 +2495,8 @@ function empty(rung, reason) {
     dropped: 0,
     pointers: 0,
     emptyReason: reason,
-    refIds: []
+    refIds: [],
+    entries: []
   };
 }
 function failure(state, error, rung) {
@@ -2445,6 +2510,7 @@ function failure(state, error, rung) {
     pointers: 0,
     emptyReason: "",
     refIds: [],
+    entries: [],
     state: typeof state === "string" ? state : "server_error",
     error: typeof error === "string" ? error : String(error ?? "")
   };
@@ -2542,11 +2608,66 @@ var init_recall = __esm({
   }
 });
 
+// ../claude-code/lib/scorecard-log.mjs
+import {
+  closeSync as closeSync2,
+  fstatSync,
+  openSync as openSync2,
+  readdirSync as readdirSync3,
+  readFileSync as readFileSync6,
+  readSync,
+  statSync as statSync5,
+  writeSync as writeSync3
+} from "node:fs";
+import { dirname as dirname4, join as join10 } from "node:path";
+function scorecardPath(cfg, sessionId) {
+  const id = safeSegment(typeof sessionId === "string" ? sessionId.trim() : "", MAX_ID);
+  if (!id) return "";
+  return join10(resolveDataDir(cfg), SCORE_DIR, `${id}.jsonl`);
+}
+function appendScoreRow(cfg, sessionId, row) {
+  try {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    if (typeof row.kind !== "string" || !row.kind) return false;
+    const p = scorecardPath(cfg, sessionId);
+    if (!p || !ensureDir(dirname4(p))) return false;
+    const line = `${JSON.stringify({ v: SCORE_LOG_VERSION, at: Date.now(), ...row })}
+`;
+    const fd = openSync2(p, "a+");
+    try {
+      const st = fstatSync(fd);
+      let prefix = "";
+      if (st.size > 0) {
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, st.size - 1);
+        if (last[0] !== 10) prefix = "\n";
+      }
+      writeSync3(fd, prefix + line);
+    } finally {
+      closeSync2(fd);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+var SCORE_LOG_VERSION, SCORE_DIR, SCORE_LOG_TTL_MS, MAX_READ_BYTES, MAX_ID;
+var init_scorecard_log = __esm({
+  "../claude-code/lib/scorecard-log.mjs"() {
+    init_state();
+    SCORE_LOG_VERSION = 1;
+    SCORE_DIR = "scorecard";
+    SCORE_LOG_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    MAX_READ_BYTES = 4 * 1024 * 1024;
+    MAX_ID = 128;
+  }
+});
+
 // ../claude-code/lib/runid.mjs
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync6, readdirSync as readdirSync3, readFileSync as readFileSync6, statSync as statSync5 } from "node:fs";
-import { basename as basename2, dirname as dirname4, join as join10, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync6, readdirSync as readdirSync4, readFileSync as readFileSync7, statSync as statSync6 } from "node:fs";
+import { basename as basename2, dirname as dirname5, join as join11, resolve as resolve3 } from "node:path";
 function agentRole(env = process.env) {
   const host2 = typeof env?.MUBIT_CC_HOST === "string" ? env.MUBIT_CC_HOST.trim().toLowerCase() : "";
   return AGENT_ROLES[host2] ?? DEFAULT_AGENT_ROLE;
@@ -2642,7 +2763,7 @@ function assertUsableRunId(id) {
   const s = typeof id === "string" ? id.trim() : "";
   if (!s || FORBIDDEN_RUN_IDS.has(s.toLowerCase())) {
     throw new Error(
-      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run shared by every user and project on the machine (\xA74.3).`
+      `lib/runid.mjs refused to emit the run id ${JSON.stringify(id)}. An empty run id, a bare "cc-" prefix, or the literal "default" would write this project's memory into a run that names no project.`
     );
   }
   return s;
@@ -2742,7 +2863,7 @@ function normaliseRecord(record) {
   return out;
 }
 function sessionPath(file) {
-  return join10(dataDir({}), "sessions", `${file}.json`);
+  return join11(dataDir({}), "sessions", `${file}.json`);
 }
 function sessionFileName(sessionId) {
   const raw = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -2763,7 +2884,7 @@ function usableDir(v) {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return "";
   try {
-    return statSync5(s).isDirectory() ? s : "";
+    return statSync6(s).isDirectory() ? s : "";
   } catch {
     return "";
   }
@@ -2793,8 +2914,8 @@ function hasGitDir2(start) {
   try {
     let cur = resolve3(start);
     for (let i = 0; i < 24; i++) {
-      if (existsSync6(join10(cur, ".git"))) return true;
-      const up = dirname4(cur);
+      if (existsSync6(join11(cur, ".git"))) return true;
+      const up = dirname5(cur);
       if (up === cur) return false;
       cur = up;
     }
@@ -2878,12 +2999,12 @@ var init_runid = __esm({
 
 // ../claude-code/hooks/src/subagent-start.mjs
 var subagent_start_exports = {};
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 function parentQuery(cfg, runId, payload) {
   try {
-    const promptId = safeSegment(turnKey(payload), MAX_ID);
+    const promptId = safeSegment(turnKey(payload), MAX_ID2);
     if (!promptId) return "";
-    const file = join11(runDir(cfg, runId), "turns", `${promptId}.json`);
+    const file = join12(runDir(cfg, runId), "turns", `${promptId}.json`);
     const turn = readJson(file, null);
     return isObject7(turn) ? str5(turn.prompt).slice(0, MAX_QUERY_CHARS) : "";
   } catch {
@@ -2892,10 +3013,10 @@ function parentQuery(cfg, runId, payload) {
 }
 function persistSubRun(cfg, o) {
   try {
-    const name = safeSegment(o.subRunId, MAX_ID);
+    const name = safeSegment(o.subRunId, MAX_ID2);
     if (!name) return;
-    const dir = join11(runDir(cfg, o.runId), "subagents");
-    writeJsonAtomic(join11(dir, `${name}.json`), {
+    const dir = join12(runDir(cfg, o.runId), "subagents");
+    writeJsonAtomic(join12(dir, `${name}.json`), {
       sub_run_id: o.subRunId,
       parent_run_id: o.runId,
       // The host's own id, unmodified — `mubit_agent_id` is what went on the wire. Both,
@@ -2914,7 +3035,7 @@ function persistSubRun(cfg, o) {
         sources: (o.outcome?.refIds?.length ?? 0) || numOr2(o.outcome?.sources, 0),
         tokens: numOr2(o.outcome?.tokens, 0),
         // Characters are what was actually injected; the token figure is a
-        // four-chars-per-token estimate (§4.10) a later reader can re-derive from these.
+        // four-chars-per-token estimate a later reader can re-derive from these.
         chars: str5(o.outcome?.block).length,
         dropped: numOr2(o.outcome?.dropped, 0),
         // Always 0 while the seen-set stays out of this path. Recorded rather than assumed,
@@ -3017,7 +3138,7 @@ function messageOf3(err) {
     return "unknown error";
   }
 }
-var OWN_AGENTS, MAX_QUERY_CHARS, MAX_ID, CFG, RECALL_BUDGET_MS, HARNESS_BUDGET_MS, SUPPRESS;
+var OWN_AGENTS, MAX_QUERY_CHARS, MAX_ID2, CFG, RECALL_BUDGET_MS, HARNESS_BUDGET_MS, SUPPRESS;
 var init_subagent_start = __esm({
   async "../claude-code/hooks/src/subagent-start.mjs"() {
     init_config();
@@ -3026,11 +3147,12 @@ var init_subagent_start = __esm({
     init_pins();
     init_rank();
     init_recall();
+    init_scorecard_log();
     init_runid();
     init_state();
     OWN_AGENTS = /* @__PURE__ */ new Set(["mubit-recall", "mubit-memory:mubit-recall"]);
     MAX_QUERY_CHARS = 2e3;
-    MAX_ID = 128;
+    MAX_ID2 = 128;
     CFG = safeConfig2();
     RECALL_BUDGET_MS = clampInt(CFG.recallBudgetMs, 1500, 50, 1e4);
     HARNESS_BUDGET_MS = Math.min(RECALL_BUDGET_MS + 400, 2800);
@@ -3071,13 +3193,13 @@ var init_subagent_start = __esm({
         }
         const outcome = await recallBlock(cfg, {
           runId,
-          // the PARENT run: nothing is stored under a sub-run id (§4.3).
+          // the PARENT run: nothing is stored under a sub-run id.
           agentId,
           // …but the subagent's own identity, so siblings are separable.
           query,
           deadline: deadline2,
           tokenBudget: CFG.subagentRecallTokenBudget,
-          // §5.2 — the same rule over the same query text the parent's own prompt gets. The
+          // The same rule over the same query text the parent's own prompt gets. The
           // staged parent turn is the only description of this subagent's task, so it is also
           // the only thing that can say the task is a handoff; a fan-out spawned off "where were
           // we?" wants the recency emphasis its parent turn got, or the parent is caught up and
@@ -3101,6 +3223,16 @@ var init_subagent_start = __esm({
         }
         persistSubRun(cfg, { runId, subRunId, agentId, payload, outcome, ms, pins });
         if (!outcome.block) return pinsOnly(runId, agentId, pins);
+        if (cfg.capture !== false) {
+          try {
+            appendScoreRow(cfg, str5(payload?.session_id), {
+              kind: "refs",
+              source: "subagent",
+              refs: [...outcome.refIds]
+            });
+          } catch {
+          }
+        }
         return {
           hookSpecificOutput: {
             hookEventName: "SubagentStart",

@@ -2,8 +2,8 @@
 
 Persistent, typed, self-improving memory for the OpenAI Codex CLI. Work is captured
 involuntarily as it happens, relevant lessons are injected before every prompt, outcomes are
-attributed back so what helps ranks higher next time, and a reflection at session end promotes
-what was learned beyond the run it was learned in.
+attributed back so what helps ranks higher next time, and a reflection at session end carries
+what was learned into later sessions.
 
 It is the same plugin as [`../claude-code`](../claude-code): one `lib/`, one set of hook
 bodies, one MCP launcher, built twice. **A Codex session and a Claude Code session started in
@@ -53,6 +53,11 @@ kept), backs up both files it touches to `<name>.before-mubit`, and is idempoten
 after every plugin upgrade. `--no-trust` skips the trust step; `--with-pre-tool` adds the
 `PreToolUse` registration.
 
+It also sets `approval_mode = "approve"` on two tools, `mubit_outcome` and `mubit_learned`,
+because the outcome review asks the model to call them and Codex would otherwise ask you to
+approve each call. No other Mubit tool is approved, an `approval_mode` you set on either tool
+is kept, and `--no-trust` approves nothing.
+
 `setup` will also offer to record hook trust for you, and will ask before it does. A
 registered hook does not run until it is trusted, and under `codex exec` an untrusted hook is
 skipped **silently** — no prompt, no warning, exit 0. If you would rather grant it yourself,
@@ -83,9 +88,8 @@ unless you have turned the warnings on.
 
 ## Configuration
 
-Codex has no plugin settings UI and exports no `CODEX_PLUGIN_OPTION_*` variables — the strings
-`PLUGIN_OPTION` and `userConfig` appear nowhere in its binary — so configuration is three
-rungs, highest first:
+Codex has no plugin settings UI and exports no `CODEX_PLUGIN_OPTION_*` variables, so
+configuration is three rungs, highest first:
 
 1. `MUBIT_*` environment variables
 2. `<data-dir>/credentials.json`, written by `mubit-memory:auth`
@@ -109,6 +113,8 @@ The settings worth knowing, all `MUBIT_CC_*` unless noted:
 | `MUBIT_CC_SESSION_END_DETACH` | `1` | Finish the end-of-session flush in a detached process. **Leave this on under Codex** — see below. |
 | `MUBIT_CC_PRE_TOOL_WARNINGS` | `0` | Show a stored rule before a matching tool call. It only ever warns. |
 | `MUBIT_CC_PINS` | `1` | Render the constraints pinned with the `pin` skill above the recalled block on every prompt of the run — including the prompts recall skips — and above the block a subagent is given at `SubagentStart`. Capped at five pins, 200 characters each and 240 tokens (96 for a subagent); costs no extra request on the prompt path. Off restores the injected block exactly. |
+| `MUBIT_CC_SESSION_SCORE` | `full` | The memory scorecard the Stop hook prints under each reply that showed a lesson: `full` is a short card, `compact` one line, `off` nothing. The TUI shows it; `codex exec` does not print it. See [the scorecard](docs/user-guide.md#the-scorecard-and-the-outcome-review). |
+| `MUBIT_CC_OUTCOME_REVIEW` | `stop` | How hard the model is asked to credit memory by the short id (`[m7k2q]`) printed on every injected line. `stop` has the Stop hook ask for a short review once per turn that showed lessons, which the TUI shows as "Blocked by hook" followed by the request; `nudge` is one sentence in the memory block; `off` does neither. See [the outcome review](docs/user-guide.md#the-scorecard-and-the-outcome-review). |
 | `MUBIT_CC_DATA_DIR` | — | Overrides where state lives. Highest precedence of any data-dir input. |
 | `MUBIT_CC_STATUSLINE` | `0` here | Defaults **off** under Codex, whose status line is a fixed list of built-in item ids with nothing scriptable in it. |
 | `MUBIT_MCP_TOOLS` (no `_CC`) | — | Which MCP tools to register, comma-separated. Blank means the seven below. A list you supply is used **verbatim**, not unioned with that default, so it is also how you reach the other eight. |
@@ -116,8 +122,8 @@ The settings worth knowing, all `MUBIT_CC_*` unless noted:
 ### The three-second SessionEnd
 
 Codex clamps a `SessionEnd` hook to three seconds and kills it there, whatever the
-registration asks for. The end-of-session flush — the drain, and the reflect that is the only
-thing promoting a lesson beyond its own run — does not reliably fit. So the hook hands that
+registration asks for. The end-of-session flush — the drain, and the reflect that carries
+lessons into later sessions — does not reliably fit. So the hook hands that
 work to a detached process and returns immediately, which is why `MUBIT_CC_SESSION_END_DETACH`
 defaults on and why turning it off costs you reflections.
 
@@ -152,8 +158,7 @@ A Codex-only user ends up with a `~/.claude/` directory they never asked for.
 `MUBIT_CC_DATA_DIR` moves it, at the cost of the sharing.
 
 Which harness wrote an entry is recorded as its agent role — `codex` or `claude-code` — so the
-two are distinguishable where it matters, and count as two actors where something upstream is
-asking how well attested a lesson is.
+two are distinguishable where it matters.
 
 ### Sharing one run, and when it stops sharing
 
@@ -218,7 +223,7 @@ Listed to the model as `mubit-memory:<name>`:
 
 | Skill | For |
 | --- | --- |
-| `setup` | First run, and after every upgrade. Merges the registrations, registers the server, records trust. |
+| `setup` | First run, and after every upgrade. Merges the registrations, registers the server, approves the two credit tools, records trust. |
 | `auth` | Sign in and store a key. |
 | `recall` | Search memory for something the injected block did not cover. |
 | `remember` | Save a durable lesson, rule, or preference. |
@@ -392,9 +397,8 @@ to this session's role, addressed for review, with zero network — it rides the
 redaction and circuit breaker included — and under the **parent's** run id. A sub-run id never
 reaches the wire, and there is no way to address a note to another run.
 
-"Open" is computed by the command, not by the instance: the instance never flips a handoff's
-`active` flag and has no list route, so the command reads both entry types for the run and
-joins them — open means no feedback names that id. With two sessions live in one data directory
+"Open" is computed by the command: it reads both entry types for the run and joins them — open
+means no feedback names that id. With two sessions live in one data directory
 the command refuses with `ambiguous_run` and names them rather than guessing; pass `--run`.
 
 ---
@@ -461,7 +465,7 @@ safe to attach to an issue.
 ## Development
 
 ```bash
-npm test                                    # 436 gates
+npm test                                    # 635 gates
 MUBIT_CC_TEST_TARGET=dist npm test          # the same, against the committed bundles
 npm run build                               # rebuild hooks/dist, bin/, mcp/dist
 node ../claude-code/scripts/verify-manifests.mjs

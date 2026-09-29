@@ -15,7 +15,7 @@
       "repository": "https://github.com/mubit-ai/plugins",
       "license": "Apache-2.0",
       "keywords": ["memory", "mubit", "long-term-memory", "lessons", "recall"],
-      "contextCost": { "value": 3125, "cached": 0 }
+      "contextCost": { "value": 3185, "cached": 0 }
     }
   ]
 }
