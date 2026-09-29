@@ -540,7 +540,7 @@ function isCorrection(prompt, opts = {}) {
   try {
     if (typeof prompt !== "string") return false;
     const trimmed = prompt.trim();
-    if (!trimmed || trimmed.startsWith("/")) return false;
+    if (!trimmed || trimmed.startsWith("/") || SKILL_MENTION.test(trimmed)) return false;
     const text = trimmed.replace(/```[\s\S]*?(?:```|$)/g, " ").replace(/"[^"\n]*"|“[^”\n]*”|`[^`\n]*`/g, " ").replace(/[‘’]/g, "'").trim().slice(0, SCAN_CHARS).toLowerCase();
     if (!text) return false;
     const asked = opts?.lastReplyEndedWithQuestion === true;
@@ -551,13 +551,14 @@ function isCorrection(prompt, opts = {}) {
     return false;
   }
 }
-var SCAN_CHARS, LEADING_NO, POLITE_NO, BARE_NO, PHRASES;
+var SCAN_CHARS, LEADING_NO, POLITE_NO, BARE_NO, SKILL_MENTION, PHRASES;
 var init_correction = __esm({
   "../claude-code/lib/correction.mjs"() {
     SCAN_CHARS = 300;
     LEADING_NO = /^(?:no|nope)(?:\s*[,.!;:—–-]|\s*$)/;
     POLITE_NO = /^(?:no|nope)[\s,.!]*(?:problem|worries|thanks|thank you|need|rush|biggie)\b/;
     BARE_NO = /^(?:no|nope)[\s.!]*$/;
+    SKILL_MENTION = /^\$[a-z][a-z0-9_-]*(?::[a-z][a-z0-9_-]*)?(?=$|[\s,.;:!?])/;
     PHRASES = [
       /^(?:wrong|incorrect)\b/,
       /\b(?:that'?s|that is|this is|it'?s|it is)\s+(?:wrong|incorrect|not right|not it|not what i (?:asked|wanted|meant))\b/,
