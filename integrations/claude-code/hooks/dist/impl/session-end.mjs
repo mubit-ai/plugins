@@ -158,6 +158,9 @@ function pruneStale(cfg = {}) {
     for (const name of jsonFiles(join(root, "import"))) {
       expire(join(root, "import", name), 30 * DAY);
     }
+    for (const e of dirEntries(join(root, "scorecard"))) {
+      if (e.isFile() && e.name.endsWith(".jsonl")) expire(join(root, "scorecard", e.name), 7 * DAY);
+    }
     for (const e of dirEntries(join(root, "tmp"))) {
       if (e.isFile()) expire(join(root, "tmp", e.name), 1 * HOUR);
     }
@@ -537,7 +540,7 @@ var DEFAULT_MCP_TOOLS = [
 ];
 var CACHE_FILE = "config.json";
 var CACHE_TTL_MS = 300 * 1e3;
-var CACHE_VERSION = 3;
+var CACHE_VERSION = 4;
 function screaming(key) {
   return String(key).replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
 }
@@ -657,6 +660,16 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     ["off", "implicit", "explicit"],
     "implicit"
   );
+  const sessionScore = enumOf(
+    pick("sessionScore", "MUBIT_CC_SESSION_SCORE"),
+    ["off", "compact", "full"],
+    host(e) === "codex" ? "off" : "full"
+  );
+  const outcomeReview = enumOf(
+    pick("outcomeReview", "MUBIT_CC_OUTCOME_REVIEW"),
+    ["off", "nudge", "stop"],
+    host(e) === "codex" ? "nudge" : "stop"
+  );
   const statusLine = bool(pick("statusLine", "MUBIT_CC_STATUSLINE"), host(e) !== "codex");
   const preToolWarnings = bool(pick("preToolWarnings", "MUBIT_CC_PRE_TOOL_WARNINGS"), false);
   const resumeBlock = bool(pick("resumeBlock", "MUBIT_CC_RESUME_BLOCK"), true);
@@ -730,6 +743,8 @@ function resolveAll(e, userFile, creds, projectDir, dataDir2) {
     resumeTokenBudget,
     policyTtlMs,
     outcomeMode,
+    sessionScore,
+    outcomeReview,
     reflectOnEnd,
     sessionEndDetach,
     statusLine,
